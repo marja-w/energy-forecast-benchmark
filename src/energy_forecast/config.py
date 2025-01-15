@@ -7,7 +7,7 @@ from loguru import logger
 load_dotenv()
 
 # Paths
-PROJ_ROOT = Path(__file__).resolve().parents[1]
+PROJ_ROOT = Path(__file__).resolve().parents[2]  # energy-forecast-wahl/src/energy_forecast
 logger.info(f"PROJ_ROOT path is: {PROJ_ROOT}")
 
 DATA_DIR = PROJ_ROOT / "data"

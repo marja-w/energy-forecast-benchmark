@@ -1,15 +1,13 @@
+import json
 import os
-from pathlib import Path
 from typing import Any
 
-import typer
 import pandas as pd
 import polars as pl
-import json
+import typer
 from loguru import logger
-from tqdm import tqdm
 
-from config import RAW_DATA_DIR, PROCESSED_DATA_DIR, DATA_DIR
+from config import RAW_DATA_DIR, DATA_DIR
 
 app = typer.Typer()
 

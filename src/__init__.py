@@ -1,1 +1,1 @@
-from energy_forecast import config  # noqa: F401
+from src.energy_forecast import config  # noqa: F401

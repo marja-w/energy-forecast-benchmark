@@ -8,6 +8,7 @@ import typer
 from loguru import logger
 
 from config import RAW_DATA_DIR, DATA_DIR
+from src.energy_forecast.config import REPORTS_DIR
 
 app = typer.Typer()
 
@@ -400,7 +401,7 @@ def main(
     df_more_info_hours = hourly_conversion_dh(dh_hourly_output_csv, eco_u_data_file, input_folder)
     df_more_info = pd.merge(df_more_info, df_more_info_hours, how="left", on="id")
 
-    pd.concat([df_info, df_more_info]).to_csv(RAW_DATA_DIR / "info.csv")
+    pd.concat([df_info, df_more_info]).to_csv(REPORTS_DIR / "info_raw_data.csv")
 
 
 if __name__ == "__main__":

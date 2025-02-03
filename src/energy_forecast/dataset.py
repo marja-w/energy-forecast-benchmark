@@ -394,14 +394,14 @@ def main(
 
     ## DAILY CONVERSION
     dh_daily_output_csv = RAW_DATA_DIR / "district_heating_daily.csv"
-    df_more_info = daily_conversion_dh(dh_daily_output_csv, eco_u_data_file, input_folder)
+    # df_more_info = daily_conversion_dh(dh_daily_output_csv, eco_u_data_file, input_folder)
 
     ## HOURLY CONVERSION
     dh_hourly_output_csv = RAW_DATA_DIR / "district_heating_hourly.csv"
     df_more_info_hours = hourly_conversion_dh(dh_hourly_output_csv, eco_u_data_file, input_folder)
-    df_more_info = pd.merge(df_more_info, df_more_info_hours, how="left", on="id")
+    # df_more_info = pd.merge(df_more_info, df_more_info_hours, how="left", on="id")
 
-    pd.concat([df_info, df_more_info]).to_csv(REPORTS_DIR / "info_raw_data.csv")
+    # pd.concat([df_info, df_more_info]).to_csv(REPORTS_DIR / "info_raw_data.csv")
 
 
 if __name__ == "__main__":

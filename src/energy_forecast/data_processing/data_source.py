@@ -1,3 +1,5 @@
+import json
+import os
 from datetime import datetime
 from pathlib import Path
 
@@ -7,13 +9,18 @@ from loguru import logger
 
 from src.energy_forecast.config import RAW_DATA_DIR, DATA_DIR, PROCESSED_DATA_DIR, REFERENCES_DIR
 from src.energy_forecast.data_processing.transform import update_df_with_corrections
-from src.energy_forecast.util import sum_columns, replace_title_values
+from src.energy_forecast.util import sum_columns, replace_title_values, remove_leading_zeros
 
 
-class DataSource(object):  #
+class DataLoader(object):  #
     def __init__(self, input_path: Path):
         self.input_path = input_path  # path to input data file or folder
-        self.df = pl.DataFrame()
+        self.df_raw = pl.DataFrame()  # raw data
+        self.df_t = pl.DataFrame()  # transformed data
+        self.res = ""  # resolution of transformed data, either daily or hourly
+
+        self.meta_cols = list()  # list of columns for creating meta data file
+        self.name = ""  # name for the given data source
 
     def load(self):
         """
@@ -22,22 +29,38 @@ class DataSource(object):  #
         """
         pass
 
-    def transform(self):
+    def transform(self, res: str):
         """
         Bring data into right data structure.
         :return:
         """
-        pass
+        logger.info(f"Transforming data to {res} format")
+        self.res = res
 
-    def save(self, output_path: Path):
-        self.df.write_csv(output_path)
-        logger.success(f"Data saved to {output_path}")
+    def save(self):
+        if self.df_t.is_empty():
+            output_path = RAW_DATA_DIR / f"{self.name}_raw.csv"
+            self.df_raw.write_csv(output_path)
+            logger.success(f"Raw data saved to {output_path}")
+        else:
+            output_path = RAW_DATA_DIR / f"{self.name}_{self.res}.csv"
+            self.df_t.write_csv(output_path)
+            logger.success(f"Transformed data ({self.res}) saved to {output_path}")
+
+    def write_meta_data(self):
+        # extract metadata
+        df_meta = self.df_t.group_by(self.meta_cols).agg()
+        meta_data_csv = RAW_DATA_DIR / f"{self.name}_meta.csv"
+        logger.info(f"Writing meta data file to {meta_data_csv}")
+        df_meta.write_csv(meta_data_csv)
 
 
-class LegacyDataSource(DataSource):
+class LegacyDataLoader(DataLoader):
     def __init__(self, input_path: Path):
         super().__init__(input_path)
-        self.output_path = RAW_DATA_DIR / "legacy_daily.csv"
+        self.meta_cols = ["id", "GSM_ID", "TP", "Tag", "Title", "Type", "s", "m", "CircuitType", "CircuitNum",
+                          "co2koeffizient"]
+        self.name = "legacy"
 
     def load(self):
         logger.info("Loading legacy data")
@@ -77,11 +100,11 @@ class LegacyDataSource(DataSource):
         df = sum_columns(df, "Sven Hedin Str.11", "Gaszähler Kessel", "Gaszähler BHKW")
 
         logger.success("Data length now: {}".format(len(df)))
-        self.df = df
+        self.df_raw = df
 
-    def transform(self):
-        logger.info("Transforming data")
-        df = (self.df.with_columns(
+    def transform(self, res: str = "daily"):
+        super().transform(res=res)
+        df = (self.df_raw.with_columns(
             pl.col("ArrivalTime").str.to_date().dt.date().alias("date"),
             pl.col("lastAggregated").str.to_datetime(),
             pl.lit("legacy").alias("source"),
@@ -100,7 +123,8 @@ class LegacyDataSource(DataSource):
             pl.when(pl.col("Unit") == "CBM")
             .then(pl.lit("KWH")).alias("Unit"),
             pl.col("plz").str.strip_chars().cast(pl.Int64),
-            pl.col("Val").diff().over(pl.col("id")).alias("diff")  # compute diff column  TODO: Datenlücken bei date? check
+            pl.col("Val").diff().over(pl.col("id")).alias("diff")
+            # compute diff column  TODO: Datenlücken bei date? check
         ).drop_nulls(subset=["diff"])
               )
 
@@ -117,22 +141,78 @@ class LegacyDataSource(DataSource):
 
         logger.info(f"Current length of data: {len(df)} after transforming")
         logger.success("Transforming legacy dataset complete.")
-        self.df = df
+        self.df_t = df
 
-    def write_meta_data(self):
-        # extract metadata
-        df_meta = self.df.group_by(pl.col("id")).agg(pl.col("GSM_ID").max(), pl.col("TP").max(), pl.col("Tag").max(),
-                                                pl.col("Title").max(), pl.col("Type").max(), pl.col("s").max(),
-                                                pl.col("m").max(), pl.col("CircuitType").max(),
-                                                pl.col("CircuitNum").max(), pl.col("co2koeffizient").max(),
-                                                pl.col("Objekttitel").max())
-        meta_data_csv = PROCESSED_DATA_DIR / "legacy_meta.csv"
-        logger.info(f"Writing meta data file to {meta_data_csv}")
-        df_meta.write_csv(meta_data_csv)
+
+class KinergyDataLoader(DataLoader):
+    def __init__(self, input_path: Path):
+        super().__init__(input_path)
+        self.meta_cols = ["id", "renewable_energy_used", "has_pwh", "pwh_type", "building_type", "orga", "complexity",
+                          "complexity_score", "env_id"]
+        self.name = "kinergy"
+
+    def load(self):
+        logger.info("Loading kinergy data")
+        df = pl.DataFrame()
+
+        logger.info("Loading meta data file")
+        meta_data_file = self.input_path / "kinergy_eco_u_list.json"
+        with open(meta_data_file, "r", encoding="UTF-8") as f:
+            meta_data = json.loads(f.read())
+
+        for eco_u_id in list(meta_data.keys()):
+            print(f"EcoU {eco_u_id} - {meta_data[eco_u_id]['name']}")
+            sensor_file = f"{self.input_path}/consumption_data/{eco_u_id}_consumption.csv"
+            if os.path.isfile(sensor_file):
+                # read the data
+                df_s = pl.read_csv(sensor_file, null_values="null")
+                df_s = df_s.with_columns(pl.col("bucket").str.to_datetime().alias("datetime"),
+                                         ).select(["datetime", "sum_kwh", "sum_kwh_diff", "env_temp"])
+                # remove zeros that are recorded before the sensor was actually working
+                df_s = remove_leading_zeros(df_s)
+                df_s = df_s.with_columns(pl.lit(eco_u_id).alias("id"))
+                df_s = df_s.cast({"env_temp": pl.Float64})  # if temp is null
+                logger.info(f"Adding {len(df_s)} datapoints for {eco_u_id}")
+                df = pl.concat([df, df_s])
+            else:
+                logger.warning(f"Missing file for: {eco_u_id}")
+
+        df = df.sort(["id", "datetime"])
+        logger.success(f"Raw data length: {len(df)}")
+        self.df_raw = df
+
+    def transform(self, res: str):
+        super().transform(res=res)
+        if res == "daily":
+            # aggregate values to daily values
+            time_delta = "1d"
+        elif res == "hourly":
+            time_delta = "1h"
+        else:
+            raise ValueError(f"Unknown res type: {res}")
+        df = self.df_raw.group_by_dynamic(
+            index_column="datetime", every=time_delta, group_by=["id"]
+        ).agg([
+            pl.col("env_temp").mean().alias("avg_env_temp"),
+            pl.col("sum_kwh").max().alias("value"),
+            pl.col("sum_kwh_diff").sum().alias("diff")
+        ]).sort(["id", "datetime"])
+
+        # remove duplicates
+        df = df.unique(subset=["id", "datetime"]).sort(["id", "datetime"])
+
+        if res == "daily":
+            df = df.with_columns(pl.col("datetime").dt.date().alias("date")
+                               ).select(["id", "date", "value", "diff", "avg_env_temp"])
+
+        logger.success(f"Data length after transforming: {len(df)}")
+        self.df_t = df
 
 
 if __name__ == '__main__':
-    ds = LegacyDataSource(DATA_DIR / "legacy_data" / "legacy_systen_counter_daily_values.csv")
-    ds.load()
-    ds.transform()
-    ds.save(RAW_DATA_DIR / "legacy_daily.csv")
+    dl = KinergyDataLoader(DATA_DIR / "kinergy")
+    dl.load()
+    dl.transform("daily")
+    dl.save()
+    dl.transform("hourly")
+    dl.save()

@@ -9,6 +9,14 @@ from loguru import logger
 from numpy import ndarray
 
 
+def remove_leading_zeros(df):
+    non_zero_idx = df.with_row_index().filter(pl.col("sum_kwh_diff") > 0)[0]["index"][
+        0]  # get index of first row that isnt 0
+    df = df.with_row_index().filter(pl.col("index") >= non_zero_idx).drop("index")  # remove first 0s
+    df = df.filter(pl.col("sum_kwh") != pl.col("sum_kwh_diff"))  # remove first wrong diff value
+    return df
+
+
 def sum_columns(df, address, col_1, col_2):
     val_col_2 = df.filter((pl.col("adresse") == address) & (pl.col("Title") == col_2))["Val"]
     df_adresse = df.filter((pl.col("adresse") == address) & (pl.col("Title") == col_1))

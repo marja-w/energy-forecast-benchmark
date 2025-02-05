@@ -1,10 +1,87 @@
+from datetime import date, timedelta
 from typing import Tuple, List
 
 import numpy as np
 import pandas as pd
 import polars as pl
 from keras.utils import timeseries_dataset_from_array
+from loguru import logger
 from numpy import ndarray
+
+
+def sum_columns(df, address, col_1, col_2):
+    val_col_2 = df.filter((pl.col("adresse") == address) & (pl.col("Title") == col_2))["Val"]
+    df_adresse = df.filter((pl.col("adresse") == address) & (pl.col("Title") == col_1))
+
+    # remove the whole address
+    df = df.filter(~(pl.col("adresse") == address))
+
+    # add the values of column 2 to column 1 and drop column 2
+    df_adresse = df_adresse.with_columns(val_col_2.alias("val_2")).with_columns(
+        pl.col("Val") + pl.col("val_2").alias("Val")).drop(["val_2"])
+
+    # rename title to Gaszähler Gesamt
+    df_adresse = df_adresse.with_columns(pl.lit("Gaszähler Gesamt").alias("Title"))
+    print(f"Summing {col_1} and {col_2} for {address}")
+    print(f"Length of data is {len(df_adresse)}")
+
+    df = pl.concat([df, df_adresse])
+    return df
+
+
+def get_missing_dates(df: pl.DataFrame, frequency: str = "D") -> pl.DataFrame:
+    missing_dates = []
+    df = df.with_columns(pl.col("date").dt.date().alias("date"))
+    df_time = df.group_by(pl.col("id")).agg(pl.len(),
+                                            pl.col("date").min().alias("min_date"),
+                                            pl.col("date").max().alias("max_date")
+                                            )
+    for row in df_time.iter_rows():
+        id = row[0]
+        # print("\nSensor: ", id, "\n")
+        # print(f"Sensor {id} has {row[1]} datapoints")
+        start_date = row[2]
+        end_date = row[3]
+
+        date_list_rec = df.filter(pl.col("id") == id).select(pl.col("date"))["date"].to_list()
+
+        date_list = pd.date_range(start_date, end_date, freq=frequency).date
+
+        missing_dates_sensor = list(set(date_list) - set(date_list_rec))
+        missing_dates_sensor.sort()
+        logger.info(f"Missing dates for sensor {id}: {len(missing_dates_sensor)}")
+        missing_dates.append(
+            {"id": id, "missing_dates": missing_dates_sensor, "len": len(missing_dates_sensor), "n": row[1],
+             "per": (len(date_list) / len(date_list_rec)) * 100})
+    return pl.DataFrame(missing_dates).sort(pl.col("len"), descending=True)
+
+
+def find_time_spans(dates: list[date]) -> pl.DataFrame:
+    if len(dates) == 0:
+        return pl.DataFrame()
+    spans = []
+    try:
+        start_date = dates[0]
+    except IndexError:
+        return pl.DataFrame()
+    prev_date = start_date
+    count = 1
+
+    for i in range(1, len(dates)):
+        current_date = dates[i]
+
+        if current_date == prev_date + timedelta(days=1):
+            count += 1
+        else:
+            spans.append({"start": start_date, "end": prev_date, "n": count})
+            start_date = current_date
+            count = 1
+
+        prev_date = current_date
+
+    spans.append({"start": start_date, "end": prev_date, "n": count})  # Add the last span
+    df_spans = pl.DataFrame(spans)
+    return df_spans
 
 
 def get_season(month, day):

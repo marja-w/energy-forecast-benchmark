@@ -137,13 +137,13 @@ def update_df_with_corrections(df: pl.DataFrame, correction_csv_path: Path) -> p
     ])
 
     # Step 3: Select relevant columns for merging
-    correction = correction.select(['new_id', 'qmbehfl', 'anzlwhg'])
+    correction = correction.select(['id', 'qmbehfl', 'anzlwhg'])
 
     # Step 4: Join the correction data with the main DataFrame on 'new_id'
     # Perform a left join to retain all rows from df
     df_updated = df.join(
         correction,
-        on='new_id',
+        on='id',
         how='left',
         suffix='_corr'
     )
@@ -169,7 +169,7 @@ def update_df_with_corrections(df: pl.DataFrame, correction_csv_path: Path) -> p
 
 @app.command()
 def main(
-        input_path: Path = PROCESSED_DATA_DIR / "dataset.csv",
+        input_path: Path = PROCESSED_DATA_DIR / "daily.csv",
         output_path: Path = PROCESSED_DATA_DIR / "transform.csv",
 ):
     df = pl.read_csv(input_path)  # Lade die CSV-Datei in ein Polars DataFrame
@@ -178,15 +178,11 @@ def main(
 
     logger.info("Processing dataset...")
 
-    df = create_new_id(df)  # add new_id and filter for gas values only
-    df = create_date(df)
+    # df = create_date(df)
 
     logger.info("Cleaning dataset...")
     # subtract data from Schenfelder Holt 135 BHKW from Gesamt and replace the values
     df = subtract_diff_data(df, "400768GVG", "400768GVA")
-
-    # remove BHKWs and GAPWs from dataset
-    df = remove_vals_by_title(df, ["Gaszähler BHKW", "Gaszähler GAWP"])
 
     # unify naming of gas meters
     df = replace_title_values(df, [("Gas Zähler", "Gaszähler"),

@@ -6,74 +6,38 @@ import polars as pl
 from loguru import logger
 from matplotlib import pyplot as plt
 
-
-def get_missing_dates(df: pl.DataFrame, primary_energy: str, frequency: str):
-    missing_dates = []
-    df = df.with_columns(pl.col("date").dt.date().alias("date"))
-    df_time = df.filter(pl.col('primary_energy') == primary_energy).group_by(pl.col("id")).agg(pl.len(),
-                                                                                               pl.col(
-                                                                                                   "date").min().alias(
-                                                                                                   "min_date"),
-                                                                                               pl.col(
-                                                                                                   "date").max().alias(
-                                                                                                   "max_date"))
-    for row in df_time.iter_rows():
-        id = row[0]
-        # print("\nSensor: ", id, "\n")
-        # print(f"Sensor {id} has {row[1]} datapoints")
-        start_date = row[2]
-        end_date = row[3]
-
-        date_list_rec = df.filter(pl.col("id") == id).select(pl.col("date"))["date"].to_list()
-
-        date_list = pd.date_range(start_date, end_date, freq=frequency).date
-
-        missing_dates_sensor = list(set(date_list) - set(date_list_rec))
-        missing_dates_sensor.sort()
-        logger.info(f"Missing dates for sensor {id}: {len(missing_dates_sensor)}")
-        missing_dates.append(
-            {"id": id, "missing_dates": missing_dates_sensor, "len": len(missing_dates_sensor), "n": row[1],
-             "per": (((row[1] + len(missing_dates_sensor)) / (row[1])) * 100) - 100})
-    return pl.DataFrame(missing_dates).sort(pl.col("len"), descending=True)
+from src.energy_forecast.config import RAW_DATA_DIR
+from src.energy_forecast.util import find_time_spans, get_missing_dates
 
 
-def find_time_spans(dates: list[date]) -> list[tuple[date, date, int]]:
-    spans = []
-    start_date = dates[0]
-    prev_date = start_date
-    count = 1
-
-    for i in range(1, len(dates)):
-        current_date = dates[i]
-
-        if current_date == prev_date + timedelta(days=1):
-            count += 1
-        else:
-            spans.append((start_date, prev_date, count))
-            start_date = current_date
-            count = 1
-
-        prev_date = current_date
-
-    spans.append((start_date, prev_date, count))  # Add the last span
-    return spans
-
-
-def plot_missing_dates(df: pl.DataFrame, sensor_id: str):
-    missing_dates = get_missing_dates(df, "district heating", "D").filter(pl.col("id") == sensor_id).select(
+def plot_missing_dates(df_data: pl.DataFrame, sensor_id: str):
+    df_data = df_data.filter(pl.col("id") == sensor_id)
+    address = df_data["adresse"].unique().item()
+    missing_dates: list[datetime.date] = get_missing_dates(df_data, "D").select(
         pl.col("missing_dates")).item().to_list()
-    spans = find_time_spans(missing_dates)
-    min_date = df.filter(pl.col('id') == sensor_id).select(pl.col("date").min()).item()
-    max_date = df.filter(pl.col('id') == sensor_id).select(pl.col("date").max()).item()
+    df_spans: pl.DataFrame = find_time_spans(missing_dates)
+    if df_spans.is_empty():
+        avg_length = 0
+        n_spans = 0
+    else:
+        avg_length = df_spans["n"].mean()
+        n_spans = len(df_spans)
+
+    logger.info(f"{sensor_id} average length of missing dates: {avg_length}")
+    logger.info(f"{sensor_id} number of missing time spans: {n_spans}")
+    min_date = df_data.select(pl.col("date").min()).item()
+    max_date = df_data.select(pl.col("date").max()).item()
     time_span = pd.date_range(min_date, max_date, freq="D").date
 
     df = pl.DataFrame({"date": list(time_span)})
-    df = df.join(df.filter(pl.col("id") == sensor_id), on="date", how="left")
+    df = df.join(df_data, on="date", how="left")
 
     df = df.to_pandas()
     df = df.set_index('date')
 
+    # plot missing dates
     fig, ax = plt.subplots()
+    ax.set_title(address + " " + sensor_id)
     ax.fill_between(df.index, df["diff"].min(), df["diff"].max(), where=df["diff"], facecolor="lightblue", alpha=0.5)
     ax.fill_between(df.index, df["diff"].min(), df["diff"].max(), where=np.isfinite(df["diff"]), facecolor="white",
                     alpha=1)
@@ -85,3 +49,29 @@ def plot_missing_dates(df: pl.DataFrame, sensor_id: str):
 
 
 if __name__ == "__main__":
+    df_daily = pl.read_csv(RAW_DATA_DIR / "daily.csv").with_columns(pl.col("date").str.to_date())
+    # ids = df["id"].unique()
+    corrupt_sensors = ["""d566a120-d232-489a-aa42-850e5a44dbee""",
+                       """7dd30c54-3be7-4a3c-b5e0-9841bb3ffddb""",
+                       """5c8f03f4-9165-43a2-8c42-1e813326934e""",
+                       """4ccc1cea-534d-4dbe-bf66-0d31d887088e""",
+                       """5e2fd59d-603a-488b-a525-513541039c4a""",
+                       """8ff79953-ad51-40b5-a025-f24418cae4b1""",
+                       """4f36b3bd-337e-4b93-9333-c53a28d0c417""",
+                       """2b9a3bc7-252f-4a10-8ccb-5ccce53e896a""",
+                       """44201958-2d6b-4952-956c-22ea951a6442""",
+                       """1a94c658-a524-4293-bb95-020c53beaabd""",
+                       """0c9ad311-b86f-4371-a695-512ca49c70a7""",
+                       """2f025f96-af2c-4140-b955-766a791fa925""",
+                       """8f7b3862-a50d-44eb-8ac9-de0cf48a6bd2""",
+                       """d5fb4343-04d4-4521-8a4b-feaf772ff376""",
+                       """35d897c4-9486-41c1-be9b-0e1707d9fbef""",
+                       """a9644794-439b-401c-b879-8c0225e16b99""",
+                       """61470655-33c1-4717-b729-baa6658a6aeb""",
+                       """bc098a2e-0cc7-4f01-b6ad-9d647ae9f627""",
+                       """b6b63b91-da14-449d-b213-e6ef5ca27e67""",
+                       """573a7d1e-de3f-49e1-828b-07d463d1fa4d"""
+                       ]
+    df_daily_dh = df_daily.filter(pl.col("source") == "dh")
+    for id in df_daily_dh["id"].unique():
+        plot_missing_dates(df_daily, id)

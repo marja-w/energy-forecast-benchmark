@@ -190,6 +190,7 @@ def load_data(input_path: Path, data_source: str) -> pd.DataFrame:
     elif data_source == "district_heating":
         df = update_district_heating_data(df)
 
+    # TODO: move to dataset features
     df['dayofweek'] = df.index.get_level_values('ArrivalTime').dayofweek
     df['weekend'] = df['dayofweek'].apply(lambda x: 1 if x >= 5 else 0)
     df['season'] = df.apply(lambda row: get_season(row['GMonth'], row['GDay']), axis=1)
@@ -198,7 +199,7 @@ def load_data(input_path: Path, data_source: str) -> pd.DataFrame:
     df = df.reset_index()
     df.drop("ArrivalTime", axis=1, inplace=True)
 
-    # outlier detection and removal of erroneous values
+    # TODO: move to dataset outlier detection and removal of erroneous values
     df = pl.from_pandas(df)
     df = remove_neg_diff_vals(df)
     logger.info(f"Current length of data: {len(df)} after removing negative diffs")

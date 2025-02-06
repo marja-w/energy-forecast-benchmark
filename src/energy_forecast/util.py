@@ -9,6 +9,12 @@ from loguru import logger
 from numpy import ndarray
 
 
+def get_id_from_address(meta_data: dict, adress: str) -> str:
+    for key, value in meta_data.items():
+        if value["address"]["street_address"] == adress:
+            return key
+
+
 def remove_leading_zeros(df):
     non_zero_idx = df.with_row_index().filter(pl.col("sum_kwh_diff") > 0)[0]["index"][
         0]  # get index of first row that isnt 0
@@ -30,8 +36,8 @@ def sum_columns(df, address, col_1, col_2):
 
     # rename title to Gaszähler Gesamt
     df_adresse = df_adresse.with_columns(pl.lit("Gaszähler Gesamt").alias("Title"))
-    print(f"Summing {col_1} and {col_2} for {address}")
-    print(f"Length of data is {len(df_adresse)}")
+    logger.info(f"Summing {col_1} and {col_2} for {address}")
+    logger.info(f"Length of data is {len(df_adresse)}")
 
     df = pl.concat([df, df_adresse])
     return df

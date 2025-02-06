@@ -3,21 +3,21 @@ import os
 from datetime import datetime
 from pathlib import Path
 
-import pandas as pd
 import polars as pl
 from loguru import logger
 
+from data.district_heating_data.daily_convert import eco_u_data_file
 from src.energy_forecast.config import RAW_DATA_DIR, DATA_DIR, PROCESSED_DATA_DIR, REFERENCES_DIR
 from src.energy_forecast.data_processing.transform import update_df_with_corrections
-from src.energy_forecast.util import sum_columns, replace_title_values, remove_leading_zeros
+from src.energy_forecast.util import sum_columns, replace_title_values, remove_leading_zeros, get_id_from_address
 
 
 class DataLoader(object):  #
-    def __init__(self, input_path: Path):
+    def __init__(self, input_path: Path, res: str = "daily"):
         self.input_path = input_path  # path to input data file or folder
         self.df_raw = pl.DataFrame()  # raw data
         self.df_t = pl.DataFrame()  # transformed data
-        self.res = ""  # resolution of transformed data, either daily or hourly
+        self.res = res  # resolution of transformed data, either daily or hourly
 
         self.meta_cols = list()  # list of columns for creating meta data file
         self.name = ""  # name for the given data source
@@ -55,10 +55,16 @@ class DataLoader(object):  #
         logger.info(f"Writing meta data file to {meta_data_csv}")
         df_meta.write_csv(meta_data_csv)
 
+    def write_data_and_meta(self):
+        self.load()
+        self.transform(self.res)
+        self.write_meta_data()
+        self.save()
+
 
 class LegacyDataLoader(DataLoader):
-    def __init__(self, input_path: Path):
-        super().__init__(input_path)
+    def __init__(self, input_path: Path, res: str = "daily"):
+        super().__init__(input_path, res)
         self.meta_cols = ["id", "GSM_ID", "TP", "Tag", "Title", "Type", "s", "m", "CircuitType", "CircuitNum",
                           "co2koeffizient"]
         self.name = "legacy"
@@ -145,8 +151,8 @@ class LegacyDataLoader(DataLoader):
 
 
 class KinergyDataLoader(DataLoader):
-    def __init__(self, input_path: Path):
-        super().__init__(input_path)
+    def __init__(self, input_path: Path, res: str = "daily"):
+        super().__init__(input_path, res)
         self.meta_cols = ["id", "renewable_energy_used", "has_pwh", "pwh_type", "building_type", "orga", "complexity",
                           "complexity_score", "env_id"]
         self.name = "kinergy"
@@ -161,7 +167,7 @@ class KinergyDataLoader(DataLoader):
             meta_data = json.loads(f.read())
 
         for eco_u_id in list(meta_data.keys()):
-            print(f"EcoU {eco_u_id} - {meta_data[eco_u_id]['name']}")
+            # logger.debug(print(f"EcoU {eco_u_id} - {meta_data[eco_u_id]['name']}"))
             sensor_file = f"{self.input_path}/consumption_data/{eco_u_id}_consumption.csv"
             if os.path.isfile(sensor_file):
                 # read the data
@@ -208,10 +214,22 @@ class KinergyDataLoader(DataLoader):
         logger.success(f"Data length after transforming: {len(df)}")
         self.df_t = df
 
+    def write_meta_data(self):
+        meta_data_file = self.input_path / "kinergy_eco_u_list.json"
+        with open(meta_data_file, "r", encoding="UTF-8") as f:
+            meta_data = json.loads(f.read())
+        # transform json dict to dataframe
+        data_points = list()
+        for key, item in meta_data.items():
+            item.update({"id": key})
+            data_points.append(item)
+        df_meta = pl.DataFrame(data_points).drop(["meter_ids"])
+        df_meta.write_csv(RAW_DATA_DIR / f"{self.name}_meta.csv")
+
 
 class DHDataLoader(DataLoader):
-    def __init__(self, input_path: Path):
-        super().__init__(input_path)
+    def __init__(self, input_path: Path, res: str = "daily"):
+        super().__init__(input_path, res)
         self.name = "dh"
         self.main_counter = pl.DataFrame()
 
@@ -229,7 +247,7 @@ class DHDataLoader(DataLoader):
 
         # filter for data endpoints of type "FW Wärmemenge" and store one .csv for each sensor
         sensors = list()
-        eco_u_data_merge = dict()
+        meta_data = dict()
         for file in os.listdir(dh_data_folder_first_part):
             filename = os.fsdecode(file)
             filename, file_extension = os.path.splitext(filename)
@@ -239,7 +257,7 @@ class DHDataLoader(DataLoader):
 
                 # collect meta data
                 eco_u_data_point = {filename: eco_u_data["economic_unit"]}
-                eco_u_data_merge.update(eco_u_data_point)
+                meta_data.update(eco_u_data_point)
 
                 # filter for wärmemenge
                 for data_point in eco_u_data["datapoint_data"]:
@@ -256,7 +274,7 @@ class DHDataLoader(DataLoader):
                 # df_sensor.write_csv(store_csv_path)
                 # print("Created " + str(store_csv_path))
         # write meta data json
-        json_object = json.dumps(eco_u_data_merge)
+        json_object = json.dumps(meta_data)
         logger.info(f"Writing meta data .json to {dh_data_folder / 'eco_u_ids.json'}")
         with open(dh_data_folder / "eco_u_ids.json", "w") as outfile:
             outfile.write(json_object)
@@ -280,6 +298,15 @@ class DHDataLoader(DataLoader):
         df = df.filter(
             pl.struct("eco_u_id", "data_provider_id").is_in(self.main_counter)  # filter only main counters
         )
+
+        # filter corrupt sensors
+        corr_sensors = ["Kielort 14", "Moorbekstraße 17", "Kielort 21", "Kielortring 14", "Kielortring 22",
+                        "Kielortring 16",
+                        "Ulzburger Straße 459 A", "Ulzburger Straße 461", "Kielort 22", "Kielort 19", "Kielortring 51",
+                        "Kielort 16", "Friedrichsgaber Weg 453"]
+        corr_sensors_ids = [get_id_from_address(meta_data, x) for x in corr_sensors]
+        df = df.filter(~pl.col("eco_u_id").is_in(corr_sensors_ids))
+
         logger.info(f"Data length after filtering: {len(df)}")
         self.df_raw = df
 

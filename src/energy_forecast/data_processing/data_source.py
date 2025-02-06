@@ -36,6 +36,7 @@ class DataLoader(object):  #
         """
         logger.info(f"Transforming data to {res} format")
         self.res = res
+        self.df_raw = self.df_raw.with_columns(pl.lit(self.name).alias("source"))
 
     def save(self):
         if self.df_t.is_empty():
@@ -107,7 +108,6 @@ class LegacyDataLoader(DataLoader):
         df = (self.df_raw.with_columns(
             pl.col("ArrivalTime").str.to_date().dt.date().alias("date"),
             pl.col("lastAggregated").str.to_datetime(),
-            pl.lit("legacy").alias("source"),
             pl.concat_str(  # create id
                 [pl.col("GSM_ID"),
                  pl.col("TP").str.slice(0, 1),
@@ -203,16 +203,124 @@ class KinergyDataLoader(DataLoader):
 
         if res == "daily":
             df = df.with_columns(pl.col("datetime").dt.date().alias("date")
-                               ).select(["id", "date", "value", "diff", "avg_env_temp"])
+                                 ).select(["id", "date", "value", "diff", "avg_env_temp"])
 
         logger.success(f"Data length after transforming: {len(df)}")
         self.df_t = df
 
 
-if __name__ == '__main__':
-    dl = KinergyDataLoader(DATA_DIR / "kinergy")
-    dl.load()
-    dl.transform("daily")
-    dl.save()
-    dl.transform("hourly")
-    dl.save()
+class DHDataLoader(DataLoader):
+    def __init__(self, input_path: Path):
+        super().__init__(input_path)
+        self.name = "dh"
+        self.main_counter = pl.DataFrame()
+
+    def load(self):
+        logger.info("Loading DH data")
+        dh_data_folder_first_part = self.input_path / "2024_01_29 Projekt KI-FW Data Export (2022_08-2024_01_29)" / "data"
+        dh_data_folder_second_part = self.input_path / "2024_05_14 Projekt KI-FW Data Export (2024_02_08-2024_05_14)"
+        file_path_dump_1 = dh_data_folder_first_part / "dump.csv"
+        file_path_dump_2 = dh_data_folder_second_part / "dump.csv"
+        dh_data_folder = self.input_path / "data"
+
+        df = pl.scan_csv([file_path_dump_1, file_path_dump_2]).collect()
+        logger.info(f"Raw data length: {len(df)}")
+        logger.info("Filtering data for FW Wärmemenge endpoints")
+
+        # filter for data endpoints of type "FW Wärmemenge" and store one .csv for each sensor
+        sensors = list()
+        eco_u_data_merge = dict()
+        for file in os.listdir(dh_data_folder_first_part):
+            filename = os.fsdecode(file)
+            filename, file_extension = os.path.splitext(filename)
+            if file_extension == ".json":
+                with open(dh_data_folder_first_part / file, "r", encoding="UTF-8") as f:
+                    eco_u_data = json.loads(f.read())
+
+                # collect meta data
+                eco_u_data_point = {filename: eco_u_data["economic_unit"]}
+                eco_u_data_merge.update(eco_u_data_point)
+
+                # filter for wärmemenge
+                for data_point in eco_u_data["datapoint_data"]:
+                    if data_point["title"] == "FW Wärmemenge":  # filter FW Wärmemenge
+                        sensor_id = data_point["id"]
+                eco_u_id, data_provider_id = filename.split(".")
+                df_sensor = df.filter(pl.col("eco_u_id") == eco_u_id,
+                                      pl.col("data_provider_id") == data_provider_id,
+                                      pl.col("sensor_id") == sensor_id
+                                      ).sort(pl.col("time"))
+                # print(f"Adding {len(df_sensor)} for {eco_u_id}")
+                sensors.append(df_sensor)
+                # store_csv_path = dh_data_folder / f"{filename}.csv"
+                # df_sensor.write_csv(store_csv_path)
+                # print("Created " + str(store_csv_path))
+        # write meta data json
+        json_object = json.dumps(eco_u_data_merge)
+        logger.info(f"Writing meta data .json to {dh_data_folder / 'eco_u_ids.json'}")
+        with open(dh_data_folder / "eco_u_ids.json", "w") as outfile:
+            outfile.write(json_object)
+
+        # merge filtered sensors to one dataframe
+        df = pl.concat(sensors)
+
+        # filter data for main counter of the buildings, where the value is the largest of the building
+        self.main_counter = df.group_by(
+            pl.col(["eco_u_id", "data_provider_id"])
+        ).agg(pl.len(),
+              pl.col("time").min().alias("min_time"),
+              pl.col("time").max().alias("max_time"),
+              pl.col("value").max().alias("max_value")
+              ).group_by(
+            "eco_u_id").agg(
+            pl.col("data_provider_id").filter(pl.col("max_value") == pl.col("max_value").max())).with_columns(
+            pl.col("data_provider_id").map_elements(lambda v: v[0], return_dtype=pl.String)
+        )
+
+        df = df.filter(
+            pl.struct("eco_u_id", "data_provider_id").is_in(self.main_counter)  # filter only main counters
+        )
+        logger.info(f"Data length after filtering: {len(df)}")
+        self.df_raw = df
+
+    def transform(self, res: str):
+        super().transform(res=res)
+        if res == "daily":
+            time_delta = "1d"
+        elif res == "hourly":
+            time_delta = "1h"
+        else:
+            raise ValueError(f"Unknown res type: {res}")
+        df = self.df_raw.with_columns(pl.col("time").str.to_datetime("%Y-%m-%dT%H:%M:%S%.fZ").alias("datetime"))
+        df = df.group_by_dynamic(index_column="datetime", every=time_delta,
+                                 group_by=["sensor_id", "eco_u_id", "data_provider_id"]
+                                 ).agg(pl.col("value").max())
+
+        df = df.rename({"eco_u_id": "id"}).select(["id", "datetime", "value", "sensor_id"]
+                                                  ).unique(subset=["id", "datetime"]
+                                                           ).sort(["id", "datetime"])
+        # compute diff column
+        df = df.with_columns(pl.col("value").diff().over(pl.col("id")).alias("diff")).drop_nulls(subset=["diff"])
+        logger.info(f"Data length after transforming: {len(df)}")
+        self.df_t = df
+
+    def write_meta_data(self):
+        logger.info("Writing meta data file")
+        eco_u_data_file = DATA_DIR / "district_heating_data" / "eco_u_ids.json"
+        with open(eco_u_data_file, "r", encoding="UTF-8") as f:
+            meta = json.loads(f.read())
+        meta_data = list()
+        for key, item in meta.items():
+            eco_u_id, data_provider_id = key.split(".")
+            address = item["address"]["street_address"]
+            city = item["address"]["address_locality"]
+            postal_code = item["address"]["postal_code"]
+            country = item["address"]["address_country"]
+            meta_data.append(
+                {"eco_u_id": eco_u_id, "data_provider_id": data_provider_id, "address": address, "city": city,
+                 "postal_code": postal_code, "country": country})
+        df_meta = pl.DataFrame(meta_data).filter(pl.struct("eco_u_id", "data_provider_id").is_in(self.main_counter))
+        df_meta = df_meta.with_columns(pl.lit("district heating").alias("primary_energy"),
+                                       pl.lit("kwh").alias("unit_code"))
+        logger.success(f"Writing meta data file to {RAW_DATA_DIR / f'{self.name}_meta.csv'}")
+        df_meta.write_csv(RAW_DATA_DIR / f"{self.name}_meta.csv")

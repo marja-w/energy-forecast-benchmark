@@ -1,15 +1,109 @@
-import json
-import os
-from typing import Any
-
-import pandas as pd
 import polars as pl
-import typer
 from loguru import logger
 
-from config import RAW_DATA_DIR, DATA_DIR
-from src.energy_forecast.config import REPORTS_DIR
+from config import RAW_DATA_DIR, DATA_DIR, PROCESSED_DATA_DIR
 from src.energy_forecast.data_processing.data_source import LegacyDataLoader, KinergyDataLoader, DHDataLoader
+
+
+def remove_neg_diff_vals(df):
+    """
+    Remove faulty gas meter data points that caused negative diff values
+    :param df:
+    :return:
+    """
+
+    # die diffs stimmen jetzt nicht mehr, wenn reihen entfernt werden. Problem?
+    # die diffs sollten weiterhin stimmen, da die differenz vom "falschen" Gaszählerstand immer noch die richtige
+    # differenz ist
+
+    return df.filter(
+        pl.col("diff") >= 0  # remove all rows with negative usage
+    )
+
+
+def filter_outliers_iqr(df, column):
+    """
+    Filter outliers in the specified column of the DataFrame using the 1.5 IQR method.
+
+    :param df: polars DataFrame
+    :param column: column name to filter outliers
+    :return: DataFrame with outliers removed
+    """
+    q25 = df[column].quantile(0.25)
+    q75 = df[column].quantile(0.75)
+    iqr = q75 - q25
+
+    upper_bound = q75 + 1.5 * iqr
+
+    filtered_df = df.filter(pl.col(column) <= upper_bound)
+    filtered_count = len(df) - len(filtered_df)
+
+    logger.info(f"Filtered {filtered_count} rows for column {column} for ID {df['id'][0]}")
+
+    return filtered_df
+
+
+def filter_outliers_by_id(df, filter_column):
+    """
+    Apply the filter_outliers_iqr function to each subset of the DataFrame grouped by the id_column.
+
+    :param df: polars DataFrame
+    :param filter_column: column name to filter outliers
+    :return: DataFrame with outliers removed for each group
+    """
+
+    filtered_df = df.group_by("id").map_groups(lambda group: filter_outliers_iqr(group, filter_column))
+    return filtered_df
+
+
+class Dataset(object):
+    def __init__(self, res: str = "daily"):
+        self.res = res
+        if res == "daily":
+            self.data_sources = ["kinergy", "dh", "legacy"]
+        elif res == "hourly":
+            self.data_sources = ["kinergy", "dh"]
+        else:
+            raise ValueError(f"Unknown value for resolution: {res}")
+        self.df = pl.DataFrame()
+
+    def create(self):
+        dfs = list()
+        cols = ["id", "datetime", "diff"]
+        logger.info(f"Creating {self.res} dataset")
+        for data_source in self.data_sources:
+            dfs.append(pl.read_csv(RAW_DATA_DIR / f"{data_source}_{self.res}.csv").select(cols))
+        df = pl.concat(dfs)
+        logger.info(f"Number of rows: {df.shape[0]}")
+        n_sensors = len(df.group_by(pl.col("id")).agg())
+        logger.info(f"Number of sensors: {n_sensors}")
+        self.df = df
+
+    def clean(self):
+        logger.info(f"Cleaning {self.res} dataset")
+        df = self.df
+        logger.info(f"Number of rows: {len(df)}")
+
+        logger.info("Removing negative diff values")
+        df = remove_neg_diff_vals(df)
+        logger.info(f"Number of rows after removing negative values: {len(df)}")
+
+        logger.info("Filtering outliers")
+        df = filter_outliers_by_id(df, "diff")
+        logger.info(f"Number of rows after filtering outliers: {len(df)}")
+
+        logger.success(f"Number of rows after cleaning data: {len(df)}")
+        self.df = df
+
+    def save(self):
+        output_file_path = f"{PROCESSED_DATA_DIR}/dataset_{self.res}.csv"
+        logger.info(f"Saving {self.res} dataset to {output_file_path}")
+        self.df.write_csv(output_file_path)
+
+    def create_and_clean(self):
+        self.create()
+        self.clean()
+        self.save()
 
 
 if __name__ == '__main__':
@@ -26,4 +120,10 @@ if __name__ == '__main__':
     DHDataLoader(DATA_DIR / "district_heating_data", res="hourly").write_data_and_meta()
 
     logger.info("Finish data loading")
+
+    ds = Dataset()
+    ds.create_and_clean()
+
+    ds_hourly = Dataset(res="hourly")
+    ds_hourly.create_and_clean()
 

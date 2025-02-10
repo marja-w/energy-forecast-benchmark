@@ -6,10 +6,83 @@ from pathlib import Path
 import polars as pl
 from loguru import logger
 
-from data.district_heating_data.daily_convert import eco_u_data_file
-from src.energy_forecast.config import RAW_DATA_DIR, DATA_DIR, PROCESSED_DATA_DIR, REFERENCES_DIR
-from src.energy_forecast.data_processing.transform import update_df_with_corrections
+from src.energy_forecast.config import RAW_DATA_DIR, DATA_DIR, REFERENCES_DIR
 from src.energy_forecast.util import sum_columns, replace_title_values, remove_leading_zeros, get_id_from_address
+
+
+def update_df_with_corrections(df: pl.DataFrame, correction_csv_path: Path) -> pl.DataFrame:
+    """
+    Updates the main DataFrame `df` with corrections from a CSV file.
+
+    Parameters:
+    - df: polars.DataFrame
+        The main DataFrame containing energy consumption data.
+    - correction_csv_path: str
+        The file path to the correction CSV.
+
+    Returns:
+    - polars.DataFrame
+        The updated DataFrame with corrected `qmbehfl` and `anzlwhg` values.
+    """
+
+    # Step 1: Read the correction CSV
+    correction = pl.read_csv(
+        correction_csv_path,
+        separator=",",
+        has_header=True,
+        try_parse_dates=False,  # Prevent automatic date parsing
+        # Specify encoding if necessary, e.g., encoding="utf8"
+    )
+
+    # Step 2a: Drop entries where qmbehfl is '?'
+    correction = correction.filter(pl.col('qmbehfl') != '?')
+
+    # Step 2b: Replace '?' in anzlwhg with 0
+    correction = correction.with_columns([
+        pl.when(pl.col('anzlwhg') == '?')
+        .then(0)
+        .otherwise(pl.col('anzlwhg'))
+        .cast(pl.Int64)
+        .alias('anzlwhg')
+    ])
+
+    # Step 2c: Replace ',' with '.' in qmbehfl and convert to float
+    correction = correction.with_columns([
+        pl.col('qmbehfl')
+        .str.replace(",", ".")
+        .cast(pl.Float64)
+        .alias('qmbehfl')
+    ])
+
+    # Step 3: Select relevant columns for merging
+    correction = correction.select(['id', 'qmbehfl', 'anzlwhg'])
+
+    # Step 4: Join the correction data with the main DataFrame on 'new_id'
+    # Perform a left join to retain all rows from df
+    df_updated = df.join(
+        correction,
+        on='id',
+        how='left',
+        suffix='_corr'
+    )
+
+    # Step 5: Update 'qmbehfl' and 'anzlwhg' with corrected values where available
+    df_updated = df_updated.with_columns([
+        pl.when(pl.col('qmbehfl_corr').is_not_null())
+        .then(pl.col('qmbehfl_corr'))
+        .otherwise(pl.col('qmbehfl'))
+        .alias('qmbehfl'),
+
+        pl.when(pl.col('anzlwhg_corr').is_not_null())
+        .then(pl.col('anzlwhg_corr'))
+        .otherwise(pl.col('anzlwhg'))
+        .alias('anzlwhg')
+    ])
+
+    # Step 6: Drop the temporary correction columns
+    df_updated = df_updated.drop(['qmbehfl_corr', 'anzlwhg_corr'])
+
+    return df_updated
 
 
 class DataLoader(object):  #
@@ -50,7 +123,7 @@ class DataLoader(object):  #
 
     def write_meta_data(self):
         # extract metadata
-        df_meta = self.df_t.group_by(self.meta_cols).agg()
+        df_meta = self.df_raw.group_by(self.meta_cols).agg()
         meta_data_csv = RAW_DATA_DIR / f"{self.name}_meta.csv"
         logger.info(f"Writing meta data file to {meta_data_csv}")
         df_meta.write_csv(meta_data_csv)
@@ -66,13 +139,13 @@ class LegacyDataLoader(DataLoader):
     def __init__(self, input_path: Path, res: str = "daily"):
         super().__init__(input_path, res)
         self.meta_cols = ["id", "GSM_ID", "TP", "Tag", "Title", "Type", "s", "m", "CircuitType", "CircuitNum",
-                          "co2koeffizient"]
+                          "primary_energy", "co2koeffizient", "adresse", "plz", "ort", "qmbehfl", "anzlwhg"]
         self.name = "legacy"
 
     def load(self):
         logger.info("Loading legacy data")
         df = pl.read_csv(self.input_path, schema_overrides={"plz": pl.String, "m": pl.Float64})
-        df = df.with_columns(pl.col("ArrivalTime").str.to_datetime().alias("date"))
+        df = df.with_columns(pl.col("ArrivalTime").str.to_datetime().alias("datetime"))
         logger.info("Raw data length: {}".format(len(df)))
 
         logger.info("Filtering data for gas values")
@@ -91,11 +164,11 @@ class LegacyDataLoader(DataLoader):
 
         # manually remove corrupt days
         df = df.filter(~((pl.col("adresse") == "Wilhelmstraße 33-41") & (
-            pl.col("date").is_between(datetime(2019, 11, 6), datetime(2019, 12, 21)))))
+            pl.col("datetime").is_between(datetime(2019, 11, 6), datetime(2019, 12, 21)))))
         df = df.filter(~((pl.col("adresse") == "Dahlgrünring 5-9") & (
-            pl.col("date").is_between(datetime(2021, 4, 8), datetime(2021, 6, 28)))))
+            pl.col("datetime").is_between(datetime(2021, 4, 8), datetime(2021, 6, 28)))))
         df = df.filter(~((pl.col("adresse") == "Kaltenbergen 22") & (
-            pl.col("date").is_between(datetime(2020, 3, 12), datetime(2020, 4, 28)))))
+            pl.col("datetime").is_between(datetime(2020, 3, 12), datetime(2020, 4, 28)))))
 
         logger.info("Merge split data loggers")
         # sum dataloggers to get overall consumption
@@ -106,22 +179,23 @@ class LegacyDataLoader(DataLoader):
         df = sum_columns(df, "Op´n Hainholt 4-18", "Gaszähler Kessel", "Gaszähler BHKW")
         df = sum_columns(df, "Sven Hedin Str.11", "Gaszähler Kessel", "Gaszähler BHKW")
 
+        # create id and rename
+        df = df.with_columns(pl.concat_str(  # create id
+            [pl.col("GSM_ID"),
+             pl.col("TP").str.slice(0, 1),
+             pl.col("Tag")]
+        ).alias("id")).rename({"CircuitPoint": "primary_energy"})
+
         logger.success("Data length now: {}".format(len(df)))
         self.df_raw = df
 
     def transform(self, res: str = "daily"):
         super().transform(res=res)
         df = (self.df_raw.with_columns(
-            pl.col("ArrivalTime").str.to_date().dt.date().alias("date"),
-            pl.col("lastAggregated").str.to_datetime(),
-            pl.concat_str(  # create id
-                [pl.col("GSM_ID"),
-                 pl.col("TP").str.slice(0, 1),
-                 pl.col("Tag")]
-            ).alias("id"),
-        ).unique(subset=["GSM_ID", "TP", "Tag", "date"]  # remove duplicates
-                 ).rename({"CircuitPoint": "primary_energy"}
-                          ).sort(by=["GSM_ID", "TP", "Tag", "date"])
+            pl.col("ArrivalTime").str.to_datetime().alias("datetime"),
+            pl.col("lastAggregated").str.to_datetime()
+        ).unique(subset=["GSM_ID", "TP", "Tag", "datetime"]  # remove duplicates
+                 ).sort(by=["GSM_ID", "TP", "Tag", "datetime"])
               .with_columns(
             pl.col("primary_energy").str.to_lowercase(),
             pl.when(pl.col("Unit") == "CBM")
@@ -134,20 +208,29 @@ class LegacyDataLoader(DataLoader):
         ).drop_nulls(subset=["diff"])
               )
 
-        ## TODO: move to dataset later
         # unify naming of gas meters
         df = replace_title_values(df, [("Gas Zähler", "Gaszähler"),
                                        ("Gaszähler Z Kessel", "Gaszähler Kessel Z"),
                                        ("Gas", "Gaszähler"),
                                        ("Gesamt Gaszähler", "Gaszähler Gesamt")])
 
-        # add missing qmbehfl and anzlwhg values from correction file
-        correction_csv_path = REFERENCES_DIR / "liegenschaften_missing_qm_wohnung.csv"
-        df = update_df_with_corrections(df, correction_csv_path)
+        df = df.rename({"Val": "value"}).select(["id", "datetime", "value", "diff"])
 
         logger.info(f"Current length of data: {len(df)} after transforming")
         logger.success("Transforming legacy dataset complete.")
         self.df_t = df
+
+    def write_meta_data(self):
+        # extract metadata
+        df_meta = self.df_raw.group_by(self.meta_cols).agg()
+        meta_data_csv = RAW_DATA_DIR / f"{self.name}_meta.csv"
+
+        # add missing qmbehfl and anzlwhg values from correction file
+        correction_csv_path = REFERENCES_DIR / "liegenschaften_missing_qm_wohnung.csv"
+        df_meta = update_df_with_corrections(df_meta, correction_csv_path)
+
+        logger.info(f"Writing meta data file to {meta_data_csv}")
+        df_meta.write_csv(meta_data_csv)
 
 
 class KinergyDataLoader(DataLoader):
@@ -207,9 +290,7 @@ class KinergyDataLoader(DataLoader):
         # remove duplicates
         df = df.unique(subset=["id", "datetime"]).sort(["id", "datetime"])
 
-        if res == "daily":
-            df = df.with_columns(pl.col("datetime").dt.date().alias("date")
-                                 ).select(["id", "date", "value", "diff", "avg_env_temp"])
+        df = df.select(["id", "datetime", "value", "diff", "avg_env_temp"])
 
         logger.success(f"Data length after transforming: {len(df)}")
         self.df_t = df

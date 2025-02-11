@@ -9,6 +9,26 @@ from loguru import logger
 from numpy import ndarray
 
 
+def add_env_energy(df: pl.DataFrame, df_raw: pl.DataFrame, address: str, col_gas: str, col_env: str):
+    val_col_env = df_raw.filter((pl.col("adresse") == address) & (pl.col("Title") == col_env))["Val"]
+    df_adresse = df_raw.filter((pl.col("adresse") == address) & (pl.col("Title") == col_gas))
+
+    # remove the whole address
+    df = df.filter(~(pl.col("adresse") == address))
+
+    # add the values of column 2 to column 1 and drop column 2
+    df_adresse = df_adresse.with_columns(val_col_env.alias("val_2")).with_columns(
+        pl.col("Val") + pl.col("val_2").alias("Val")).drop(["val_2"])
+
+    # rename title
+    df_adresse = df_adresse.with_columns(pl.lit("Energie Gesamt").alias("Title"))
+    logger.info(f"Summing {col_gas} and {col_env} for {address}")
+    logger.info(f"Length of data is {len(df_adresse)}")
+
+    df = pl.concat([df, df_adresse])
+    return df
+
+
 def get_id_from_address(meta_data: dict, adress: str) -> str:
     for key, value in meta_data.items():
         if value["address"]["street_address"] == adress:
@@ -45,10 +65,9 @@ def sum_columns(df, address, col_1, col_2):
 
 def get_missing_dates(df: pl.DataFrame, frequency: str = "D") -> pl.DataFrame:
     missing_dates = []
-    df = df.with_columns(pl.col("date").dt.date().alias("date"))
     df_time = df.group_by(pl.col("id")).agg(pl.len(),
-                                            pl.col("date").min().alias("min_date"),
-                                            pl.col("date").max().alias("max_date")
+                                            pl.col("datetime").min().alias("min_date"),
+                                            pl.col("datetime").max().alias("max_date")
                                             )
     for row in df_time.iter_rows():
         id = row[0]
@@ -57,9 +76,9 @@ def get_missing_dates(df: pl.DataFrame, frequency: str = "D") -> pl.DataFrame:
         start_date = row[2]
         end_date = row[3]
 
-        date_list_rec = df.filter(pl.col("id") == id).select(pl.col("date"))["date"].to_list()
+        date_list_rec = df.filter(pl.col("id") == id).select(pl.col("datetime"))["datetime"].to_list()
 
-        date_list = pd.date_range(start_date, end_date, freq=frequency).date
+        date_list = pd.date_range(start_date, end_date, freq=frequency)
 
         missing_dates_sensor = list(set(date_list) - set(date_list_rec))
         missing_dates_sensor.sort()
@@ -70,7 +89,7 @@ def get_missing_dates(df: pl.DataFrame, frequency: str = "D") -> pl.DataFrame:
     return pl.DataFrame(missing_dates).sort(pl.col("len"), descending=True)
 
 
-def find_time_spans(dates: list[date]) -> pl.DataFrame:
+def find_time_spans(dates: list[date], delta: timedelta) -> pl.DataFrame:
     if len(dates) == 0:
         return pl.DataFrame()
     spans = []
@@ -84,7 +103,7 @@ def find_time_spans(dates: list[date]) -> pl.DataFrame:
     for i in range(1, len(dates)):
         current_date = dates[i]
 
-        if current_date == prev_date + timedelta(days=1):
+        if current_date == prev_date + delta:
             count += 1
         else:
             spans.append({"start": start_date, "end": prev_date, "n": count})

@@ -7,7 +7,8 @@ import polars as pl
 from loguru import logger
 
 from src.energy_forecast.config import RAW_DATA_DIR, DATA_DIR, REFERENCES_DIR
-from src.energy_forecast.util import sum_columns, replace_title_values, remove_leading_zeros, get_id_from_address
+from src.energy_forecast.util import sum_columns, replace_title_values, remove_leading_zeros, get_id_from_address, \
+    add_env_energy
 
 
 def update_df_with_corrections(df: pl.DataFrame, correction_csv_path: Path) -> pl.DataFrame:
@@ -144,23 +145,31 @@ class LegacyDataLoader(DataLoader):
 
     def load(self):
         logger.info("Loading legacy data")
-        df = pl.read_csv(self.input_path, schema_overrides={"plz": pl.String, "m": pl.Float64})
-        df = df.with_columns(pl.col("ArrivalTime").str.to_datetime().alias("datetime"))
-        logger.info("Raw data length: {}".format(len(df)))
+        df_raw = pl.read_csv(self.input_path, schema_overrides={"plz": pl.String, "m": pl.Float64})
+        df_raw = df_raw.with_columns(pl.col("ArrivalTime").str.to_datetime().alias("datetime"))
+        logger.info("Raw data length: {}".format(len(df_raw)))
 
         logger.info("Filtering data for gas values")
-        # tps = ["GAS", "Gas1", "Gas_Gesamt", "GasKessel", "PulseCount0", """Gas""", """gas"""]
-        # df = df.filter((pl.col("CircuitPoint") == "GAS").or_(pl.col("TP").is_in(tps)))  # TODO: wait for input from timo
-        df = df.filter((pl.col("CircuitPoint") == "GAS"))
+        tps = ["GAS", "Gas1", "Gas_Gesamt", "GasKessel", "PulseCount0", """Gas""", """gas"""]
+        df = df_raw.filter((pl.col("CircuitPoint") == "GAS").or_(pl.col("TP").is_in(tps)))
+        # df = df.filter((pl.col("CircuitPoint") == "GAS"))
 
         logger.info("Removing corrupt data loggers")
         # remove Schenfelder Holt BHWK (Unterzähler)
         df = df.filter(~((pl.col("Title") == "Gaszähler BHKW") & (pl.col("adresse") == "Schenfelder Holt 135")))
 
         # remove for now TODO: update with info from timo
-        df = df.filter(~((pl.col("adresse") == "Chemnitzstraße 25c") & (
-                pl.col("Title") == "Gaszähler GWP")))  # Hauptzähler, aber auch Solarthermie
-        df = df.filter(~(pl.col("adresse") == "Heidrehmen 1"))  # Hauptzähler fehlt
+        df = df.filter(~(pl.col("adresse") == "Chemnitzstraße 25c"))  # TODO: Hauptzähler, aber auch Solarthermie, add?
+        df = df.filter(~(pl.col("adresse") == "Heidrehmen 1"))  # Stromzähler fehlt
+        df = df.filter(~(pl.col("adresse") == "Iserbrooker Weg 72"))  # Stromzähler fehlt
+        df = df.filter(~(pl.col("adresse") == "Marienstraße 31"))  # Wasserzähler fehlt
+        df = df.filter(~(pl.col("adresse") == "Mönkhofer Weg 187"))  # Stromzähler fehlt
+        df = df.filter(~(pl.col("adresse") == "Op´n Hainholt 4-18"))  # Stromzähler fehlt
+        df = df.filter(~(pl.col("adresse") == "Sven Hedin Str.11"))  # Stromzähler fehlt
+        df = df.filter(~(pl.col("adresse") == "Süntelstraße 5"))  # Stromzähler fehlt
+        df = df.filter(~(pl.col("adresse") == "Martinistraße 44"))  # Solarthermie
+        df = df.filter(~(pl.col("adresse") == "Theodor-Storm-Straße 9-11"))  # nur 0 Werte TODO: find gesamt zähler
+        df = df.filter(~(pl.col("plz") == "9723 J"))  # cant read format
 
         # manually remove corrupt days
         df = df.filter(~((pl.col("adresse") == "Wilhelmstraße 33-41") & (
@@ -173,11 +182,13 @@ class LegacyDataLoader(DataLoader):
         logger.info("Merge split data loggers")
         # sum dataloggers to get overall consumption
         df = sum_columns(df, "Brandenbaumer Landstraße 177", "Gaszähler Kessel", "Gaszähler GAWP")
+        df = sum_columns(df, "Burgfeldstraße 39b", "Gaszähler Bistro", "Gaszähler Heizungsbauer")
         df = sum_columns(df, "Frankfurter Straße 29 ", "Gaszähler Kessel H29", "Gaszähler Kessel H17")
         df = sum_columns(df, "Iserbrooker Weg 72", "Gaszähler Kessel ", "Gaszähler BHKW")
-        df = sum_columns(df, "Martinistraße 44", "GAWP 1 Gaszähler", "GAWP 2 Gaszähler")
-        df = sum_columns(df, "Op´n Hainholt 4-18", "Gaszähler Kessel", "Gaszähler BHKW")
-        df = sum_columns(df, "Sven Hedin Str.11", "Gaszähler Kessel", "Gaszähler BHKW")
+        df = sum_columns(df, "Von-Bodelschwingh-Straße 1", "Gaszähler Kessel", "Gaszähler BHKW")
+
+        # add solar energy to buildings with env energy
+        # df = add_env_energy(df, df_raw, "Chemnitzstraße 25c", "?", "?")
 
         # create id and rename
         df = df.with_columns(pl.concat_str(  # create id
@@ -257,8 +268,12 @@ class KinergyDataLoader(DataLoader):
                 df_s = pl.read_csv(sensor_file, null_values="null")
                 df_s = df_s.with_columns(pl.col("bucket").str.to_datetime().alias("datetime"),
                                          ).select(["datetime", "sum_kwh", "sum_kwh_diff", "env_temp"])
-                # remove zeros that are recorded before the sensor was actually working
+                # remove zeros that are recorded before the sensor was actually working and at the end
+                df_s = df_s.sort(by=["datetime"], descending=True)
                 df_s = remove_leading_zeros(df_s)
+                df_s = df_s.sort(by=["datetime"], descending=False)
+                df_s = remove_leading_zeros(df_s)
+
                 df_s = df_s.with_columns(pl.lit(eco_u_id).alias("id"))
                 df_s = df_s.cast({"env_temp": pl.Float64})  # if temp is null
                 logger.info(f"Adding {len(df_s)} datapoints for {eco_u_id}")
@@ -290,6 +305,7 @@ class KinergyDataLoader(DataLoader):
         # remove duplicates
         df = df.unique(subset=["id", "datetime"]).sort(["id", "datetime"])
 
+        df = df.with_columns(pl.col("datetime").dt.replace_time_zone(None))  # remove time zone
         df = df.select(["id", "datetime", "value", "diff", "avg_env_temp"])
 
         logger.success(f"Data length after transforming: {len(df)}")
@@ -409,6 +425,10 @@ class DHDataLoader(DataLoader):
                                                            ).sort(["id", "datetime"])
         # compute diff column
         df = df.with_columns(pl.col("value").diff().over(pl.col("id")).alias("diff")).drop_nulls(subset=["diff"])
+
+        # remove erroneous logger
+        df = df.filter(~(pl.col("id") == "d00d6502-a08d-45df-99e3-7d8cd55200d1"))  # Moorbekstraße 17
+
         logger.info(f"Data length after transforming: {len(df)}")
         self.df_t = df
 

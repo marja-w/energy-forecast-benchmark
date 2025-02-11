@@ -6,16 +6,16 @@ import polars as pl
 from loguru import logger
 from matplotlib import pyplot as plt
 
-from src.energy_forecast.config import RAW_DATA_DIR
+from src.energy_forecast.config import RAW_DATA_DIR, PROCESSED_DATA_DIR
 from src.energy_forecast.util import find_time_spans, get_missing_dates
 
 
 def plot_missing_dates(df_data: pl.DataFrame, sensor_id: str):
     df_data = df_data.filter(pl.col("id") == sensor_id)
-    address = df_data["adresse"].unique().item()
+    # address = df_data["adresse"].unique().item()
     missing_dates: list[datetime.date] = get_missing_dates(df_data, "D").select(
         pl.col("missing_dates")).item().to_list()
-    df_spans: pl.DataFrame = find_time_spans(missing_dates)
+    df_spans: pl.DataFrame = find_time_spans(missing_dates, delta=timedelta(days=1))
     if df_spans.is_empty():
         avg_length = 0
         n_spans = 0
@@ -25,19 +25,20 @@ def plot_missing_dates(df_data: pl.DataFrame, sensor_id: str):
 
     logger.info(f"{sensor_id} average length of missing dates: {avg_length}")
     logger.info(f"{sensor_id} number of missing time spans: {n_spans}")
-    min_date = df_data.select(pl.col("date").min()).item()
-    max_date = df_data.select(pl.col("date").max()).item()
-    time_span = pd.date_range(min_date, max_date, freq="D").date
+    min_date = df_data.select(pl.col("datetime").min()).item()
+    max_date = df_data.select(pl.col("datetime").max()).item()
+    time_span = pd.date_range(min_date, max_date, freq="D")
 
-    df = pl.DataFrame({"date": list(time_span)})
-    df = df.join(df_data, on="date", how="left")
+    df = pl.DataFrame({"datetime": list(time_span)})
+    df = df.join(df_data, on="datetime", how="left")
 
     df = df.to_pandas()
-    df = df.set_index('date')
+    df = df.set_index('datetime')
 
     # plot missing dates
     fig, ax = plt.subplots()
-    ax.set_title(address + " " + sensor_id)
+    source_code = df_data["source"].unique().item()
+    ax.set_title(source_code + " " + sensor_id)
     ax.fill_between(df.index, df["diff"].min(), df["diff"].max(), where=df["diff"], facecolor="lightblue", alpha=0.5)
     ax.fill_between(df.index, df["diff"].min(), df["diff"].max(), where=np.isfinite(df["diff"]), facecolor="white",
                     alpha=1)
@@ -49,7 +50,7 @@ def plot_missing_dates(df_data: pl.DataFrame, sensor_id: str):
 
 
 if __name__ == "__main__":
-    df_daily = pl.read_csv(RAW_DATA_DIR / "daily.csv").with_columns(pl.col("date").str.to_date())
+    df_daily = pl.read_csv(PROCESSED_DATA_DIR / "dataset_daily.csv").with_columns(pl.col("datetime").str.to_datetime())
     # ids = df["id"].unique()
     corrupt_sensors = ["""d566a120-d232-489a-aa42-850e5a44dbee""",
                        """7dd30c54-3be7-4a3c-b5e0-9841bb3ffddb""",
@@ -72,6 +73,6 @@ if __name__ == "__main__":
                        """b6b63b91-da14-449d-b213-e6ef5ca27e67""",
                        """573a7d1e-de3f-49e1-828b-07d463d1fa4d"""
                        ]
-    df_daily_dh = df_daily.filter(pl.col("source") == "dh")
-    for id in df_daily_dh["id"].unique():
+    # df_daily_dh = df_daily.filter(pl.col("source") == "dh")
+    for id in df_daily["id"].unique():
         plot_missing_dates(df_daily, id)

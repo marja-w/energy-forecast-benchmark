@@ -1,4 +1,4 @@
-Netznummer,Teilwärmenetz,Anzahl Versorgungsleitungen,max. zulässige Betriebstemperatur,max. zulässiger Betriebsdruck,Bezugsniveau,minimale Nenndruckstufe,max_vorlauf_temp,min_vorlauf_temp,Mindestauskühlung des HWD
+netz_nummer,Teilwärmenetz,Anzahl Versorgungsleitungen,max. zulässige Betriebstemperatur,max. zulässiger Betriebsdruck,Bezugsniveau,minimale Nenndruckstufe,max_vorlauf_temp,min_vorlauf_temp,Mindestauskühlung des HWD
 2100, FV Klingenberg/Lichtenberg, 2, 140 °C, 16 bar (Ü), 43 m ü. NN, PN25, 135 °C, 80 °C, 90 K
 2600, FV Mitte, 2, 140 °C, 13 bar (Ü), 35 m ü. NN, PN25, 135 °C, 80 °C, 90 K
 2601, FV Mitte TN Kreuzberg/Tiergarten, 2, 140 °C, 13 bar (Ü), 35 m ü. NN, PN25, 135 °C, 80 °C, 90 K

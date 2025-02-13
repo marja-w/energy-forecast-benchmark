@@ -1,0 +1,464 @@
+state,start,end,type
+BE,2018-07-22,2018-09-30,uni
+HH,2018-07-17,2018-09-30,uni
+MV,2018-07-14,2018-10-14,uni
+BY,2018-07-14,2018-10-14,uni
+BE,2019-02-17,2019-04-07,uni
+HH,2019-02-03,2019-03-30,uni
+MV,2018-12-22,2019-01-04,uni
+BE,2018-12-22,2019-01-05,uni
+HH,2018-12-23,2019-01-06,uni
+BY,2018-12-24,2019-01-06,uni
+BE,2019-07-14,2019-10-13,uni
+HH,2019-07-14,2019-10-13,uni
+BE,2019-02-16,2019-04-19,uni
+HH,2019-12-22,2020-01-05,uni
+BE,2019-12-21,2019-01-04,uni
+HH,2020-02-02,2020-04-19,uni
+MV,,2022-10-09,uni
+HH,2018-05-20,2018-05-27,uni
+HH,2018-02-04,2018-04-02,uni
+HH,2020-05-31,2020-06-07,uni
+HH,2020-07-16,2020-11-01,uni
+HH,2020-12-20,2021-01-03,uni
+HH,2021-02-21,2021-04-04,uni
+HH,2021-07-11,2021-10-10,uni
+HH,2021-12-19,2022-01-02,uni
+HH,2022-01-30,2022-04-03,uni
+HH,2022-05-22,2022-05-29,uni
+HH,2022-07-17,2022-10-16,uni
+HH,2022-12-24,2022-01-08,uni
+HH,2022-02-05,2023-04-02,uni
+HH,2023-05-14,2023-05-21,uni
+HH,2023-07-16,2023-10-15,uni
+HH,2023-12-24,2024-01-07,uni
+HH,2024-02-04,2024-04-01,uni
+HH,2024-05-19,2024-05-26,uni
+HH,2024-07-14,2024-10-13,uni
+HH,2024-12-21,2025-01-05,uni
+MV,2023-01-28,2023-04-02,uni
+MV,2023-07-15,2023-10-15,uni
+MV,2024-01-27,2024-04-07,uni
+MV,2024-07-20,2024-10-13,uni
+MV,2025-02-01,,uni
+MV,2019-02-02,2019-04-19,uni
+MV,2019-07-11,2019-11-01,uni
+MV,,2018-04-03,uni
+MV,2020-12-21,2021-01-01,uni
+MV,,2020-11-01,uni
+MV,,2019-10-14,uni
+MV,2019-02-02,,uni
+MV,2021-12-22,2021-12-31,schule
+MV,2021-12-22,2021-12-31,uni
+MV,2021-01-29,2021-04-05,uni
+MV,2021-07-18,2021-10-10,uni
+MV,2023-12-27,2023-12-30,uni
+MV,2022-01-29,2022-04-03,uni
+MV,2022-07-16,2022-10-09,uni
+SH,2018-02-19,2018-03-31,uni
+SH,2019-02-18,2019-03-30,uni
+SH,2018-09-30,2018-10-13,uni
+SH,2019-09-02,2019-10-12,uni
+SH,2019-07-01,2019-08-10,schule
+SH,2019-10-04,2019-10-18,schule
+SH,2018-03-29,2018-04-13,schule
+SH,2019-04-04,2019-04-18,schule
+SH,2020-03-30,2020-04-17,schule
+SH,2020-02-24,2020-04-04,uni
+SH,2020-06-26,2020-08-08,schule
+SH,2020-09-07,2020-10-17,uni
+SH,2021-04-01,2021-04-16,schule
+SH,2021-02-22,2021-04-03,uni
+SH,2021-06-21,2021-07-31,schule
+SH,2021-09-06,2021-10-16,uni
+SH,2022-04-04,2022-04-16,schule
+SH,2022-02-21,2022-04-02,uni
+SH,2022-07-04,2022-08-13,schule
+SH,2022-09-05,2022-10-15,uni
+SH,2023-04-06,2023-04-22,schule
+SH,2023-02-20,2023-04-01,uni
+SH,2023-07-17,2023-08-26,schule
+SH,2023-09-04,2023-10-14,uni
+SH,2024-04-02,2024-04-19,schule
+SH,2024-02-26,2024-04-06,uni
+SH,2024-07-22,2024-08-31,schule
+SH,2024-09-02,2024-10-12,uni
+BY,2018-01-11,2018-04-08,uni
+BY,2019-02-10,2019-04-23,uni
+BY,2019-07-28,2019-10-13,uni
+BY,2020-02-08,2020-04-19,uni
+BY,2019-12-24,2020-01-06,uni
+BY,2020-07-25,2020-11-01,uni
+BY,2020-12-24,2021-01-06,uni
+BY,2021-02-13,2021-04-13,uni
+BY,2021-07-17,2021-10-17,uni
+BY,2022-02-12,2022-04-24,uni
+BY,2021-12-24,2022-01-06,uni
+BY,2022-08-30,2022-10-16,uni
+BY,2022-12-24,2023-01-06,uni
+BY,2023-02-11,2023-04-16,uni
+BY,2023-07-22,2023-10-15,uni
+BY,2024-02-10,,uni
+BY,2023-12-24,2024-01-06,uni
+BE,2018-02-18,2018-04-15,uni
+BE,2018-07-22,2018-10-14,uni
+BE,2019-02-17,2019-04-07,uni
+BE,2019-07-14,2019-10-13,uni
+BE,2020-02-16,2020-04-19,uni
+BE,2020-07-19,2020-11-01,uni
+BE,2017-12-27,2018-01-06,uni
+BE,2018-12-22,2019-01-05,uni
+BE,2019-12-21,2020-01-04,uni
+BE,2021-02-28,2021-04-11,uni
+BE,2021-07-18,2021-10-17,uni
+BE,2022-02-20,2022-04-18,uni
+BE,2022-07-24,2022-10-16,uni
+BE,2023-02-19,2023-03-30,uni
+BE,2023-07-23,2023-09-30,uni
+BE,2020-12-19,2021-01-02,uni
+BE,2021-12-20,2022-01-01,uni
+BE,2022-12-19,2022-12-31,uni
+BE,2024-02-18,2024-04-14,uni
+BE,2024-07-21,2024-10-13,uni
+BY,2017-12-22,2018-01-05,schule
+BE,2017-12-21,2018-01-02,schule
+HH,2017-12-22,2018-01-05,schule
+MV,2017-12-21,2018-01-03,schule
+SH,2017-12-21,2018-01-06,schule
+BY,2018-02-12,2018-02-16,schule
+BE,2018-02-05,2018-02-10,schule
+HH,2018-02-02,2018-02-02,schule
+MV,2018-02-05,2018-02-16,schule
+BY,2018-03-26,2018-04-07,schule
+BE,2018-03-26,2018-04-06,schule
+HH,2018-03-05,2018-03-16,schule
+MV,2018-03-26,2018-04-04,schule
+SH,2018-03-29,2018-04-13,schule
+BY,2018-05-22,2018-06-02,schule
+BE,2018-04-30,2018-04-30,schule
+HH,2018-05-07,2018-05-11,schule
+MV,2018-05-18,2018-05-11,schule
+SH,2018-05-11,2018-05-11,schule
+BY,2018-10-29,2018-11-02,schule
+BE,2018-10-22,2018-11-02,schule
+HH,2018-10-01,2018-10-12,schule
+MV,2018-10-08,2018-10-13,schule
+SH,2018-10-01,2018-10-19,schule
+BY,2018-12-22,2019-01-05,schule
+BE,2018-12-22,2019-01-05,schule
+HH,2018-12-20,2019-01-04,schule
+MV,2018-12-24,2019-01-05,schule
+SH,2018-12-21,2019-01-04,schule
+BY,2018-01-01,,New Year's Day
+BY,2018-03-30,,Good Friday
+BY,2018-04-02,,Easter Monday
+BY,2018-05-01,,Labor Day
+BY,2018-05-10,,Ascension Day
+BY,2018-05-21,,Whit Monday
+BY,2018-10-03,,German Unity Day
+BY,2018-12-25,,Christmas Day
+BY,2018-12-26,,Second Day of Christmas
+BY,2018-01-06,,Epiphany
+BY,2018-05-31,,Corpus Christi
+BY,2018-11-01,,All Saints' Day
+BY,2019-01-01,,New Year's Day
+BY,2019-04-19,,Good Friday
+BY,2019-04-22,,Easter Monday
+BY,2019-05-01,,Labor Day
+BY,2019-05-30,,Ascension Day
+BY,2019-06-10,,Whit Monday
+BY,2019-10-03,,German Unity Day
+BY,2019-12-25,,Christmas Day
+BY,2019-12-26,,Second Day of Christmas
+BY,2019-01-06,,Epiphany
+BY,2019-06-20,,Corpus Christi
+BY,2019-11-01,,All Saints' Day
+BY,2020-01-01,,New Year's Day
+BY,2020-04-10,,Good Friday
+BY,2020-04-13,,Easter Monday
+BY,2020-05-01,,Labor Day
+BY,2020-05-21,,Ascension Day
+BY,2020-06-01,,Whit Monday
+BY,2020-10-03,,German Unity Day
+BY,2020-12-25,,Christmas Day
+BY,2020-12-26,,Second Day of Christmas
+BY,2020-01-06,,Epiphany
+BY,2020-06-11,,Corpus Christi
+BY,2020-11-01,,All Saints' Day
+BY,2021-01-01,,New Year's Day
+BY,2021-04-02,,Good Friday
+BY,2021-04-05,,Easter Monday
+BY,2021-05-01,,Labor Day
+BY,2021-05-13,,Ascension Day
+BY,2021-05-24,,Whit Monday
+BY,2021-10-03,,German Unity Day
+BY,2021-12-25,,Christmas Day
+BY,2021-12-26,,Second Day of Christmas
+BY,2021-01-06,,Epiphany
+BY,2021-06-03,,Corpus Christi
+BY,2021-11-01,,All Saints' Day
+BY,2022-01-01,,New Year's Day
+BY,2022-04-15,,Good Friday
+BY,2022-04-18,,Easter Monday
+BY,2022-05-01,,Labor Day
+BY,2022-05-26,,Ascension Day
+BY,2022-06-06,,Whit Monday
+BY,2022-10-03,,German Unity Day
+BY,2022-12-25,,Christmas Day
+BY,2022-12-26,,Second Day of Christmas
+BY,2022-01-06,,Epiphany
+BY,2022-06-16,,Corpus Christi
+BY,2022-11-01,,All Saints' Day
+BY,2023-01-01,,New Year's Day
+BY,2023-04-07,,Good Friday
+BY,2023-04-10,,Easter Monday
+BY,2023-05-01,,Labor Day
+BY,2023-05-18,,Ascension Day
+BY,2023-05-29,,Whit Monday
+BY,2023-10-03,,German Unity Day
+BY,2023-12-25,,Christmas Day
+BY,2023-12-26,,Second Day of Christmas
+BY,2023-01-06,,Epiphany
+BY,2023-06-08,,Corpus Christi
+BY,2023-11-01,,All Saints' Day
+MV,2018-01-01,,New Year's Day
+MV,2018-03-30,,Good Friday
+MV,2018-04-02,,Easter Monday
+MV,2018-05-01,,Labor Day
+MV,2018-05-10,,Ascension Day
+MV,2018-05-21,,Whit Monday
+MV,2018-10-03,,German Unity Day
+MV,2018-12-25,,Christmas Day
+MV,2018-12-26,,Second Day of Christmas
+MV,2018-10-31,,Reformation Day
+MV,2019-01-01,,New Year's Day
+MV,2019-04-19,,Good Friday
+MV,2019-04-22,,Easter Monday
+MV,2019-05-01,,Labor Day
+MV,2019-05-30,,Ascension Day
+MV,2019-06-10,,Whit Monday
+MV,2019-10-03,,German Unity Day
+MV,2019-12-25,,Christmas Day
+MV,2019-12-26,,Second Day of Christmas
+MV,2019-10-31,,Reformation Day
+MV,2020-01-01,,New Year's Day
+MV,2020-04-10,,Good Friday
+MV,2020-04-13,,Easter Monday
+MV,2020-05-01,,Labor Day
+MV,2020-05-21,,Ascension Day
+MV,2020-06-01,,Whit Monday
+MV,2020-10-03,,German Unity Day
+MV,2020-12-25,,Christmas Day
+MV,2020-12-26,,Second Day of Christmas
+MV,2020-10-31,,Reformation Day
+MV,2021-01-01,,New Year's Day
+MV,2021-04-02,,Good Friday
+MV,2021-04-05,,Easter Monday
+MV,2021-05-01,,Labor Day
+MV,2021-05-13,,Ascension Day
+MV,2021-05-24,,Whit Monday
+MV,2021-10-03,,German Unity Day
+MV,2021-12-25,,Christmas Day
+MV,2021-12-26,,Second Day of Christmas
+MV,2021-10-31,,Reformation Day
+MV,2022-01-01,,New Year's Day
+MV,2022-04-15,,Good Friday
+MV,2022-04-18,,Easter Monday
+MV,2022-05-01,,Labor Day
+MV,2022-05-26,,Ascension Day
+MV,2022-06-06,,Whit Monday
+MV,2022-10-03,,German Unity Day
+MV,2022-12-25,,Christmas Day
+MV,2022-12-26,,Second Day of Christmas
+MV,2022-10-31,,Reformation Day
+MV,2023-01-01,,New Year's Day
+MV,2023-04-07,,Good Friday
+MV,2023-04-10,,Easter Monday
+MV,2023-05-01,,Labor Day
+MV,2023-05-18,,Ascension Day
+MV,2023-05-29,,Whit Monday
+MV,2023-10-03,,German Unity Day
+MV,2023-12-25,,Christmas Day
+MV,2023-12-26,,Second Day of Christmas
+MV,2023-03-08,,International Women's Day
+MV,2023-10-31,,Reformation Day
+HH,2018-01-01,,New Year's Day
+HH,2018-03-30,,Good Friday
+HH,2018-04-02,,Easter Monday
+HH,2018-05-01,,Labor Day
+HH,2018-05-10,,Ascension Day
+HH,2018-05-21,,Whit Monday
+HH,2018-10-03,,German Unity Day
+HH,2018-12-25,,Christmas Day
+HH,2018-12-26,,Second Day of Christmas
+HH,2018-10-31,,Reformation Day
+HH,2019-01-01,,New Year's Day
+HH,2019-04-19,,Good Friday
+HH,2019-04-22,,Easter Monday
+HH,2019-05-01,,Labor Day
+HH,2019-05-30,,Ascension Day
+HH,2019-06-10,,Whit Monday
+HH,2019-10-03,,German Unity Day
+HH,2019-12-25,,Christmas Day
+HH,2019-12-26,,Second Day of Christmas
+HH,2019-10-31,,Reformation Day
+HH,2020-01-01,,New Year's Day
+HH,2020-04-10,,Good Friday
+HH,2020-04-13,,Easter Monday
+HH,2020-05-01,,Labor Day
+HH,2020-05-21,,Ascension Day
+HH,2020-06-01,,Whit Monday
+HH,2020-10-03,,German Unity Day
+HH,2020-12-25,,Christmas Day
+HH,2020-12-26,,Second Day of Christmas
+HH,2020-10-31,,Reformation Day
+HH,2021-01-01,,New Year's Day
+HH,2021-04-02,,Good Friday
+HH,2021-04-05,,Easter Monday
+HH,2021-05-01,,Labor Day
+HH,2021-05-13,,Ascension Day
+HH,2021-05-24,,Whit Monday
+HH,2021-10-03,,German Unity Day
+HH,2021-12-25,,Christmas Day
+HH,2021-12-26,,Second Day of Christmas
+HH,2021-10-31,,Reformation Day
+HH,2022-01-01,,New Year's Day
+HH,2022-04-15,,Good Friday
+HH,2022-04-18,,Easter Monday
+HH,2022-05-01,,Labor Day
+HH,2022-05-26,,Ascension Day
+HH,2022-06-06,,Whit Monday
+HH,2022-10-03,,German Unity Day
+HH,2022-12-25,,Christmas Day
+HH,2022-12-26,,Second Day of Christmas
+HH,2022-10-31,,Reformation Day
+HH,2023-01-01,,New Year's Day
+HH,2023-04-07,,Good Friday
+HH,2023-04-10,,Easter Monday
+HH,2023-05-01,,Labor Day
+HH,2023-05-18,,Ascension Day
+HH,2023-05-29,,Whit Monday
+HH,2023-10-03,,German Unity Day
+HH,2023-12-25,,Christmas Day
+HH,2023-12-26,,Second Day of Christmas
+HH,2023-10-31,,Reformation Day
+BE,2018-01-01,,New Year's Day
+BE,2018-03-30,,Good Friday
+BE,2018-04-02,,Easter Monday
+BE,2018-05-01,,Labor Day
+BE,2018-05-10,,Ascension Day
+BE,2018-05-21,,Whit Monday
+BE,2018-10-03,,German Unity Day
+BE,2018-12-25,,Christmas Day
+BE,2018-12-26,,Second Day of Christmas
+BE,2019-01-01,,New Year's Day
+BE,2019-04-19,,Good Friday
+BE,2019-04-22,,Easter Monday
+BE,2019-05-01,,Labor Day
+BE,2019-05-30,,Ascension Day
+BE,2019-06-10,,Whit Monday
+BE,2019-10-03,,German Unity Day
+BE,2019-12-25,,Christmas Day
+BE,2019-12-26,,Second Day of Christmas
+BE,2019-03-08,,International Women's Day
+BE,2020-01-01,,New Year's Day
+BE,2020-04-10,,Good Friday
+BE,2020-04-13,,Easter Monday
+BE,2020-05-01,,Labor Day
+BE,2020-05-21,,Ascension Day
+BE,2020-06-01,,Whit Monday
+BE,2020-10-03,,German Unity Day
+BE,2020-12-25,,Christmas Day
+BE,2020-12-26,,Second Day of Christmas
+BE,2020-03-08,,International Women's Day
+BE,2020-05-08,,75th anniversary of the liberation from Nazism and the end of the Second World War in Europe
+BE,2021-01-01,,New Year's Day
+BE,2021-04-02,,Good Friday
+BE,2021-04-05,,Easter Monday
+BE,2021-05-01,,Labor Day
+BE,2021-05-13,,Ascension Day
+BE,2021-05-24,,Whit Monday
+BE,2021-10-03,,German Unity Day
+BE,2021-12-25,,Christmas Day
+BE,2021-12-26,,Second Day of Christmas
+BE,2021-03-08,,International Women's Day
+BE,2022-01-01,,New Year's Day
+BE,2022-04-15,,Good Friday
+BE,2022-04-18,,Easter Monday
+BE,2022-05-01,,Labor Day
+BE,2022-05-26,,Ascension Day
+BE,2022-06-06,,Whit Monday
+BE,2022-10-03,,German Unity Day
+BE,2022-12-25,,Christmas Day
+BE,2022-12-26,,Second Day of Christmas
+BE,2022-03-08,,International Women's Day
+BE,2023-01-01,,New Year's Day
+BE,2023-04-07,,Good Friday
+BE,2023-04-10,,Easter Monday
+BE,2023-05-01,,Labor Day
+BE,2023-05-18,,Ascension Day
+BE,2023-05-29,,Whit Monday
+BE,2023-10-03,,German Unity Day
+BE,2023-12-25,,Christmas Day
+BE,2023-12-26,,Second Day of Christmas
+BE,2023-03-08,,International Women's Day
+SH,2018-01-01,,New Year's Day
+SH,2018-03-30,,Good Friday
+SH,2018-04-02,,Easter Monday
+SH,2018-05-01,,Labor Day
+SH,2018-05-10,,Ascension Day
+SH,2018-05-21,,Whit Monday
+SH,2018-10-03,,German Unity Day
+SH,2018-12-25,,Christmas Day
+SH,2018-12-26,,Second Day of Christmas
+SH,2018-10-31,,Reformation Day
+SH,2019-01-01,,New Year's Day
+SH,2019-04-19,,Good Friday
+SH,2019-04-22,,Easter Monday
+SH,2019-05-01,,Labor Day
+SH,2019-05-30,,Ascension Day
+SH,2019-06-10,,Whit Monday
+SH,2019-10-03,,German Unity Day
+SH,2019-12-25,,Christmas Day
+SH,2019-12-26,,Second Day of Christmas
+SH,2019-10-31,,Reformation Day
+SH,2020-01-01,,New Year's Day
+SH,2020-04-10,,Good Friday
+SH,2020-04-13,,Easter Monday
+SH,2020-05-01,,Labor Day
+SH,2020-05-21,,Ascension Day
+SH,2020-06-01,,Whit Monday
+SH,2020-10-03,,German Unity Day
+SH,2020-12-25,,Christmas Day
+SH,2020-12-26,,Second Day of Christmas
+SH,2020-10-31,,Reformation Day
+SH,2021-01-01,,New Year's Day
+SH,2021-04-02,,Good Friday
+SH,2021-04-05,,Easter Monday
+SH,2021-05-01,,Labor Day
+SH,2021-05-13,,Ascension Day
+SH,2021-05-24,,Whit Monday
+SH,2021-10-03,,German Unity Day
+SH,2021-12-25,,Christmas Day
+SH,2021-12-26,,Second Day of Christmas
+SH,2021-10-31,,Reformation Day
+SH,2022-01-01,,New Year's Day
+SH,2022-04-15,,Good Friday
+SH,2022-04-18,,Easter Monday
+SH,2022-05-01,,Labor Day
+SH,2022-05-26,,Ascension Day
+SH,2022-06-06,,Whit Monday
+SH,2022-10-03,,German Unity Day
+SH,2022-12-25,,Christmas Day
+SH,2022-12-26,,Second Day of Christmas
+SH,2022-10-31,,Reformation Day
+SH,2023-01-01,,New Year's Day
+SH,2023-04-07,,Good Friday
+SH,2023-04-10,,Easter Monday
+SH,2023-05-01,,Labor Day
+SH,2023-05-18,,Ascension Day
+SH,2023-05-29,,Whit Monday
+SH,2023-10-03,,German Unity Day
+SH,2023-12-25,,Christmas Day
+SH,2023-12-26,,Second Day of Christmas
+SH,2023-10-31,,Reformation Day

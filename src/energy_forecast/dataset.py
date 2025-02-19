@@ -1,9 +1,12 @@
 from datetime import timedelta
+from pathlib import Path
 
+import pandas as pd
 import polars as pl
 from loguru import logger
+from sklearn.model_selection import GroupKFold, GroupShuffleSplit
 
-from config import RAW_DATA_DIR, DATA_DIR, PROCESSED_DATA_DIR
+from src.energy_forecast.config import RAW_DATA_DIR, DATA_DIR, PROCESSED_DATA_DIR
 from src.energy_forecast.data_processing.data_source import LegacyDataLoader, KinergyDataLoader, DHDataLoader
 from src.energy_forecast.util import get_missing_dates, find_time_spans
 
@@ -113,7 +116,6 @@ def filter_connection_errors_by_id(df: pl.DataFrame, freq: str) -> pl.DataFrame:
     return filtered_df
 
 
-# TODO: add features
 class Dataset(object):
     def __init__(self, res: str = "daily"):
         self.res = res
@@ -157,22 +159,90 @@ class Dataset(object):
         logger.info(f"Number of rows after filtering outliers: {len(df)}")
 
         logger.info("Filtering flat lines")
-        thresh = 14*24 if self.res == "hourly" else 14  # allowed length of flat lines
+        thresh = 14 * 24 if self.res == "hourly" else 14  # allowed length of flat lines
         df = filter_flat_lines_by_id(df, thresh)
         logger.info(f"Number of rows after filtering flat lines: {len(df)}")
 
         logger.success(f"Number of rows after cleaning data: {len(df)}")
         self.df = df
 
-    def save(self):
-        output_file_path = f"{PROCESSED_DATA_DIR}/dataset_{self.res}.csv"
+    def add_features(self):
+        # load all the feature dataframes
+        df_weather = pl.read_csv(RAW_DATA_DIR / f"weather_daily.csv").with_columns(
+            pl.col("time").str.to_datetime().alias("datetime"))
+        df_holidays = pl.read_csv(RAW_DATA_DIR / "holidays.csv").with_columns(pl.col("start").str.to_date(),
+                                                                              pl.col("end").str.to_date(strict=False))
+        df_cities = pl.read_csv(RAW_DATA_DIR / "cities.csv")
+
+        # META DATA
+        df_meta_l = pl.read_csv(RAW_DATA_DIR / "legacy_meta.csv").with_columns(pl.col("plz").str.strip_chars())
+        df_meta_dh = pl.read_csv(RAW_DATA_DIR / "dh_meta.csv").rename({"eco_u_id": "id"})
+        df_meta_k = pl.read_csv(RAW_DATA_DIR / "kinergy_meta.csv")
+        df_meta = pl.concat(
+            [df_meta_l.cast({"plz": pl.Int64}).rename(
+                {"qmbehfl": "heated_area", "anzlwhg": "anzahlwhg", "adresse": "address"}).with_columns(
+                pl.lit("gas").alias("primary_energy")),
+                df_meta_dh.rename({"postal_code": "plz", "city": "ort"}),
+                df_meta_k.rename({"name": "address"})],
+            how="diagonal")
+
+        # create holiday dictionary
+        holiday_dict = {"BE": [], "HH": [], "MV": [], "BY": [], "SH": []}
+        for row in df_holidays.iter_rows():
+            if row[1] is not None and row[2] is not None:
+                span = pd.date_range(row[1], row[2], freq="D")
+                holiday_dict[row[0]].extend(span)
+            elif row[1] is not None:
+                holiday_dict[row[0]].extend([row[1]])
+
+        attributes = ["diff", 'hum_avg', 'hum_min', 'hum_max', 'tavg', 'tmin', 'tmax', 'prcp', 'snow', 'wdir', 'wspd',
+                      'wpgt',
+                      'pres', 'tsun', "holiday"]
+
+        def add_holidays(df):
+            return df.join(df_cities.select(["plz", "state"]), on="plz", how="left").drop_nulls(["state"]).with_columns(
+                pl.struct(["state", "datetime"]).map_elements(
+                    lambda x: 1 if x["datetime"] in holiday_dict[x["state"]] else 0,
+                    return_dtype=pl.Int64).alias("holiday"))
+
+        def add_meta(df):
+            df = df.join(df_meta, on="id", how="left").join(df_weather, on=["datetime", "plz"], how="left")
+            return add_holidays(df)
+
+        attributes_ha = attributes + ["heated_area", "anzahlwhg"]
+        logger.info(f"Adding {attributes_ha} to dataset, this might take a while")
+        self.df = add_meta(self.df).select(["id", "datetime", "primary_energy"] + attributes_ha)
+        # create diff of past day feature
+        self.df = self.df.with_columns(pl.col("diff").shift(1).over("id").alias("diff_t-1")).drop_nulls(
+            subset=["diff_t-1"])
+        logger.success("Added features to dataset")
+
+    def get_train_and_test(self, train_per: float):
+        gss = GroupShuffleSplit(n_splits=1, test_size=1 - train_per, random_state=42)
+        df = self.df.with_row_index()
+        for train_idx, test_idx in gss.split(df, groups=df["id"]):
+            train_data = df.filter(pl.col("index").is_in(train_idx))
+            test_data = df.filter(pl.col("index").is_in(test_idx))
+        return train_data, test_data
+
+    def save(self, output_file_path: str):
         logger.info(f"Saving {self.res} dataset to {output_file_path}")
         self.df.write_csv(output_file_path)
+
+    def load_feat_data(self):
+        self.df = pl.read_csv(f"{PROCESSED_DATA_DIR}/dataset_{self.res}_feat.csv").cast(
+            {"heated_area": pl.Float64, "anzahlwhg": pl.Int64}).with_columns(pl.col("datetime").str.to_datetime())
 
     def create_and_clean(self):
         self.create()
         self.clean()
-        self.save()
+        self.save(output_file_path=f"{PROCESSED_DATA_DIR}/dataset_{self.res}.csv")
+
+    def create_clean_and_add_feat(self):
+        self.create()
+        self.clean()
+        self.add_features()
+        self.save(output_file_path=f"{PROCESSED_DATA_DIR}/dataset_{self.res}_feat.csv")
 
 
 if __name__ == '__main__':
@@ -180,18 +250,22 @@ if __name__ == '__main__':
     logger.info("Start data loading")
 
     # daily data
-    LegacyDataLoader(DATA_DIR / "legacy_data" / "legacy_systen_counter_daily_values.csv").write_data_and_meta()
-    KinergyDataLoader(DATA_DIR / "kinergy").write_data_and_meta()
-    DHDataLoader(DATA_DIR / "district_heating_data").write_data_and_meta()
+    # LegacyDataLoader(DATA_DIR / "legacy_data" / "legacy_systen_counter_daily_values.csv").write_data_and_meta()
+    # KinergyDataLoader(DATA_DIR / "kinergy").write_data_and_meta()
+    # DHDataLoader(DATA_DIR / "district_heating_data").write_data_and_meta()
     #
     # # hourly data
-    KinergyDataLoader(DATA_DIR / "kinergy", res="hourly").write_data_and_meta()
-    DHDataLoader(DATA_DIR / "district_heating_data", res="hourly").write_data_and_meta()
+    # KinergyDataLoader(DATA_DIR / "kinergy", res="hourly").write_data_and_meta()
+    # DHDataLoader(DATA_DIR / "district_heating_data", res="hourly").write_data_and_meta()
 
     logger.info("Finish data loading")
 
     ds = Dataset()
-    ds.create_and_clean()
+    # ds.create_clean_and_add_feat()
 
-    ds_hourly = Dataset(res="hourly")
-    ds_hourly.create_and_clean()
+    ds.load_feat_data()
+    df_train, df_test = ds.get_train_and_test(0.8)
+    # ds.create_and_clean()
+
+    # ds_hourly = Dataset(res="hourly")
+    # ds_hourly.create_and_clean()

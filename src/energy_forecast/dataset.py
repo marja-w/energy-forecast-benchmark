@@ -206,7 +206,11 @@ class Dataset(object):
                     return_dtype=pl.Int64).alias("holiday"))
 
         def add_meta(df):
-            df = df.join(df_meta, on="id", how="left").join(df_weather, on=["datetime", "plz"], how="left")
+            df = (df.join(df_meta, on="id", how="left")
+                  .join(df_weather, on=["datetime", "plz"], how="left")
+                  .with_columns(pl.when(pl.col("heated_area") == 0).then(None).otherwise(pl.col("heated_area")).name.keep(),
+                                pl.when(pl.col("anzahlwhg") == 0).then(None).otherwise(pl.col("anzahlwhg")).name.keep()
+                  ))  # set 0 values in heated area and n appartments to null
             return add_holidays(df)
 
         attributes_ha = attributes + ["heated_area", "anzahlwhg"]
@@ -261,10 +265,10 @@ if __name__ == '__main__':
     logger.info("Finish data loading")
 
     ds = Dataset()
-    # ds.create_clean_and_add_feat()
+    ds.create_clean_and_add_feat()
 
-    ds.load_feat_data()
-    df_train, df_test = ds.get_train_and_test(0.8)
+    # ds.load_feat_data()
+    # df_train, df_test = ds.get_train_and_test(0.8)
     # ds.create_and_clean()
 
     # ds_hourly = Dataset(res="hourly")

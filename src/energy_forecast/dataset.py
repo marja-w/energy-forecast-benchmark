@@ -1,3 +1,4 @@
+import datetime
 from datetime import timedelta
 from pathlib import Path
 
@@ -5,6 +6,7 @@ import pandas as pd
 import polars as pl
 from loguru import logger
 from sklearn.model_selection import GroupKFold, GroupShuffleSplit
+from sklearn.preprocessing import LabelEncoder
 
 from src.energy_forecast.config import RAW_DATA_DIR, DATA_DIR, PROCESSED_DATA_DIR
 from src.energy_forecast.data_processing.data_source import LegacyDataLoader, KinergyDataLoader, DHDataLoader
@@ -177,13 +179,18 @@ class Dataset(object):
         # META DATA
         df_meta_l = pl.read_csv(RAW_DATA_DIR / "legacy_meta.csv").with_columns(pl.col("plz").str.strip_chars())
         df_meta_dh = pl.read_csv(RAW_DATA_DIR / "dh_meta.csv").rename({"eco_u_id": "id"})
-        df_meta_k = pl.read_csv(RAW_DATA_DIR / "kinergy_meta.csv")
+        df_lod = pl.read_csv(RAW_DATA_DIR / "dh_meta_lod.csv").rename(
+            {"adresse": "address"})  # dh data with lod building data
+        df_meta_dh = df_meta_dh.join(df_lod, on=["address"]).drop(
+            ["id_right", "postal_code_right", "city", "postal_code"])
+        df_meta_k = pl.read_csv(RAW_DATA_DIR / "kinergy_meta.csv", null_values="")
         df_meta = pl.concat(
             [df_meta_l.cast({"plz": pl.Int64}).rename(
                 {"qmbehfl": "heated_area", "anzlwhg": "anzahlwhg", "adresse": "address"}).with_columns(
                 pl.lit("gas").alias("primary_energy")),
-                df_meta_dh.rename({"postal_code": "plz", "city": "ort"}),
-                df_meta_k.rename({"name": "address"})],
+                df_meta_k.rename({"name": "address"}),
+                df_meta_dh.rename({"Height (m)": "building_height", "Storeys Above Ground": "storeys_above_ground"})
+            ],
             how="diagonal")
 
         # create holiday dictionary
@@ -196,8 +203,14 @@ class Dataset(object):
                 holiday_dict[row[0]].extend([row[1]])
 
         attributes = ["diff", 'hum_avg', 'hum_min', 'hum_max', 'tavg', 'tmin', 'tmax', 'prcp', 'snow', 'wdir', 'wspd',
-                      'wpgt',
-                      'pres', 'tsun', "holiday"]
+                      'wpgt', 'pres', 'tsun', "holiday", "weekend", "typ", "building_height", "storeys_above_ground",
+                      "ground_surface"]
+
+        def is_weekend(date: datetime.datetime):
+            if date.weekday() > 4:
+                return 1
+            else:
+                return 0
 
         def add_holidays(df):
             return df.join(df_cities.select(["plz", "state"]), on="plz", how="left").drop_nulls(["state"]).with_columns(
@@ -206,11 +219,19 @@ class Dataset(object):
                     return_dtype=pl.Int64).alias("holiday"))
 
         def add_meta(df):
+            enc = LabelEncoder()
             df = (df.join(df_meta, on="id", how="left")
                   .join(df_weather, on=["datetime", "plz"], how="left")
-                  .with_columns(pl.when(pl.col("heated_area") == 0).then(None).otherwise(pl.col("heated_area")).name.keep(),
-                                pl.when(pl.col("anzahlwhg") == 0).then(None).otherwise(pl.col("anzahlwhg")).name.keep()
-                  ))  # set 0 values in heated area and n appartments to null
+                  .with_columns(
+                pl.when(pl.col("heated_area") == 0).then(None).otherwise(pl.col("heated_area")).name.keep(),
+                # set 0 values in heated area and n appartments to null
+                pl.when(pl.col("anzahlwhg") == 0).then(None).otherwise(pl.col("anzahlwhg")).name.keep(),
+                pl.col("datetime").map_elements(is_weekend, return_dtype=pl.Int64).alias("weekend"),
+                # add weekend column
+                pl.when(pl.col("typ").is_null()).then(pl.lit("Mehrfamilienhaus")).otherwise(
+                    pl.col("typ")).name.keep(),  # set all null values to Mehrfamilienhaus
+                ).with_columns(pl.col("typ").map_batches(enc.fit_transform))  # make typ column categorical
+                  )
             return add_holidays(df)
 
         attributes_ha = attributes + ["heated_area", "anzahlwhg"]

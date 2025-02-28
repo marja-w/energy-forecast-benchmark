@@ -2,8 +2,10 @@ import glob
 import xml.etree.ElementTree as ET
 import csv
 import numpy as np
+from shapely.geometry import Polygon
+import polars as pl
 
-from src.energy_forecast.config import DATA_DIR
+from src.energy_forecast.config import DATA_DIR, RAW_DATA_DIR
 
 
 def polygon_area_3d(coords):
@@ -49,8 +51,9 @@ file_list = glob.glob(f"{xml_file_folder}/*.xml")
 with open(csv_file, mode='w', newline='', encoding='utf-8') as file:
     writer = csv.writer(file)
     writer.writerow(
-            ["Building ID", "Country", "Address", "postal_code", "Function", "Height (m)", "Storeys Above Ground", "ground_surface"])
+            ["Building ID", "Creation Date", "Country", "Address", "postal_code", "Function", "Height (m)", "Storeys Above Ground", "ground_surface"])
     for xml_file in file_list:
+        print(f" Processing {xml_file}")
         # Parse the XML file
         tree = ET.parse(xml_file)
         root = tree.getroot()
@@ -71,10 +74,8 @@ with open(csv_file, mode='w', newline='', encoding='utf-8') as file:
             storeys = building.find("bldg:storeysAboveGround", namespaces)
             storeys_value = storeys.text if storeys is not None else 'N/A'
 
-            # Extract address
-            # address_elem = building.find("core:address/xal:AddressDetails/xal:Thoroughfare/xal:ThoroughfareName",
-            #                              namespaces)
-            # address = address_elem.text if address_elem is not None else 'N/A'
+            # Extract creation date
+            creation_date = building.find('core:creationDate', namespaces).text if building.find('core:creationDate', namespaces) is not None else None
 
             # Extract address
             country_element = building.find(
@@ -89,6 +90,8 @@ with open(csv_file, mode='w', newline='', encoding='utf-8') as file:
                 "bldg:address/core:Address/core:xalAddress/xal:AddressDetails/xal:Country/xal:Locality/xal:Thoroughfare/xal:ThoroughfareNumber",
                 namespaces)
             address = f"{address_elem.text} {number_elem.text}" if address_elem is not None else None
+            if address is None:
+                continue
 
             # Extract postal code
             postal_code_elem = building.find(
@@ -98,11 +101,32 @@ with open(csv_file, mode='w', newline='', encoding='utf-8') as file:
 
             # extract ground surface
             coordinates_elem = building.find("bldg:boundedBy/bldg:GroundSurface/bldg:lod2MultiSurface/gml:MultiSurface/gml:surfaceMember/gml:Polygon/gml:exterior/gml:LinearRing/gml:posList", namespaces)
-            coordinate_list = coordinates_elem.text.replace("\n", "").split() if coordinates_elem is not None else None
-            formatted_list = [tuple(map(float, coordinate_list[i:i+3])) for i in range(0, len(coordinate_list), 3)]
-            ground_surface = polygon_area_3d(formatted_list)
+            # coordinate_list = coordinates_elem.text.replace("\n", "").split() if coordinates_elem is not None else None
+            # formatted_list = [tuple(map(float, coordinate_list[i:i+3])) for i in range(0, len(coordinate_list), 3)]
+            # ground_surface = polygon_area_3d(formatted_list)
+            pos_list_text = coordinates_elem.text.strip()
+            coords_flat = list(map(float, pos_list_text.split()))
+            coords = [(coords_flat[i], coords_flat[i + 1], coords_flat[i + 2]) for i in range(0, len(coords_flat), 3)]
+            polygon = Polygon(coords)
+            ground_surface = polygon.area
 
             # Write to CSV
-            writer.writerow([building_id, country, address, postal_code, function_text, height_value, storeys_value, ground_surface])
+            writer.writerow([building_id, creation_date, country, address, postal_code, function_text, height_value, storeys_value, ground_surface])
 
 print(f"CSV file saved at {csv_file}")
+
+dh_meta = pl.read_csv(RAW_DATA_DIR / "district_heating_meta.csv").with_columns(
+    pl.lit("Mehrfamilienhaus").alias("typ"),
+    pl.lit(75).alias("min_vorlauf_temp"),
+    pl.lit(90).alias("max_vorlauf_temp")
+).rename({"eco_u_id": "id"}).select(
+    ["id", "city", "address", "postal_code", "typ", "min_vorlauf_temp", "max_vorlauf_temp"])
+dh_meta = dh_meta.rename({"address": "adresse", "postal_code": "plz", "city": "ort"}).select(
+    ["id", "adresse", "ort", "plz", "typ", "min_vorlauf_temp", "max_vorlauf_temp"]).cast(
+    {"plz": pl.String, "min_vorlauf_temp": pl.String, "max_vorlauf_temp": pl.String}).with_columns(
+    pl.lit("dh").alias("source"),
+    pl.lit("district heating").alias("primary_energy")
+)
+df_buildings = pl.read_csv(DATA_DIR / "lod2" / "building_data.csv", null_values="N/A").drop_nulls().rename({"Address": "adresse"})
+dh_meta_lod = dh_meta.join(df_buildings, on="adresse", how="left").unique(["adresse"]).sort(pl.col("adresse"))
+dh_meta_lod.write_csv(RAW_DATA_DIR / "dh_meta_lod.csv")

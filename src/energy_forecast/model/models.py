@@ -1,10 +1,17 @@
 import wandb
+from overrides import overrides
 from tensorflow import keras
 from tensorflow.keras import layers
 from loguru import logger
 from wandb.integration.keras import WandbMetricsLogger
 
 from src.energy_forecast.config import MODELS_DIR
+import statsmodels.api as sm
+from permetrics.regression import RegressionMetric
+
+
+def root_mean_squared_error(y_true, y_pred):
+    return keras.sqrt(keras.mean(keras.square(y_pred - y_true)))
 
 
 class Model:
@@ -17,8 +24,9 @@ class Model:
     def get_model(self):
         return self.model
 
-    def train(self, X_train, y_train, X_val, y_val, config: dict):
+    def train(self, X_train, y_train, X_val, y_val):
         # Setup wandb training
+        config = self.config
         config["train_data_length"] = len(X_train)
         config["val_data_length"] = len(X_val)
         config["n_features"] = len(config["features"])
@@ -43,7 +51,10 @@ class Model:
         return self.model, run
 
     def evaluate(self, X_test, y_test):
-        return self.model.evaluate(X_test, y_test)
+        test_loss, test_mae = self.model.evaluate(X_test, y_test)
+        y_hat = self.model.predict(X_test)
+        evaluator = RegressionMetric(y_test.to_numpy(), y_hat)
+        return test_loss, test_mae, evaluator.normalized_root_mean_square_error()
 
     def save(self):
         """
@@ -54,6 +65,22 @@ class Model:
         self.model.save(model_path)
         logger.success(f"Model saved to {model_path}")
         return model_path
+
+
+class LinearRegressorModel(Model):
+    def __init__(self, config):
+        super().__init__(config)
+        self.name = "LR"
+
+    def fit(self, X_train, y_train):
+        X2 = sm.add_constant(X_train)
+        est = sm.OLS(y_train, X2)
+        self.model = est.fit()
+
+    def evaluate(self, X_test, y_test):
+        y_hat = self.model.predict(X_test)
+        evaluator = RegressionMetric(y_test.to_numpy(), y_hat)
+        return evaluator.normalized_root_mean_square_error()
 
 
 class FCNModel(Model):

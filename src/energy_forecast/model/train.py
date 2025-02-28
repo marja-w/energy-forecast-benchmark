@@ -1,3 +1,4 @@
+import pandas as pd
 import tensorflow as tf
 import jsonlines
 import wandb
@@ -11,7 +12,7 @@ from tqdm import tqdm
 
 from src.energy_forecast.config import REFERENCES_DIR
 from src.energy_forecast.dataset import Dataset
-from src.energy_forecast.model.models import Model, FCNModel
+from src.energy_forecast.model.models import Model, FCNModel, LinearRegressorModel
 
 
 def get_model(config: dict) -> Model:
@@ -48,18 +49,24 @@ def train(config: dict):
     X_train = train_data.to_pandas()[list(set(config["features"]) - {"diff"})]
     y_train = train_data.to_pandas()["diff"]
 
-    X_test = test_data.to_pandas()[list(set(config["features"]) - {"diff"})]
-    y_test = test_data.to_pandas()["diff"]
+    X_test: pd.DataFrame = test_data.to_pandas()[list(set(config["features"]) - {"diff"})]
+    y_test: pd.DataFrame = test_data.to_pandas()["diff"]
 
+    # get model and baseline
     m = get_model(config)
-    model, run = m.train(X_train, y_train, X_test, y_test, config)
+    baseline = LinearRegressorModel(config)
+
+    # train
+    model, run = m.train(X_train, y_train, X_test, y_test)
+    baseline.fit(X_train, y_train)
 
     # Evaluate the model
-    test_loss, test_mae = m.evaluate(X_test, y_test)
+    test_loss, test_mae, test_nrmse = m.evaluate(X_test, y_test)
+    b_nrmse = baseline.evaluate(X_test, y_test)
     logger.info(
         f"MSE Loss on test data: {test_loss}, RMSE Loss on test data: {test_mae}"
     )
-    run.log(data={"test_mse": test_loss, "test_mae": test_mae})
+    run.log(data={"test_mse": test_loss, "test_mae": test_mae, "b_nrmse": b_nrmse})
 
     # save model on disk and in wandb
     model_path = m.save()

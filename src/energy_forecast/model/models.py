@@ -1,7 +1,11 @@
+import os
+import shutil
+
 import wandb
 from overrides import overrides
 from tensorflow import keras
 from tensorflow.keras import layers
+from sklearn import tree
 from loguru import logger
 from wandb.integration.keras import WandbMetricsLogger
 
@@ -64,6 +68,12 @@ class Model:
         model_path = MODELS_DIR / f"{self.name}.keras"
         self.model.save(model_path)
         logger.success(f"Model saved to {model_path}")
+        # copy to wandb run dir to fix symlink issue
+        os.makedirs(os.path.join(wandb.run.dir, "models"))
+        wandb_run_dir_model = os.path.join(wandb.run.dir, os.path.join("models", os.path.basename(model_path)))
+        self.model.save(wandb_run_dir_model)
+        # shutil.copy(model_path, wandb_run_dir_model)
+        wandb.save(wandb_run_dir_model)
         return model_path
 
 
@@ -78,8 +88,9 @@ class LinearRegressorModel(Model):
         self.model = est.fit()
 
     def evaluate(self, X_test, y_test):
-        y_hat = self.model.predict(X_test)
-        evaluator = RegressionMetric(y_test.to_numpy(), y_hat)
+        X2 = sm.add_constant(X_test)
+        y_hat = self.model.predict(X2)
+        evaluator = RegressionMetric(y_test.to_numpy(), y_hat.to_numpy())
         return evaluator.normalized_root_mean_square_error()
 
 
@@ -95,3 +106,9 @@ class FCNModel(Model):
             layers.Dense(32, activation='relu'),
             layers.Dense(1)  # perform regression
         ])
+
+class DTModel(Model):
+    def __init__(self, config):
+        super().__init__(config)
+        self.name = "DT"
+        self.model = tree.DecisionTreeRegressor()

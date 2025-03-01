@@ -64,13 +64,13 @@ def train(config: dict):
     test_loss, test_mae, test_nrmse = m.evaluate(X_test, y_test)
     b_nrmse = baseline.evaluate(X_test, y_test)
     logger.info(
-        f"MSE Loss on test data: {test_loss}, RMSE Loss on test data: {test_mae}"
+        f"MSE Loss on test data: {test_loss}, RMSE Loss on test data: {test_mae}, NRMSE on test data: {test_nrmse}"
     )
-    run.log(data={"test_mse": test_loss, "test_mae": test_mae, "b_nrmse": b_nrmse})
+    logger.info(f"Baseline NRMSE on test data: {b_nrmse}")
+    run.log(data={"test_mse": test_loss, "test_mae": test_mae, "test_nrmse": test_nrmse, "b_nrmse": b_nrmse})
 
     # save model on disk and in wandb
-    model_path = m.save()
-    wandb.save(model_path)
+    m.save()
     return m, run
 
 

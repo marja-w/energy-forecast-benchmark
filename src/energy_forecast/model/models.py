@@ -28,7 +28,7 @@ class Model:
     def get_model(self):
         return self.model
 
-    def train(self, X_train, y_train, X_val, y_val):
+    def init_wandb(self, X_train, X_val):
         # Setup wandb training
         config = self.config
         config["train_data_length"] = len(X_train)
@@ -38,27 +38,10 @@ class Model:
                          config=config,
                          name=f"{self.name}_{config['energy']}_{config['n_features']}",
                          reinit=True)  # reinit to allow reinitialization of runs
-        # early_stop = EarlyStopping(monitor='val_loss', patience=2)
-        logger.info(f"Training {self.name} on {X_train.shape}")
-        # Compile the model
-        self.model.compile(optimizer=config["optimizer"],
-                           loss=config["loss"],
-                           metrics=config["metrics"])
-        # Train the model
-        self.model.fit(X_train,
-                       y_train,
-                       epochs=config["epochs"],
-                       validation_data=(X_val, y_val),
-                       batch_size=config["batch_size"],
-                       callbacks=[WandbMetricsLogger()])
-        logger.success("Modeling training complete.")
-        return self.model, run
+        return config, run
 
     def evaluate(self, X_test, y_test):
-        test_loss, test_mae = self.model.evaluate(X_test, y_test)
-        y_hat = self.model.predict(X_test)
-        evaluator = RegressionMetric(y_test.to_numpy(), y_hat)
-        return test_loss, test_mae, evaluator.normalized_root_mean_square_error()
+        pass
 
     def save(self):
         """
@@ -77,11 +60,56 @@ class Model:
         return model_path
 
 
-class LinearRegressorModel(Model):
+class NNModel(Model):
+    def __init__(self, config):
+        super().__init__(config)
+
+    def train(self, X_train, y_train, X_val, y_val):
+        config, run = self.init_wandb(X_train, X_val)
+        # early_stop = EarlyStopping(monitor='val_loss', patience=2)
+        logger.info(f"Training {self.name} on {X_train.shape}")
+        # Compile the model
+        self.model.compile(optimizer=config["optimizer"],
+                           loss=config["loss"],
+                           metrics=config["metrics"])
+        # Train the model
+        self.model.fit(X_train,
+                       y_train,
+                       epochs=config["epochs"],
+                       validation_data=(X_val, y_val),
+                       batch_size=config["batch_size"],
+                       callbacks=[WandbMetricsLogger()])
+        logger.success("Modeling training complete.")
+        return self.model, run
+
+
+
+    def evaluate(self, X_test, y_test):
+        test_loss, test_mae = self.model.evaluate(X_test, y_test)
+        y_hat = self.model.predict(X_test)
+        evaluator = RegressionMetric(y_test.to_numpy(), y_hat)
+        return test_loss, test_mae, evaluator.normalized_root_mean_square_error()
+
+
+class RegressionModel(Model):
+    def __init__(self, config):
+        super().__init__(config)
+
+    def fit(self, X_train, y_train):
+        self.model.fit(X_train, y_train)
+
+    def evaluate(self, X_test, y_test):
+        y_hat = self.model.predict(X_test)
+        evaluator = RegressionMetric(y_test.to_numpy(), y_hat)
+        return evaluator.normalized_root_mean_square_error()
+
+
+class LinearRegressorModel(RegressionModel):
     def __init__(self, config):
         super().__init__(config)
         self.name = "LR"
 
+    @overrides
     def fit(self, X_train, y_train):
         X2 = sm.add_constant(X_train)
         est = sm.OLS(y_train, X2)
@@ -94,7 +122,7 @@ class LinearRegressorModel(Model):
         return evaluator.normalized_root_mean_square_error()
 
 
-class FCNModel(Model):
+class FCNModel(NNModel):
     def __init__(self, config):
         super().__init__(config)
         self.name = "FCN1"
@@ -107,8 +135,14 @@ class FCNModel(Model):
             layers.Dense(1)  # perform regression
         ])
 
-class DTModel(Model):
+
+class DTModel(RegressionModel):
     def __init__(self, config):
         super().__init__(config)
         self.name = "DT"
         self.model = tree.DecisionTreeRegressor()
+
+    def fit(self, X_train, y_train):
+        super().fit(X_train, y_train)
+        logger.info(
+            f"Fitted Decision Tree Model with depth={self.model.get_depth()} and {self.model.get_n_leaves()} leaves")

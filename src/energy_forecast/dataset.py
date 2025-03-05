@@ -169,6 +169,19 @@ class Dataset(object):
         self.df = df
 
     def add_features(self):
+        """
+        Add features to dataset. Features include:
+
+        - weather data: weather information from meteostat, stored in data/raw/weather_daily.csv
+        - holiday data: whether the day is a holiday in the respective state, stored in data/raw/holidays.csv
+        - address data: stored in data/raw/cities.csv
+        - building data: stored in the respective meta data files, stored in data/raw/{dataset}_meta.csv, features like
+            heated area, number of appartments, type of building (school, gym, museum, multiple appartments, ...)
+        - engineered features: "weekend" (whether it is a workday or the weekend), "yearly_consumption" (how much energy
+            the building needs a year)
+        Returns:
+
+        """
         # load all the feature dataframes
         df_weather = pl.read_csv(RAW_DATA_DIR / f"weather_daily.csv").with_columns(
             pl.col("time").str.to_datetime().alias("datetime"))
@@ -204,7 +217,7 @@ class Dataset(object):
 
         attributes = ["diff", 'hum_avg', 'hum_min', 'hum_max', 'tavg', 'tmin', 'tmax', 'prcp', 'snow', 'wdir', 'wspd',
                       'wpgt', 'pres', 'tsun', "holiday", "weekend", "typ", "building_height", "storeys_above_ground",
-                      "ground_surface"]
+                      "ground_surface", "daily_avg"]
 
         def is_weekend(date: datetime.datetime):
             if date.weekday() > 4:
@@ -223,15 +236,26 @@ class Dataset(object):
             df = (df.join(df_meta, on="id", how="left")
                   .join(df_weather, on=["datetime", "plz"], how="left")
                   .with_columns(
+                # set 0 values in heated area to null
                 pl.when(pl.col("heated_area") == 0).then(None).otherwise(pl.col("heated_area")).name.keep(),
-                # set 0 values in heated area and n appartments to null
-                pl.when(pl.col("anzahlwhg") == 0).then(None).otherwise(pl.col("anzahlwhg")).name.keep(),
-                pl.col("datetime").map_elements(is_weekend, return_dtype=pl.Int64).alias("weekend"),
                 # add weekend column
+                pl.col("datetime").map_elements(is_weekend, return_dtype=pl.Int64).alias("weekend"),
+                # set all null values of typ to Mehrfamilienhaus
                 pl.when(pl.col("typ").is_null()).then(pl.lit("Mehrfamilienhaus")).otherwise(
-                    pl.col("typ")).name.keep(),  # set all null values to Mehrfamilienhaus
+                    pl.col("typ")).name.keep(),
+                ).with_columns(
+                # set values in n appartments to null if it is 0 and a if building is multiple appartment building
+                pl.when((pl.col("anzahlwhg") == 0).and_(pl.col("typ") == "Mehramilienhaus")
+                        ).then(None).otherwise(pl.col("anzahlwhg")).name.keep()
                 ).with_columns(pl.col("typ").map_batches(enc.fit_transform))  # make typ column categorical
                   )
+            # get the daily consumption average for each building
+            df_daily_avg = df.select(["id", "datetime", "diff"]).group_by(["id"]).agg(
+                pl.col("diff").sum().alias("sum"),
+                pl.col("diff").count().alias("count")
+            ).with_columns(
+                (pl.col("sum") / pl.col("count")).alias("daily_avg")).select("id", "daily_avg")
+            df = df.join(df_daily_avg, on="id", how="left")
             return add_holidays(df)
 
         attributes_ha = attributes + ["heated_area", "anzahlwhg"]

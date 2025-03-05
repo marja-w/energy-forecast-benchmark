@@ -12,12 +12,14 @@ from tqdm import tqdm
 
 from src.energy_forecast.config import REFERENCES_DIR
 from src.energy_forecast.dataset import Dataset
-from src.energy_forecast.model.models import Model, FCNModel, LinearRegressorModel
+from src.energy_forecast.model.models import Model, FCNModel, LinearRegressorModel, DTModel
 
 
 def get_model(config: dict) -> Model:
     if config["model"] == "FCN1":
         return FCNModel(config)
+    elif config["model"] == "DT":
+        return DTModel(config)
     else:
         raise Exception(f"Unknown model {config['model']}")
 
@@ -55,19 +57,24 @@ def train(config: dict):
     # get model and baseline
     m = get_model(config)
     baseline = LinearRegressorModel(config)
+    dt = DTModel(config)
 
     # train
     model, run = m.train(X_train, y_train, X_test, y_test)
     baseline.fit(X_train, y_train)
+    dt.fit(X_train, y_train)
 
     # Evaluate the model
     test_loss, test_mae, test_nrmse = m.evaluate(X_test, y_test)
     b_nrmse = baseline.evaluate(X_test, y_test)
+    dt_nrmse = dt.evaluate(X_test, y_test)
     logger.info(
-        f"MSE Loss on test data: {test_loss}, RMSE Loss on test data: {test_mae}, NRMSE on test data: {test_nrmse}"
+        f"MSE Loss on test data: {test_loss}, MAE Loss on test data: {test_mae}, NRMSE on test data: {test_nrmse}"
     )
     logger.info(f"Baseline NRMSE on test data: {b_nrmse}")
-    run.log(data={"test_mse": test_loss, "test_mae": test_mae, "test_nrmse": test_nrmse, "b_nrmse": b_nrmse})
+    logger.info(f"DT NRMSE on test data: {dt_nrmse}")
+    run.log(data={"test_mse": test_loss, "test_mae": test_mae, "test_nrmse": test_nrmse, "b_nrmse": b_nrmse,
+                  "dt_nrmse": dt_nrmse})
 
     # save model on disk and in wandb
     m.save()

@@ -12,7 +12,7 @@ from tqdm import tqdm
 
 from src.energy_forecast.config import REFERENCES_DIR
 from src.energy_forecast.dataset import Dataset
-from src.energy_forecast.model.models import Model, FCNModel, LinearRegressorModel, DTModel
+from src.energy_forecast.model.models import Model, FCNModel, DTModel, LinearRegressorModel, RegressionModel, NNModel
 
 
 def get_model(config: dict) -> Model:
@@ -45,11 +45,23 @@ def train(config: dict):
     df = df.with_row_index()
     for train_idx, test_idx in gss.split(df, groups=df["id"]):
         train_data = df.filter(pl.col("index").is_in(train_idx))
-        test_data = df.filter(pl.col("index").is_in(test_idx))
+        test_val_df = df.filter(pl.col("index").is_in(test_idx))
+    logger.info(f"Train data shape: {train_data.shape}")
+    # split test into validation and test
+    test_val_df = test_val_df.drop("index").with_row_index()
+    gss = GroupShuffleSplit(n_splits=1, test_size=0.5, random_state=43)
+    for test_idx, val_idx in gss.split(test_val_df, groups=test_val_df["id"]):
+        test_data = test_val_df.filter(pl.col("index").is_in(test_idx))
+        val_data = test_val_df.filter(pl.col("index").is_in(val_idx))
+    logger.info(f"Test data shape: {test_data.shape}")
+    logger.info(f"Validation data shape: {val_data.shape}")
 
     # transform to pandas DataFrame input
     X_train = train_data.to_pandas()[list(set(config["features"]) - {"diff"})]
     y_train = train_data.to_pandas()["diff"]
+
+    X_val = val_data.to_pandas()[list(set(config["features"]) - {"diff"})]
+    y_val = val_data.to_pandas()["diff"]
 
     X_test: pd.DataFrame = test_data.to_pandas()[list(set(config["features"]) - {"diff"})]
     y_test: pd.DataFrame = test_data.to_pandas()["diff"]
@@ -57,24 +69,14 @@ def train(config: dict):
     # get model and baseline
     m = get_model(config)
     baseline = LinearRegressorModel(config)
-    dt = DTModel(config)
 
     # train
-    model, run = m.train(X_train, y_train, X_test, y_test)
-    baseline.fit(X_train, y_train)
-    dt.fit(X_train, y_train)
+    model, run = m.train(X_train, y_train, X_val, y_val)
+    baseline.fit(X_train, y_train, run)
 
-    # Evaluate the model
-    test_loss, test_mae, test_nrmse = m.evaluate(X_test, y_test)
-    b_nrmse = baseline.evaluate(X_test, y_test)
-    dt_nrmse = dt.evaluate(X_test, y_test)
-    logger.info(
-        f"MSE Loss on test data: {test_loss}, MAE Loss on test data: {test_mae}, NRMSE on test data: {test_nrmse}"
-    )
-    logger.info(f"Baseline NRMSE on test data: {b_nrmse}")
-    logger.info(f"DT NRMSE on test data: {dt_nrmse}")
-    run.log(data={"test_mse": test_loss, "test_mae": test_mae, "test_nrmse": test_nrmse, "b_nrmse": b_nrmse,
-                  "dt_nrmse": dt_nrmse})
+    # Evaluate the models
+    baseline.evaluate(X_test, y_test, run)
+    m.evaluate(X_test, y_test, run)
 
     # save model on disk and in wandb
     m.save()

@@ -6,9 +6,10 @@ import pandas as pd
 import polars as pl
 from loguru import logger
 from sklearn.model_selection import GroupKFold, GroupShuffleSplit
-from sklearn.preprocessing import LabelEncoder
+from sklearn.preprocessing import LabelEncoder, OneHotEncoder
+from pandas import DataFrame
 
-from src.energy_forecast.config import RAW_DATA_DIR, DATA_DIR, PROCESSED_DATA_DIR
+from src.energy_forecast.config import RAW_DATA_DIR, DATA_DIR, PROCESSED_DATA_DIR, CATEGORICAL_FEATURES
 from src.energy_forecast.data_processing.data_source import LegacyDataLoader, KinergyDataLoader, DHDataLoader
 from src.energy_forecast.util import get_missing_dates, find_time_spans
 
@@ -167,6 +168,31 @@ class Dataset(object):
 
         logger.success(f"Number of rows after cleaning data: {len(df)}")
         self.df = df
+
+    def one_hot_encode(self, config: dict) -> dict:
+        """
+        One hot encode categorical features. Returns updated config with new feature names.
+        """
+        df = self.df.to_pandas()
+        enc = OneHotEncoder()
+        cat_features = list(set(config["features"]) & set(CATEGORICAL_FEATURES))  # categorical features we want
+        if len(cat_features) > 0:
+            enc = enc.fit(df[cat_features])
+            cat_features_names = enc.get_feature_names_out()
+            X_enc = DataFrame(enc.transform(df[cat_features]).toarray(), columns=cat_features_names)
+            df = df.drop(columns=cat_features)
+            df = pd.concat([df, X_enc], axis=1)
+            self.df = pl.DataFrame(df)
+            config["features"] = list(set(config["features"]) - set(cat_features)) + list(cat_features_names)
+        return config
+
+    def add_multiple_forecast(self, n: int):
+        if n > 1:
+            df = self.df
+            for i in range(1, n):
+                df = df.with_columns(pl.col("diff").shift(-i).alias(f"diff_t+{i}"))
+            df = df.drop_nulls(["diff"] + [f"diff_t+{i}" for i in range(1, n)])
+            self.df = df
 
     def add_features(self):
         """

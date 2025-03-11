@@ -23,10 +23,17 @@ FIGURES_DIR = REPORTS_DIR / "figures"
 
 REFERENCES_DIR = PROJ_ROOT / "references"
 
+CATEGORICAL_FEATURES = ["typ"]
+CATEGORICAL_FEATURES_BINARY = ["weekend", "holiday"]
+CONTINUOUS_FEATURES = ["diff_t-1", 'hum_avg', 'hum_min', 'hum_max', 'tavg', 'tmin', 'tmax', 'prcp', 'snow', 'wdir',
+                       'wspd', 'wpgt', 'pres', 'tsun', "daily_avg", "heated_area", "anzahlwhg", "ground_surface",
+                       "building_height", "storeys_above_ground"]
+
 # If tqdm is installed, configure loguru with tqdm.write
 # https://github.com/Delgan/loguru/issues/135
 try:
     from tqdm import tqdm
+
     logger.remove()
     logger.add(lambda msg: tqdm.write(msg, end=""), colorize=True)
 except ModuleNotFoundError:

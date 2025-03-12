@@ -1,3 +1,5 @@
+from typing import Union
+
 import pandas as pd
 import tensorflow as tf
 import jsonlines
@@ -10,10 +12,28 @@ from tensorflow.keras import layers
 import polars as pl
 from tqdm import tqdm
 
-from src.energy_forecast.config import REFERENCES_DIR
-from src.energy_forecast.dataset import Dataset
-from src.energy_forecast.model.models import Model, FCNModel, DTModel, LinearRegressorModel, RegressionModel, NNModel, \
-    RNN1Model, FCN2Model, FCN3Model, Baseline
+try:
+    from src.energy_forecast.config import REFERENCES_DIR, FEATURE_SETS
+    from src.energy_forecast.dataset import Dataset
+    from src.energy_forecast.model.models import Model, FCNModel, DTModel, LinearRegressorModel, RegressionModel, NNModel, \
+        RNN1Model, FCN2Model, FCN3Model, Baseline
+except ModuleNotFoundError:
+    import sys
+    import os
+    import inspect
+
+    curr_frame = inspect.currentframe()
+    if curr_frame:
+        curr_dir = os.path.dirname(os.path.abspath(inspect.getfile(curr_frame)))
+        par_dir = os.path.dirname(os.path.dirname(os.path.dirname(curr_dir)))
+        sys.path.insert(0, par_dir)
+
+        from src.energy_forecast.config import REFERENCES_DIR, FEATURE_SETS
+        from src.energy_forecast.dataset import Dataset
+        from src.energy_forecast.model.models import Model, FCNModel, DTModel, LinearRegressorModel, RegressionModel, \
+            NNModel, RNN1Model, FCN2Model, FCN3Model, Baseline
+    else:
+        raise IOError("Current Frame not found")
 
 
 def get_model(config: dict) -> Model:
@@ -92,7 +112,15 @@ def get_train_test_val_split(config: dict, df: pl.DataFrame) -> tuple[
     return X_train, X_test, X_val, y_train, y_test, y_val
 
 
+def get_features(code: int):
+    return FEATURE_SETS[code]
+
+
 def train(config: dict):
+    try:
+        logger.info(f"Features: {config['features']}")
+    except KeyError:
+        config["features"] = get_features(config["feature_code"])
     # Load the data
     df, config = get_data(config)
 

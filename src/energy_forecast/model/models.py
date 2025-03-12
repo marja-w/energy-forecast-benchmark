@@ -196,7 +196,7 @@ class NNModel(Model):
             optimizer = config["optimizer"]
         self.model.compile(optimizer=optimizer,
                            loss=config["loss"],
-                           metrics=config["metrics"])
+                           metrics=["mae"])
         # scaling, doesnt scale for scaler="none"
         X_train, y_train = self.scale_input_data(X_train, y_train)
         X_val, y_val = self.scale_input_data(X_val, y_val)

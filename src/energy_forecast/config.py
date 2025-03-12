@@ -29,6 +29,18 @@ CONTINUOUS_FEATURES = ["diff_t-1", 'hum_avg', 'hum_min', 'hum_max', 'tavg', 'tmi
                        'wspd', 'wpgt', 'pres', 'tsun', "daily_avg", "heated_area", "anzahlwhg", "ground_surface",
                        "building_height", "storeys_above_ground"]
 
+## Feature Configs
+FEATURE_SET_1 = ["diff", "diff_t-1"]
+FEATURE_SET_2 = ["diff", "diff_t-1", 'hum_avg', 'hum_min', 'hum_max', 'tavg', 'tmin', 'tmax', 'prcp', 'snow', 'wdir',
+                 'wspd', 'wpgt', 'pres', 'tsun']
+FEATURE_SET_3 = ["diff", 'hum_avg', 'hum_min', 'hum_max', 'tavg', 'tmin', 'tmax', 'prcp', 'snow', 'wdir', 'wspd',
+                 'wpgt', 'pres', 'tsun']
+FEATURE_SET_4 = ["diff", "diff_t-1", "tmax", "tsun", "wpgt", "hum_avg"]
+FEATURE_SET_5 = ["diff", "tmax", "tsun", "wpgt", "hum_avg"]
+FEATURE_SET_6 = ["diff", "diff_t-1", "tmax", "tsun", "wpgt", "hum_avg", "daily_avg", "heated_area", "anzahlwhg", "typ"]
+FEATURE_SETS = {1: FEATURE_SET_1, 2: FEATURE_SET_2, 3: FEATURE_SET_3, 4: FEATURE_SET_4, 5: FEATURE_SET_5,
+                6: FEATURE_SET_6}
+
 # If tqdm is installed, configure loguru with tqdm.write
 # https://github.com/Delgan/loguru/issues/135
 try:

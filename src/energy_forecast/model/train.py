@@ -13,12 +13,16 @@ from tqdm import tqdm
 from src.energy_forecast.config import REFERENCES_DIR
 from src.energy_forecast.dataset import Dataset
 from src.energy_forecast.model.models import Model, FCNModel, DTModel, LinearRegressorModel, RegressionModel, NNModel, \
-    RNN1Model
+    RNN1Model, FCN2Model, FCN3Model, Baseline
 
 
 def get_model(config: dict) -> Model:
     if config["model"] == "FCN1":
         return FCNModel(config)
+    elif config["model"] == "FCN2":
+        return FCN2Model(config)
+    elif config["model"] == "FCN3":
+        return FCN3Model(config)
     elif config["model"] == "DT":
         return DTModel(config)
     elif config["model"] == "RNN1":
@@ -51,6 +55,12 @@ def get_data(config: dict) -> tuple[pl.DataFrame, dict]:
 
 def get_train_test_val_split(config: dict, df: pl.DataFrame) -> tuple[
     pd.DataFrame, pd.DataFrame, pd.DataFrame, pd.DataFrame, pd.DataFrame, pd.DataFrame]:
+    """
+    Train-test-val split for data. Ratio is 0.8/0.1/0.1
+    :param config: setting "n_out" parameter for creating correct feature name list
+    :param df: data
+    :return: train-test-val split for data
+    """
     train_per = 0.8
     gss = GroupShuffleSplit(n_splits=1, test_size=1 - train_per, random_state=42)
     df = df.with_row_index()
@@ -91,11 +101,10 @@ def train(config: dict):
 
     # get model and baseline
     m = get_model(config)
-    baseline = LinearRegressorModel(config)
+    baseline = Baseline(config)
 
     # train
     model, run = m.train(df_train, df_y_train, df_val, df_y_val)
-    baseline.fit(df_train, df_y_train)
 
     # Evaluate the models
     baseline.evaluate(df_test, df_y_test, run)

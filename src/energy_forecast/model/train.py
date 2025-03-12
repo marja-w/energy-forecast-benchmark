@@ -12,7 +12,8 @@ from tqdm import tqdm
 
 from src.energy_forecast.config import REFERENCES_DIR
 from src.energy_forecast.dataset import Dataset
-from src.energy_forecast.model.models import Model, FCNModel, DTModel, LinearRegressorModel, RegressionModel, NNModel
+from src.energy_forecast.model.models import Model, FCNModel, DTModel, LinearRegressorModel, RegressionModel, NNModel, \
+    RNN1Model
 
 
 def get_model(config: dict) -> Model:
@@ -20,6 +21,8 @@ def get_model(config: dict) -> Model:
         return FCNModel(config)
     elif config["model"] == "DT":
         return DTModel(config)
+    elif config["model"] == "RNN1":
+        return RNN1Model(config)
     else:
         raise Exception(f"Unknown model {config['model']}")
 

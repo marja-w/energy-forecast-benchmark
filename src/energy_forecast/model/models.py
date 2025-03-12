@@ -2,10 +2,12 @@ import os
 import shutil
 from pathlib import Path
 from statistics import mean
+from typing import Union
 
 import numpy as np
 import pandas as pd
 import wandb
+from networkx.generators import trees
 from overrides import overrides
 from sklearn.preprocessing import MinMaxScaler, StandardScaler, OneHotEncoder
 from tensorflow import keras
@@ -15,6 +17,7 @@ from loguru import logger
 from wandb.integration.keras import WandbMetricsLogger
 from wandb.sdk.wandb_run import Run
 from pandas import DataFrame
+from darts.models import RNNModel
 
 from src.energy_forecast.config import MODELS_DIR, CATEGORICAL_FEATURES, CATEGORICAL_FEATURES_BINARY, \
     CONTINUOUS_FEATURES
@@ -36,7 +39,7 @@ class Model:
     def get_model(self):
         return self.model
 
-    def init_wandb(self, X_train, X_val) -> tuple:
+    def init_wandb(self, X_train: DataFrame, X_val: Union[DataFrame, None]) -> tuple:
         # Setup wandb training
         config = self.config
         config["train_data_length"] = len(X_train)
@@ -47,6 +50,7 @@ class Model:
                          config=config,
                          name=f"{self.name}_{config['energy']}_{config['n_features']}",
                          reinit=True)  # reinit to allow reinitialization of runs
+        logger.info(f"Training {self.name} on {X_train.shape}")
         return config, run
 
     def train(self, X_train: DataFrame, y_train: DataFrame, X_val: DataFrame, y_val: DataFrame) -> tuple[
@@ -155,7 +159,6 @@ class NNModel(Model):
         keras.Sequential, Run]:
         config, run = self.init_wandb(X_train, X_val)
         # early_stop = EarlyStopping(monitor='val_loss', patience=2)
-        logger.info(f"Training {self.name} on {X_train.shape}")
         # Compile the model
         try:
             optimizer = optimizers.Adam(clipvalue=config["clip"])
@@ -197,6 +200,75 @@ class NNModel(Model):
         return test_mse_scaled, test_mae_scaled, evaluator.mean_squared_error(), evaluator.mean_absolute_error(), evaluator.normalized_root_mean_square_error()
 
 
+class FCNModel(NNModel):
+    def __init__(self, config):
+        super().__init__(config)
+        self.name = "FCN1"
+        input_shape = len(config["features"]) - 1
+        self.model = keras.Sequential([
+            layers.Dense(128, activation='relu', input_shape=(input_shape,)),
+            layers.Dropout(config['dropout']),
+            layers.Dense(64, activation='relu'),
+            layers.Dense(32, activation='relu'),
+            layers.Dense(config["n_out"])  # perform regression
+        ])
+
+
+class RNN1Model(NNModel):
+    def __init__(self, config):
+        super().__init__(config)
+        self.name = "RNN"
+        self.model = keras.Sequential([
+            layers.SimpleRNN(128),
+            layers.Dense(64, activation='relu'),
+            layers.Dropout(config['dropout']),
+            layers.Dense(32, activation='relu'),
+            layers.Dense(config["n_out"])
+        ])
+
+
+    def series_to_supervised(self, df, n_in=1, n_out=1, dropnan=True):
+        """
+        Convert series to supervised learning
+        Args:
+            data:
+            n_in:
+            n_out:
+            dropnan:
+
+        Returns:
+
+        """
+        n_vars = 1 if type(df) is list else df.shape[1]
+        cols, names = list(), list()
+        # input sequence (t-n, ... t-1)
+        for i in range(n_in, 0, -1):
+            cols.append(df.shift(i))
+            names += [('var%d(t-%d)' % (j + 1, i)) for j in range(n_vars)]
+        # forecast sequence (t, t+1, ... t+n)
+        for i in range(0, n_out):
+            cols.append(df.shift(-i))
+            if i == 0:
+                names += [('var%d(t)' % (j + 1)) for j in range(n_vars)]
+            else:
+                names += [('var%d(t+%d)' % (j + 1, i)) for j in range(n_vars)]
+        # put it all together
+        agg = pd.concat(cols, axis=1)
+        agg.columns = names
+        # drop rows with NaN values
+        if dropnan:
+            agg.dropna(inplace=True)
+        return agg
+
+    @overrides
+    def train(self, X_train: DataFrame, y_train: DataFrame, X_val: DataFrame, y_val: DataFrame) -> tuple[
+        keras.Sequential, Run]:
+        X_train = self.series_to_supervised(X_train, n_in=self.config["n_in"], n_out=self.config["n_out"])
+        X_val = self.series_to_supervised(X_val, n_in=self.config["n_in"], n_out=self.config["n_out"])
+        return super().train(X_train, y_train, X_val, y_val)
+
+
+
 class RegressionModel(Model):
     def __init__(self, config):
         super().__init__(config)
@@ -205,10 +277,10 @@ class RegressionModel(Model):
     def train(self, X_train: DataFrame, y_train: DataFrame, X_val: DataFrame, y_val: DataFrame) -> tuple[
         keras.Sequential, Run]:
         config, run = self.init_wandb(X_train, None)
-        self.fit(X_train, y_train, run)
+        self.fit(X_train, y_train)
         return self.model, run
 
-    def fit(self, X_train, y_train, run):
+    def fit(self, X_train, y_train):
         self.model.fit(X_train, y_train)
 
     def evaluate(self, X_test: DataFrame, y_test: DataFrame, run: Run) -> tuple:
@@ -247,33 +319,36 @@ class LinearRegressorModel(RegressionModel):
         return b_nrmse
 
 
-class FCNModel(NNModel):
-    def __init__(self, config):
-        super().__init__(config)
-        self.name = "FCN1"
-        input_shape = len(config["features"]) - 1
-        self.model = keras.Sequential([
-            layers.Dense(128, activation='relu', input_shape=(input_shape,)),
-            layers.Dropout(config['dropout']),
-            layers.Dense(64, activation='relu'),
-            layers.Dense(32, activation='relu'),
-            layers.Dense(config["n_out"])  # perform regression
-        ])
-
-
 class DTModel(RegressionModel):
     def __init__(self, config):
         super().__init__(config)
         self.name = "DT"
         self.model = tree.DecisionTreeRegressor()
 
-    @overrides
-    def fit(self, X_train, y_train, run):
-        super().fit(X_train, y_train, run)
-        logger.info(
-            f"Fitted Decision Tree Model with depth={self.model.get_depth()} and {self.model.get_n_leaves()} leaves")
-        run.log(data={"tree_depth": self.model.get_depth(), "n_leaves": self.model.get_n_leaves()})
-        return run
+    @overrides(check_signature=False)
+    def fit(self, X_train: DataFrame, y_train: DataFrame, run):
+        if self.config["n_out"] == 1:
+            super().fit(X_train, y_train)
+            logger.info(
+                f"Fitted Decision Tree Model with depth={self.model.get_depth()} and {self.model.get_n_leaves()} leaves")
+            run.log(data={"tree_depth": self.model.get_depth(), "n_leaves": self.model.get_n_leaves()})
+            return run
+        else:  # need to fit multiple trees, one for each forecast
+            trees = list()
+            for i in range(self.config["n_out"]):
+                t = tree.DecisionTreeRegressor()
+                t.fit(X_train, y_train[i, :])
+                trees.append(t)
+            self.model = trees
+
+    @overrides(check_signature=False)
+    def evaluate(self, X_test: DataFrame, y_test: DataFrame, run: Run):
+        if self.config["n_out"] == 1:
+            return super().evaluate(X_test, y_test, run)
+        else:
+            y_hat = [t.predict(X_test) for t in trees]
+            evaluator = RegressionMetric(y_test.to_numpy(), y_hat)
+            self.log_eval_results(evaluator, run, len(y_test))
 
     @overrides
     def save(self) -> Path:

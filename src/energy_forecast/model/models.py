@@ -23,6 +23,8 @@ from src.energy_forecast.config import MODELS_DIR, CATEGORICAL_FEATURES, CATEGOR
 import statsmodels.api as sm
 from permetrics.regression import RegressionMetric
 
+from src.energy_forecast.plots import plot_means
+
 
 def root_mean_squared_error(y_true, y_pred):
     return keras.sqrt(keras.mean(keras.square(y_pred - y_true)))
@@ -76,23 +78,28 @@ class Model:
         test_mse = evaluator.mean_squared_error()
         test_mae = evaluator.mean_absolute_error()
         test_nrmse = evaluator.normalized_root_mean_square_error()
+        test_rmse = evaluator.root_mean_squared_error()
         if self.config["n_out"] > 1:
             run.log(data={"test_nrmse_ind": test_nrmse, "test_mse_ind": test_mse, "test_mae_ind": test_mae})
             logger.info(f"MSE Loss on test data per index: {test_mse}")
             logger.info(f"MAE Loss on test data per index: {test_mae}")
+            logger.info(f"RMSE Loss on test data per index: {test_rmse}")
             logger.info(f"NRMSE Loss on test data per index: {test_nrmse}")
             test_nrmse = mean(test_nrmse)
+            test_rmse = mean(test_rmse)
             test_mse = mean(test_mse)
             test_mae = mean(test_mae)
         run.log(data={"test_data_length": len_y_test,
                       "test_mse": test_mse,
                       "test_mae": test_mae,
+                      "test_rmse": test_rmse,
                       "test_nrmse": test_nrmse
                       })
-        logger.info(
-            f"MSE Loss on test data: {test_mse}, MAE Loss on test data: {test_mae}, NRMSE on test data: {test_nrmse}"
-        )
-        return test_mse, test_mae, test_nrmse
+        logger.info(f"MSE Loss on test data: {test_mse}")
+        logger.info(f"MAE Loss on test data: {test_mae}")
+        logger.info(f"RMSE on test data: {test_rmse}")
+        logger.info(f"NRMSE on test data: {test_nrmse}")
+        return test_mse, test_mae, test_nrmse, test_rmse
 
     def save(self) -> Path:
         """
@@ -117,16 +124,29 @@ class Baseline(Model):
         self.name = "baseline"
 
     @overrides(check_signature=False)
-    def evaluate(self, X_test: DataFrame, y_test: DataFrame, run: Run):
+    def evaluate(self, X_test: DataFrame, y_test: DataFrame, run: Run) -> tuple:
         y_hat = y_test.shift(1, fill_value=0)  # predictions are value of yesterday, first day is zero
         evaluator = RegressionMetric(y_test.to_numpy(), y_hat.to_numpy())
         b_nrmse = evaluator.normalized_root_mean_square_error()
+        b_rmse = evaluator.root_mean_squared_error()
+        b_mae = evaluator.mean_absolute_error()
+        b_mse = evaluator.mean_squared_error()
+        logger.info(f"Baseline MSE on test data: {b_mse}")
+        logger.info(f"Baseline MAE on test data: {b_mae}")
+        logger.info(f"Baseline RMSE on test data: {b_rmse}")
         logger.info(f"Baseline NRMSE on test data: {b_nrmse}")
         if self.config["n_out"] == 1:
-            run.log({"b_nrmse": b_nrmse})
+            run.log({"b_nrmse": b_nrmse, "b_rmse": b_rmse, "b_mae": b_mae, "b_mse": b_mse})
         else:
+            logger.info(f"Average Baseline MSE on test data: {b_mse}")
+            logger.info(f"Average Baseline MAE on test data: {mean(b_mse)}")
+            logger.info(f"Average Baseline RMSE on test data: {mean(b_rmse)}")
             logger.info(f"Average Baseline NRMSE on test data: {mean(b_nrmse)}")
-            run.log({"b_nrmse": mean(b_nrmse), "b_nrmse_ind": b_nrmse})
+            run.log({"b_nrmse": mean(b_nrmse), "b_nrmse_ind": b_nrmse,
+                     "b_rmse": mean(b_rmse), "b_rmse_ind": b_rmse,
+                     "b_mae": mean(b_mae), "b_mae_ind": b_mae,
+                     "b_mse": mean(b_mse), "b_mse_ind": b_mse
+                     })
         return b_nrmse
 
 
@@ -163,7 +183,7 @@ class NNModel(Model):
             elif config["scaler"] == "none":
                 self.scaler_X = None
                 self.scaler_y = None
-                return X, y
+                return X, pd.DataFrame(y)
             else:
                 raise NotImplementedError(f"Scaler {config['scaler']} not implemented")
         else:
@@ -182,6 +202,7 @@ class NNModel(Model):
         # scale
         X[self.cont_features] = self.scaler_X.transform(X[self.cont_features])
         y = self.scaler_y.transform(y)
+
         return X, DataFrame(y)
 
     @overrides
@@ -213,15 +234,21 @@ class NNModel(Model):
 
     @overrides
     def evaluate(self, X_test: DataFrame, y_test: DataFrame, run: Run) -> tuple:
+        """
+        Evaluate the NNModel on the test data. Log metrics to wandb.
+        """
         # scale and encode input data if neccessary
         X_test, y_test = self.scale_input_data(X_test, y_test)
         # get predictions
         y_hat = self.predict(X_test)
         if self.scaler_X is not None:
-            test_mse_scaled, test_mae_scaled = self.model.evaluate(X_test, y_test)
+            scaled_ev = RegressionMetric(y_test.to_numpy(), y_hat)
+            test_mse_scaled = scaled_ev.mean_squared_error()
+            test_mae_scaled = scaled_ev.mean_absolute_error()
             run.log({"test_mse_scaled": test_mse_scaled, "test_mae_scaled": test_mae_scaled})
             # rescale predictions
             y_hat = self.scaler_y.inverse_transform(y_hat.reshape(len(y_hat), self.config["n_out"]))
+            y_test = pd.DataFrame(self.scaler_y.inverse_transform(y_test.to_numpy().reshape(len(y_test), self.config["n_out"])))
         evaluator = RegressionMetric(y_test.to_numpy(), y_hat)
         return self.log_eval_results(evaluator, run, len(y_test))
 

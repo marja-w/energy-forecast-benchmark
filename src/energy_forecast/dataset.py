@@ -5,6 +5,7 @@ from pathlib import Path
 import pandas as pd
 import polars as pl
 from loguru import logger
+from overrides import overrides
 from sklearn.model_selection import GroupKFold, GroupShuffleSplit
 from sklearn.preprocessing import LabelEncoder, OneHotEncoder
 from pandas import DataFrame
@@ -119,7 +120,7 @@ def filter_connection_errors_by_id(df: pl.DataFrame, freq: str) -> pl.DataFrame:
     return filtered_df
 
 
-class Dataset(object):
+class Dataset:
     def __init__(self, res: str = "daily"):
         self.res = res
         if res == "daily":
@@ -169,32 +170,7 @@ class Dataset(object):
         logger.success(f"Number of rows after cleaning data: {len(df)}")
         self.df = df
 
-    def one_hot_encode(self, config: dict) -> dict:
-        """
-        One hot encode categorical features. Returns updated config with new feature names.
-        """
-        df = self.df.to_pandas()
-        enc = OneHotEncoder()
-        cat_features = list(set(config["features"]) & set(CATEGORICAL_FEATURES))  # categorical features we want
-        if len(cat_features) > 0:
-            enc = enc.fit(df[cat_features])
-            cat_features_names = enc.get_feature_names_out()
-            X_enc = DataFrame(enc.transform(df[cat_features]).toarray(), columns=cat_features_names)
-            df = df.drop(columns=cat_features)
-            df = pd.concat([df, X_enc], axis=1)
-            self.df = pl.DataFrame(df)
-            config["features"] = list(set(config["features"]) - set(cat_features)) + list(cat_features_names)
-        return config
-
-    def add_multiple_forecast(self, n: int):
-        if n > 1:
-            df = self.df
-            for i in range(1, n):
-                df = df.with_columns(pl.col("diff").shift(-i).alias(f"diff_t+{i}"))
-            df = df.drop_nulls(["diff"] + [f"diff_t+{i}" for i in range(1, n)])
-            self.df = df
-
-    def add_features(self):
+    def add_features(self) -> None:
         """
         Add features to dataset. Features include:
 
@@ -205,7 +181,6 @@ class Dataset(object):
             heated area, number of appartments, type of building (school, gym, museum, multiple appartments, ...)
         - engineered features: "weekend" (whether it is a workday or the weekend), "yearly_consumption" (how much energy
             the building needs a year)
-        Returns:
 
         """
         # load all the feature dataframes
@@ -269,11 +244,11 @@ class Dataset(object):
                 # set all null values of typ to Mehrfamilienhaus
                 pl.when(pl.col("typ").is_null()).then(pl.lit("Mehrfamilienhaus")).otherwise(
                     pl.col("typ")).name.keep(),
-                ).with_columns(
+            ).with_columns(
                 # set values in n appartments to null if it is 0 and a if building is multiple appartment building
                 pl.when((pl.col("anzahlwhg") == 0).and_(pl.col("typ") == "Mehramilienhaus")
                         ).then(None).otherwise(pl.col("anzahlwhg")).name.keep()
-                ).with_columns(pl.col("typ").map_batches(enc.fit_transform))  # make typ column categorical
+            ).with_columns(pl.col("typ").map_batches(enc.fit_transform))  # make typ column categorical
                   )
             # get the daily consumption average for each building
             df_daily_avg = df.select(["id", "datetime", "diff"]).group_by(["id"]).agg(
@@ -319,6 +294,68 @@ class Dataset(object):
         self.add_features()
         self.save(output_file_path=f"{PROCESSED_DATA_DIR}/dataset_{self.res}_feat.csv")
 
+
+class TrainingDataset(Dataset):
+    """ Dataset for training a model"""
+
+    def __init__(self, config: dict):
+        try:
+            res = config["res"]
+        except KeyError:
+            res = "daily"
+        super().__init__(res)
+        self.config = config
+
+    def one_hot_encode(self):
+        """
+        One hot encode categorical features. Returns updated config with new feature names.
+        """
+        df = self.df.to_pandas()
+        config = self.config
+        enc = OneHotEncoder()
+        cat_features = list(set(config["features"]) & set(CATEGORICAL_FEATURES))  # categorical features we want
+        if len(cat_features) > 0:
+            enc = enc.fit(df[cat_features])
+            cat_features_names = enc.get_feature_names_out()
+            X_enc = DataFrame(enc.transform(df[cat_features]).toarray(), columns=cat_features_names)
+            df = df.drop(columns=cat_features)
+            df = pd.concat([df, X_enc], axis=1)
+            self.df = pl.DataFrame(df)
+            config["features"] = list(set(config["features"]) - set(cat_features)) + list(cat_features_names)
+        self.config = config
+
+    def add_multiple_forecast(self) -> None:
+        """
+        Add heat consumption of next n days/hours to data, if "n_out" greater than 1.
+        """
+        n = self.config["n_out"]
+        if n > 1:
+            df = self.df
+            for i in range(1, n):
+                df = df.with_columns(pl.col("diff").shift(-i).alias(f"diff_t+{i}"))
+            df = df.drop_nulls(["diff"] + [f"diff_t+{i}" for i in range(1, n)])
+            self.df = df
+
+    def preprocess(self) -> tuple[pl.DataFrame, dict]:
+        self.one_hot_encode()
+        self.add_multiple_forecast()
+        # select energy type
+        if self.config["energy"] != "all":
+            self.df = self.df.filter(pl.col("primary_energy") == self.config["energy"])
+        self.df = self.df.drop_nulls(subset=self.config["features"])  # remove null values for used features
+        return self.df, self.config
+
+class TimeSeriesDataset(TrainingDataset):
+    def __init__(self, config: dict):
+        super().__init__(config)
+
+    @overrides
+    def add_multiple_forecast(self) -> None:
+        """
+        Transform dataset into time series data for training.
+        :return:
+        """
+        pass
 
 if __name__ == '__main__':
     # DATA LOADING

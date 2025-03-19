@@ -10,6 +10,49 @@ from src.energy_forecast.config import RAW_DATA_DIR, PROCESSED_DATA_DIR
 from src.energy_forecast.util import find_time_spans, get_missing_dates
 
 
+def plot_means(X_train, y_train, X_val, y_val, X_test, y_test):
+    fig, ax = plt.subplots()
+    bar_width = 0.25
+    ax.set_title(f"Mean values of data")
+    columns = list(X_train.columns) + y_train.columns.tolist()
+
+    br1 = np.arange(len(columns))
+    br2 = [x + bar_width for x in br1]
+    br3 = [x + bar_width for x in br2]
+
+    d = pd.concat([X_train, y_train])
+    _mean = d.mean()
+    _min = d.min()
+    _max = d.max()
+    # yerr = [np.subtract(_mean, _min), np.subtract(_max, _mean)]
+    plt.bar(br1, _mean, label=f"Training data ({len(X_train)})", width=bar_width, capsize=10)
+    plt.bar(br2, pd.concat([X_val.mean(), y_val.mean()]), label=f"Validation data ({len(X_val)})", width=bar_width)
+    plt.bar(br3, pd.concat([X_test.mean(), y_test.mean()]), label=f"Test data ({len(X_test)})", width=bar_width)
+    plt.xticks([r + bar_width for r in range(len(columns))], columns)
+    plt.legend()
+    # plt.ion()  # interactive mode non blocking
+    plt.show()
+
+
+def plot_std(X_train, y_train, X_val, y_val, X_test, y_test):
+    fig, ax = plt.subplots()
+    bar_width = 0.25
+    ax.set_title(f"Std values of data")
+    columns = list(X_train.columns) + y_train.columns.tolist()
+
+    br1 = np.arange(len(columns))
+    br2 = [x + bar_width for x in br1]
+    br3 = [x + bar_width for x in br2]
+
+    plt.bar(br1, pd.concat([X_train.std(), y_train.std()]), label=f"Training data ({len(X_train)})", width=bar_width)
+    plt.bar(br2, pd.concat([X_val.std(), y_val.std()]), label=f"Validation data ({len(X_val)})", width=bar_width)
+    plt.bar(br3, pd.concat([X_test.std(), y_test.std()]), label=f"Test data ({len(X_test)})", width=bar_width)
+    plt.xticks([r + bar_width for r in range(len(columns))], columns)
+    plt.legend()
+    # plt.ion()
+    plt.show()
+
+
 def plot_missing_dates(df_data: pl.DataFrame, sensor_id: str):
     df_data = df_data.filter(pl.col("id") == sensor_id)
     # address = df_data["adresse"].unique().item()

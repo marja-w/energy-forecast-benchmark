@@ -1,21 +1,18 @@
-from typing import Union
-
-import pandas as pd
-import tensorflow as tf
 import jsonlines
-import wandb
+import pandas as pd
+import polars as pl
 from loguru import logger
 from sklearn.model_selection import GroupShuffleSplit
-from sklearn.preprocessing import StandardScaler
 from tensorflow import keras
 from tensorflow.keras import layers
-import polars as pl
 from tqdm import tqdm
 
 try:
+    from src.energy_forecast.plots import plot_means, plot_std
     from src.energy_forecast.config import REFERENCES_DIR, FEATURE_SETS
-    from src.energy_forecast.dataset import Dataset
-    from src.energy_forecast.model.models import Model, FCNModel, DTModel, LinearRegressorModel, RegressionModel, NNModel, \
+    from src.energy_forecast.dataset import Dataset, TrainingDataset
+    from src.energy_forecast.model.models import Model, FCNModel, DTModel, LinearRegressorModel, RegressionModel, \
+        NNModel, \
         RNN1Model, FCN2Model, FCN3Model, Baseline
 except ModuleNotFoundError:
     import sys
@@ -28,8 +25,9 @@ except ModuleNotFoundError:
         par_dir = os.path.dirname(os.path.dirname(os.path.dirname(curr_dir)))
         sys.path.insert(0, par_dir)
 
+        from src.energy_forecast.plots import plot_means, plot_std
         from src.energy_forecast.config import REFERENCES_DIR, FEATURE_SETS
-        from src.energy_forecast.dataset import Dataset
+        from src.energy_forecast.dataset import Dataset, TrainingDataset
         from src.energy_forecast.model.models import Model, FCNModel, DTModel, LinearRegressorModel, RegressionModel, \
             NNModel, RNN1Model, FCN2Model, FCN3Model, Baseline
     else:
@@ -61,15 +59,9 @@ def get_data(config: dict) -> tuple[pl.DataFrame, dict]:
     Returns:
 
     """
-    ds = Dataset()
+    ds = TrainingDataset(config)
     ds.load_feat_data()  # all data
-    config = ds.one_hot_encode(config)  # one hot encode categorical features
-    ds.add_multiple_forecast(config["n_out"])  # add multiple steps if forecast larger than one
-    df = ds.df
-    # select energy type
-    if config["energy"] != "all":
-        df = df.filter(pl.col("primary_energy") == config["energy"])
-    df = df.drop_nulls(subset=config["features"])  # remove null values for used features
+    df, config = ds.preprocess()  # preprocess data for training
     return df, config
 
 
@@ -105,6 +97,9 @@ def get_train_test_val_split(config: dict, df: pl.DataFrame) -> tuple[
     y_val = val_data.to_pandas()[target_vars]
     X_test: pd.DataFrame = test_data.to_pandas()[list(set(config["features"]) - set(target_vars))]
     y_test: pd.DataFrame = test_data.to_pandas()[target_vars]
+
+    # plot_means(X_train, y_train, X_val, y_val, X_test, y_test)
+    # plot_std(X_train, y_train, X_val, y_val, X_test, y_test)
 
     logger.info(f"Train data shape: {X_train.shape}")
     logger.info(f"Test data shape: {X_test.shape}")
@@ -154,9 +149,9 @@ if __name__ == '__main__':
     # Read in configs from .jsonl file
     configs = list()
     with jsonlines.open(configs_path) as reader:
-        for config in reader.iter():
-            configs.append(config)
+        for config_dict in reader.iter():
+            configs.append(config_dict)
 
-    for config in tqdm(configs):  # start one training for each config
-        _, run = train(config)
+    for config_dict in tqdm(configs):  # start one training for each config
+        _, run = train(config_dict)
         run.finish()  # finish run to start new run with next config

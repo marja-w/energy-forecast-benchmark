@@ -8,9 +8,9 @@ from tensorflow.keras import layers
 from tqdm import tqdm
 
 try:
-    from src.energy_forecast.plots import plot_means, plot_std
+    from src.energy_forecast.plots import plot_means, plot_std, plot_train_val_test_split
     from src.energy_forecast.config import REFERENCES_DIR, FEATURE_SETS
-    from src.energy_forecast.dataset import Dataset, TrainingDataset
+    from src.energy_forecast.dataset import Dataset, TrainingDataset, TrainDataset90
     from src.energy_forecast.model.models import Model, FCNModel, DTModel, LinearRegressorModel, RegressionModel, \
         NNModel, \
         RNN1Model, FCN2Model, FCN3Model, Baseline
@@ -27,7 +27,7 @@ except ModuleNotFoundError:
 
         from src.energy_forecast.plots import plot_means, plot_std
         from src.energy_forecast.config import REFERENCES_DIR, FEATURE_SETS
-        from src.energy_forecast.dataset import Dataset, TrainingDataset
+        from src.energy_forecast.dataset import Dataset, TrainingDataset, TrainDataset90
         from src.energy_forecast.model.models import Model, FCNModel, DTModel, LinearRegressorModel, RegressionModel, \
             NNModel, RNN1Model, FCN2Model, FCN3Model, Baseline
     else:
@@ -59,7 +59,10 @@ def get_data(config: dict) -> tuple[pl.DataFrame, dict]:
     Returns:
 
     """
-    ds = TrainingDataset(config)
+    if config["missing_data"] == 90:
+        ds = TrainDataset90(config)
+    else:
+        ds = TrainingDataset(config)
     ds.load_feat_data()  # all data
     df, config = ds.preprocess()  # preprocess data for training
     return df, config
@@ -109,6 +112,7 @@ def train_test_split_time_based(df: pl.DataFrame, train_per: float):
     train_df = pl.concat(train_dfs)
     val_df = pl.concat(val_dfs)
     test_df = pl.concat(test_dfs)
+    # plot_train_val_test_split(train_df, val_df, test_df)
     assert len(df) == (len(train_df) + len(val_df) + len(test_df))
     return train_df, val_df, test_df
 

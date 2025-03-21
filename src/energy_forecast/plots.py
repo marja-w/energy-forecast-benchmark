@@ -5,8 +5,9 @@ import pandas as pd
 import polars as pl
 from loguru import logger
 from matplotlib import pyplot as plt
+import seaborn as sns
 
-from src.energy_forecast.config import RAW_DATA_DIR, PROCESSED_DATA_DIR
+from src.energy_forecast.config import RAW_DATA_DIR, PROCESSED_DATA_DIR, FIGURES_DIR
 from src.energy_forecast.util import find_time_spans, get_missing_dates
 
 
@@ -53,6 +54,24 @@ def plot_std(X_train, y_train, X_val, y_val, X_test, y_test):
     plt.show()
 
 
+def plot_train_val_test_split(train_df: pl.DataFrame, val_df: pl.DataFrame, test_df: pl.DataFrame):
+    for b_id in train_df["id"].unique():
+        t = train_df.filter(pl.col("id") == b_id).select(["datetime", "diff"]).with_columns(
+            pl.lit("train").alias("split"))
+        v = val_df.filter(pl.col("id") == b_id).select(["datetime", "diff"]).with_columns(pl.lit("val").alias("split"))
+        te = test_df.filter(pl.col("id") == b_id).select(["datetime", "diff"]).with_columns(
+            pl.lit("test").alias("split"))
+        df = pl.concat([t, v, te])
+        fig, ax = plt.subplots(figsize=(12, 4), dpi=80)
+        # ax.plot(list(df["datetime"]), list(df["diff"]), c=list(df["split"]))
+        # plt.show()
+        sns.scatterplot(data=df, x="datetime", y="diff", hue="split")
+        ax.set_title(b_id)
+        plt.show()
+    raise ValueError
+    # df.plot.line(x="datetime", y="diff", color="split")
+
+
 def plot_missing_dates(df_data: pl.DataFrame, sensor_id: str):
     df_data = df_data.filter(pl.col("id") == sensor_id)
     # address = df_data["adresse"].unique().item()
@@ -85,11 +104,17 @@ def plot_missing_dates(df_data: pl.DataFrame, sensor_id: str):
     ax.fill_between(df.index, df["diff"].min(), df["diff"].max(), where=df["diff"], facecolor="lightblue", alpha=0.5)
     ax.fill_between(df.index, df["diff"].min(), df["diff"].max(), where=np.isfinite(df["diff"]), facecolor="white",
                     alpha=1)
-    ax.plot(df.index, df["diff"])
+    ax.scatter(df.index, df["diff"])
 
     ax.xaxis.set_tick_params(rotation=45)
     plt.tight_layout()
-    plt.show()
+    plt.savefig(FIGURES_DIR / "missing_data" / f"{sensor_id}.png")
+    plt.close()
+
+
+def plot_missing_dates_per_building(df: pl.DataFrame):
+    for (b_id, b_df) in df.group_by(["id"]):
+        plot_missing_dates(b_df, sensor_id=b_id[0])
 
 
 if __name__ == "__main__":

@@ -8,6 +8,8 @@ from keras.utils import timeseries_dataset_from_array
 from loguru import logger
 from numpy import ndarray
 
+from src.energy_forecast.config import RAW_DATA_DIR
+
 
 def add_env_energy(df: pl.DataFrame, df_raw: pl.DataFrame, address: str, col_gas: str, col_env: str):
     val_col_env = df_raw.filter((pl.col("adresse") == address) & (pl.col("Title") == col_env))["Val"]
@@ -85,8 +87,9 @@ def get_missing_dates(df: pl.DataFrame, frequency: str = "D") -> pl.DataFrame:
         logger.info(f"Missing dates for sensor {id}: {len(missing_dates_sensor)}")
         missing_dates.append(
             {"id": id, "missing_dates": missing_dates_sensor, "len": len(missing_dates_sensor), "n": row[1],
-             "per": (len(date_list) / len(date_list_rec)) * 100})
-    return pl.DataFrame(missing_dates).sort(pl.col("len"), descending=True)
+             "per": ((len(date_list_rec) / (1 + len(date_list))) * 100), "start_date": start_date, "end_date": end_date})
+    df_missing_dates = pl.DataFrame(missing_dates).sort(pl.col("len"), descending=True)
+    return df_missing_dates
 
 
 def find_time_spans(dates: list[date], delta: timedelta) -> pl.DataFrame:

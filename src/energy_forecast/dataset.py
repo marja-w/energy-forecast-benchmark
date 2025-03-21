@@ -10,8 +10,9 @@ from sklearn.model_selection import GroupKFold, GroupShuffleSplit
 from sklearn.preprocessing import LabelEncoder, OneHotEncoder
 from pandas import DataFrame
 
-from src.energy_forecast.config import RAW_DATA_DIR, DATA_DIR, PROCESSED_DATA_DIR, CATEGORICAL_FEATURES
+from src.energy_forecast.config import RAW_DATA_DIR, DATA_DIR, PROCESSED_DATA_DIR, CATEGORICAL_FEATURES, FEATURES
 from src.energy_forecast.data_processing.data_source import LegacyDataLoader, KinergyDataLoader, DHDataLoader
+from src.energy_forecast.plots import plot_missing_dates_per_building
 from src.energy_forecast.util import get_missing_dates, find_time_spans
 
 
@@ -130,6 +131,7 @@ class Dataset:
         else:
             raise ValueError(f"Unknown value for resolution: {res}")
         self.df = pl.DataFrame()
+        self.name = self.res
 
     def create(self):
         dfs = list()
@@ -167,6 +169,9 @@ class Dataset:
         df = filter_flat_lines_by_id(df, thresh)
         logger.info(f"Number of rows after filtering flat lines: {len(df)}")
 
+        plot_missing_dates_per_building(df)
+        df_md = get_missing_dates(df)
+        df_md.select(["id", "len", "n", "per", "start_date", "end_date"]).sort(pl.col("per"), descending=True).write_csv(RAW_DATA_DIR / "missing_dates.csv")
         logger.success(f"Number of rows after cleaning data: {len(df)}")
         self.df = df
 
@@ -216,9 +221,7 @@ class Dataset:
             elif row[1] is not None:
                 holiday_dict[row[0]].extend([row[1]])
 
-        attributes = ["diff", 'hum_avg', 'hum_min', 'hum_max', 'tavg', 'tmin', 'tmax', 'prcp', 'snow', 'wdir', 'wspd',
-                      'wpgt', 'pres', 'tsun', "holiday", "weekend", "typ", "building_height", "storeys_above_ground",
-                      "ground_surface", "daily_avg", "min_vorlauf_temp", "max_vorlauf_temp"]
+        attributes = FEATURES
 
         def is_weekend(date: datetime.datetime):
             if date.weekday() > 4:
@@ -259,12 +262,11 @@ class Dataset:
             df = df.join(df_daily_avg, on="id", how="left")
             return add_holidays(df)
 
-        attributes_ha = attributes + ["heated_area", "anzahlwhg"]
-        logger.info(f"Adding {attributes_ha} to dataset, this might take a while")
-        self.df = add_meta(self.df).select(["id", "datetime", "primary_energy"] + attributes_ha)
+        logger.info(f"Adding {attributes} to dataset, this might take a while")
         # create diff of past day feature
         self.df = self.df.with_columns(pl.col("diff").shift(1).over("id").alias("diff_t-1")).drop_nulls(
             subset=["diff_t-1"])
+        self.df = add_meta(self.df).select(["id", "datetime"] + attributes)
         logger.success("Added features to dataset")
 
     def get_train_and_test(self, train_per: float):
@@ -294,14 +296,43 @@ class Dataset:
     def create_and_clean(self):
         self.create()
         self.clean()
-        self.save(output_file_path=f"{PROCESSED_DATA_DIR}/dataset_{self.res}.csv")
+        self.save(output_file_path=f"{PROCESSED_DATA_DIR}/dataset_{self.name}.csv")
 
     def create_clean_and_add_feat(self):
         self.create()
         self.clean()
         self.add_features()
-        self.save(output_file_path=f"{PROCESSED_DATA_DIR}/dataset_{self.res}_feat.csv")
+        self.save(output_file_path=f"{PROCESSED_DATA_DIR}/dataset_{self.name}_feat.csv")
 
+
+def interpolate_values(df: pl.DataFrame) -> pl.DataFrame:
+    freq = "D"  # TODO: for hours
+    # create dataframe from start to end date
+    start_date = df["datetime"].min()
+    end_date = df["datetime"].max()
+    df_date_list = pl.DataFrame(pl.from_pandas(pd.date_range(start_date, end_date, freq=freq)), schema={"datetime": pl.Datetime})
+    df = df.with_columns(pl.col("datetime").dt.cast_time_unit("ns").alias("datetime"))
+    df_dates = df_date_list.join(df, on="datetime", how="left")
+    pass  # TODO
+
+
+def interpolate_values_by_id(df: pl.DataFrame):
+    interpolated_df = df.group_by("id").map_groups(lambda group: interpolate_values(group))
+    return interpolated_df
+
+
+class InterpolatedDataset(Dataset):
+    def __init__(self, res: str = "daily"):
+        super().__init__(res)
+        self.name = f"interp_{res}"
+
+    def clean(self):
+        super().clean()
+        df = self.df
+        logger.info("Interpolating values")
+        df = interpolate_values_by_id(df)
+        logger.info(f"Number of rows after filtering outliers: {len(df)}")
+        self.df = df
 
 class TrainingDataset(Dataset):
     """ Dataset for training a model"""
@@ -313,6 +344,9 @@ class TrainingDataset(Dataset):
             res = "daily"
         super().__init__(res)
         self.config = config
+        self.corrupt_building_ids = [
+            ""
+        ]
 
     def one_hot_encode(self):
         """
@@ -344,6 +378,9 @@ class TrainingDataset(Dataset):
             df = df.drop_nulls(["diff"] + [f"diff_t+{i}" for i in range(1, n)])
             self.df = df
 
+    def remove_corrupt_buildings(self):
+        self.df = self.df.filter(~pl.col("id").is_in(self.corrupt_building_ids))
+
     def preprocess(self) -> tuple[pl.DataFrame, dict]:
         self.one_hot_encode()
         self.add_multiple_forecast()
@@ -352,8 +389,20 @@ class TrainingDataset(Dataset):
             self.df = self.df.filter(pl.col("primary_energy") == self.config["energy"])
         self.df = self.df.drop_nulls(subset=self.config["features"])  # remove null values for used features
         logger.info(f"Training Features: {self.config['features']}")
+        self.remove_corrupt_buildings()
         return self.df, self.config
 
+class TrainDataset90(TrainingDataset):
+    def __init__(self, config: dict):
+        super().__init__(config)
+
+    def remove_corrupt_buildings(self):
+        frequ = "D" if self.res == "daily" else "h"
+        md_df = get_missing_dates(self.df, frequ)
+        logger.info("Filtering for at most 10% missing data")
+        allowed_ids = md_df.filter(pl.col("per") > 90)["id"].to_list()
+        self.df = self.df.filter(pl.col("id").is_in(allowed_ids))
+        logger.info(f"Data length after filtering: {len(self.df)}")
 
 class TimeSeriesDataset(TrainingDataset):
     def __init__(self, config: dict):
@@ -385,7 +434,7 @@ if __name__ == '__main__':
 
     ds = Dataset()
     ds.create_and_clean()
-    ds.create_clean_and_add_feat()
+    # ds.create_clean_and_add_feat()
 
     # ds.load_feat_data()
     # df_train, df_test = ds.get_train_and_test(0.8)

@@ -218,7 +218,7 @@ class Dataset:
 
         attributes = ["diff", 'hum_avg', 'hum_min', 'hum_max', 'tavg', 'tmin', 'tmax', 'prcp', 'snow', 'wdir', 'wspd',
                       'wpgt', 'pres', 'tsun', "holiday", "weekend", "typ", "building_height", "storeys_above_ground",
-                      "ground_surface", "daily_avg"]
+                      "ground_surface", "daily_avg", "min_vorlauf_temp", "max_vorlauf_temp"]
 
         def is_weekend(date: datetime.datetime):
             if date.weekday() > 4:
@@ -281,7 +281,15 @@ class Dataset:
 
     def load_feat_data(self):
         self.df = pl.read_csv(f"{PROCESSED_DATA_DIR}/dataset_{self.res}_feat.csv").cast(
-            {"heated_area": pl.Float64, "anzahlwhg": pl.Int64}).with_columns(pl.col("datetime").str.to_datetime())
+            {"heated_area": pl.Float64,
+             "anzahlwhg": pl.Int64,
+             "max_vorlauf_temp": pl.Float64,
+             "min_vorlauf_temp": pl.Float64,
+             "building_height": pl.Float64,
+             "storeys_above_ground": pl.Int64,
+             "ground_surface": pl.Float64,
+             "tsun": pl.Float64}
+        ).with_columns(pl.col("datetime").str.to_datetime())
 
     def create_and_clean(self):
         self.create()
@@ -343,7 +351,9 @@ class TrainingDataset(Dataset):
         if self.config["energy"] != "all":
             self.df = self.df.filter(pl.col("primary_energy") == self.config["energy"])
         self.df = self.df.drop_nulls(subset=self.config["features"])  # remove null values for used features
+        logger.info(f"Training Features: {self.config['features']}")
         return self.df, self.config
+
 
 class TimeSeriesDataset(TrainingDataset):
     def __init__(self, config: dict):
@@ -356,6 +366,7 @@ class TimeSeriesDataset(TrainingDataset):
         :return:
         """
         pass
+
 
 if __name__ == '__main__':
     # DATA LOADING
@@ -373,6 +384,7 @@ if __name__ == '__main__':
     logger.info("Finish data loading")
 
     ds = Dataset()
+    ds.create_and_clean()
     ds.create_clean_and_add_feat()
 
     # ds.load_feat_data()

@@ -65,6 +65,54 @@ def get_data(config: dict) -> tuple[pl.DataFrame, dict]:
     return df, config
 
 
+def train_test_split_group_based(df, train_per):
+    gss = GroupShuffleSplit(n_splits=1, test_size=1 - train_per, random_state=42)
+    df = df.with_row_index()
+    for train_idx, test_idx in gss.split(df, groups=df["id"]):
+        train_data = df.filter(pl.col("index").is_in(train_idx))
+        test_val_df = df.filter(pl.col("index").is_in(test_idx))
+    # split test into validation and test
+    test_val_df = test_val_df.drop("index").with_row_index()
+    gss = GroupShuffleSplit(n_splits=1, test_size=0.5, random_state=43)
+    for test_idx, val_idx in gss.split(test_val_df, groups=test_val_df["id"]):
+        test_data = test_val_df.filter(pl.col("index").is_in(test_idx))
+        val_data = test_val_df.filter(pl.col("index").is_in(val_idx))
+
+    return train_data, val_data, test_data
+
+
+def train_test_split_time_based(df: pl.DataFrame, train_per: float):
+    df = df.sort([pl.col("id"), pl.col("datetime")])
+
+    # Group by building index and split
+    train_dfs = []
+    val_test_dfs = []
+    test_dfs = []
+    val_dfs = []
+
+    for group in df.group_by(pl.col("id")):
+        building_df = group[1]  # Extract grouped DataFrame
+        building_df = building_df.with_row_index()
+        split_idx = int(len(building_df) * train_per)
+
+        train_dfs.append(building_df.filter(pl.col("index") <= split_idx).drop(["index"]))
+        val_test_dfs.append(building_df.filter(pl.col("index") > split_idx).drop(["index"]))
+
+    for building_df in val_test_dfs:
+        building_df = building_df.with_row_index()
+        split_idx = int(len(building_df) * 0.5)
+
+        val_dfs.append(building_df.filter(pl.col("index") <= split_idx).drop(["index"]))
+        test_dfs.append(building_df.filter(pl.col("index") > split_idx).drop(["index"]))
+
+    # Concatenate results
+    train_df = pl.concat(train_dfs)
+    val_df = pl.concat(val_dfs)
+    test_df = pl.concat(test_dfs)
+    assert len(df) == (len(train_df) + len(val_df) + len(test_df))
+    return train_df, val_df, test_df
+
+
 def get_train_test_val_split(config: dict, df: pl.DataFrame) -> tuple[
     pd.DataFrame, pd.DataFrame, pd.DataFrame, pd.DataFrame, pd.DataFrame, pd.DataFrame]:
     """
@@ -74,18 +122,14 @@ def get_train_test_val_split(config: dict, df: pl.DataFrame) -> tuple[
     :return: train-test-val split for data
     """
     train_per = 0.8
-    gss = GroupShuffleSplit(n_splits=1, test_size=1 - train_per, random_state=42)
-    df = df.with_row_index()
-    for train_idx, test_idx in gss.split(df, groups=df["id"]):
-        train_data = df.filter(pl.col("index").is_in(train_idx))
-        test_val_df = df.filter(pl.col("index").is_in(test_idx))
-
-    # split test into validation and test
-    test_val_df = test_val_df.drop("index").with_row_index()
-    gss = GroupShuffleSplit(n_splits=1, test_size=0.5, random_state=43)
-    for test_idx, val_idx in gss.split(test_val_df, groups=test_val_df["id"]):
-        test_data = test_val_df.filter(pl.col("index").is_in(test_idx))
-        val_data = test_val_df.filter(pl.col("index").is_in(val_idx))
+    try:
+        split_method = config["train_test_split_method"]
+    except KeyError:
+        config["train_test_split_method"] = "time"  # default
+    if config["train_test_split_method"] == "group":
+        train_data, val_data, test_data = train_test_split_group_based(df, train_per)
+    elif config["train_test_split_method"] == "time":
+        train_data, val_data, test_data = train_test_split_time_based(df, train_per)
 
     # transform to pandas DataFrame input
     target_vars = ["diff"]

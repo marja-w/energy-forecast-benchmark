@@ -23,7 +23,7 @@ FIGURES_DIR = REPORTS_DIR / "figures"
 
 REFERENCES_DIR = PROJ_ROOT / "references"
 
-CATEGORICAL_FEATURES = ["typ"]
+CATEGORICAL_FEATURES = ["typ", "min_vorlauf_temp", "max_vorlauf_temp"]
 CATEGORICAL_FEATURES_BINARY = ["weekend", "holiday"]
 CONTINUOUS_FEATURES = ["diff_t-1", 'hum_avg', 'hum_min', 'hum_max', 'tavg', 'tmin', 'tmax', 'prcp', 'snow', 'wdir',
                        'wspd', 'wpgt', 'pres', 'tsun', "daily_avg", "heated_area", "anzahlwhg", "ground_surface",
@@ -32,11 +32,12 @@ CONTINUOUS_FEATURES = ["diff_t-1", 'hum_avg', 'hum_min', 'hum_max', 'tavg', 'tmi
 ## Feature Configs
 FEATURES_DIFF = ["diff", "diff_t-1"]
 FEATURES_WEATHER = ['hum_avg', 'hum_min', 'hum_max', 'tavg', 'tmin', 'tmax', 'prcp', 'snow', 'wdir', 'wspd',
-                 'wpgt', 'pres', 'tsun']
+                    'wpgt', 'pres', 'tsun']
 FEATURES_WEATHER_SIGNIFICANT = ["tmax", "tsun", "wpgt", "hum_avg"]
 FEATURES_BUILDING = ["daily_avg", "heated_area", "anzahlwhg", "typ"]
+FEATURES_BUILDING_NO_APPARTMENT = list(set(FEATURES_BUILDING) - {"anzahlwhg"})
 FEATURES_TIME = ["weekend", "holiday"]
-FEATURES_DH = ["ground_surface", "building_height", "storeys_above_ground"]
+FEATURES_DH = ["ground_surface", "building_height", "storeys_above_ground", "heated_area"]
 FEATURES_ALL = FEATURES_DIFF + FEATURES_WEATHER + FEATURES_BUILDING + FEATURES_TIME
 
 FEATURE_SET_1 = FEATURES_DIFF
@@ -48,8 +49,12 @@ FEATURE_SET_6 = FEATURES_DIFF + FEATURES_WEATHER_SIGNIFICANT + FEATURES_BUILDING
 FEATURE_SET_7 = FEATURES_ALL
 FEATURE_SET_8 = FEATURES_DIFF + FEATURES_WEATHER + FEATURES_TIME + ["daily_avg"]
 FEATURE_SET_9 = FEATURES_DIFF + FEATURES_WEATHER + FEATURES_BUILDING + ["weekend"]
+FEATURE_SET_10 = FEATURES_DIFF + FEATURES_WEATHER + FEATURES_TIME + FEATURES_BUILDING_NO_APPARTMENT
+FEATURE_SET_11 = FEATURES_DIFF + FEATURES_WEATHER + FEATURES_TIME + FEATURES_DH
+
 FEATURE_SETS = {1: FEATURE_SET_1, 2: FEATURE_SET_2, 3: FEATURE_SET_3, 4: FEATURE_SET_4, 5: FEATURE_SET_5,
-                6: FEATURE_SET_6, 7:FEATURE_SET_7, 8:FEATURE_SET_8, 9:FEATURE_SET_9}
+                6: FEATURE_SET_6, 7: FEATURE_SET_7, 8: FEATURE_SET_8, 9: FEATURE_SET_9, 10: FEATURE_SET_10,
+                11: FEATURE_SET_11}
 
 # If tqdm is installed, configure loguru with tqdm.write
 # https://github.com/Delgan/loguru/issues/135

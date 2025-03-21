@@ -444,9 +444,14 @@ class DHDataLoader(DataLoader):
             city = item["address"]["address_locality"]
             postal_code = item["address"]["postal_code"]
             country = item["address"]["address_country"]
+            type = "Mehrfamilienhaus"
+            if address in ["Moorbekstraße 17", "Moorbekstraße 15", "Hasenstieg 13", "Moorbekstraße 19"]:
+                type = "Schule"
+            if address in ["Kielortring 51"]:
+                type = "Sozialbau"
             meta_data.append(
                 {"eco_u_id": eco_u_id, "data_provider_id": data_provider_id, "address": address, "city": city,
-                 "postal_code": postal_code, "country": country})
+                 "postal_code": postal_code, "country": country, "typ": type})
         df_meta = pl.DataFrame(meta_data).filter(pl.struct("eco_u_id", "data_provider_id").is_in(self.main_counter))
         df_meta = df_meta.with_columns(pl.lit("district heating").alias("primary_energy"),
                                        pl.lit("kwh").alias("unit_code"))

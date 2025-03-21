@@ -1,3 +1,4 @@
+import math
 import os
 import shutil
 from pathlib import Path
@@ -7,6 +8,7 @@ from typing import Union
 import numpy as np
 import pandas as pd
 import wandb
+from keras.src.callbacks import LearningRateScheduler
 from networkx.generators import trees
 from overrides import overrides
 from sklearn.preprocessing import MinMaxScaler, StandardScaler, OneHotEncoder
@@ -28,6 +30,15 @@ from src.energy_forecast.plots import plot_means
 
 def root_mean_squared_error(y_true, y_pred):
     return keras.sqrt(keras.mean(keras.square(y_pred - y_true)))
+
+
+# learning rate schedule
+def step_decay(epoch):
+    initial_lrate = 0.01
+    drop = 0.5
+    epochs_drop = 10.0
+    lrate = initial_lrate * math.pow(drop, math.floor((1 + epoch) / epochs_drop))
+    return lrate
 
 
 class Model:
@@ -153,6 +164,20 @@ class Baseline(Model):
 class NNModel(Model):
     def __init__(self, config):
         super().__init__(config)
+        # learning rate scheduler
+        if config["lr_scheduler"] == "step_decay":
+            self.lr_callback = LearningRateScheduler(step_decay, verbose=True)
+        else:
+            self.lr_callback = None
+        # weight initializer
+        match config["weight_initializer"]:
+            case "normal":
+                self.initializer = "normal"
+            case "glorot":
+                self.initializer = keras.initializers.GlorotNormal()
+            case "zeros":
+                self.initializer = keras.initializers.Zeros()
+        self.activation = config["activation"]
         self.scaler_X = None  # scaler of the input data
         self.scaler_y = None  # scaler of target variable
         self.cont_features = list()  # continuous features
@@ -222,13 +247,18 @@ class NNModel(Model):
         X_train, y_train = self.scale_input_data(X_train, y_train)
         X_val, y_val = self.scale_input_data(X_val, y_val)
 
+        if self.lr_callback is None:
+            train_callbacks = [WandbMetricsLogger()]
+        else:
+            train_callbacks = [self.lr_callback, WandbMetricsLogger()]
+
         # Train the model
         self.model.fit(X_train,
                        y_train,
                        epochs=config["epochs"],
                        validation_data=(X_val, y_val),
                        batch_size=config["batch_size"],
-                       callbacks=[WandbMetricsLogger()])
+                       callbacks=train_callbacks)
         logger.success("Modeling training complete.")
         return self.model, run
 
@@ -248,7 +278,8 @@ class NNModel(Model):
             run.log({"test_mse_scaled": test_mse_scaled, "test_mae_scaled": test_mae_scaled})
             # rescale predictions
             y_hat = self.scaler_y.inverse_transform(y_hat.reshape(len(y_hat), self.config["n_out"]))
-            y_test = pd.DataFrame(self.scaler_y.inverse_transform(y_test.to_numpy().reshape(len(y_test), self.config["n_out"])))
+            y_test = pd.DataFrame(
+                self.scaler_y.inverse_transform(y_test.to_numpy().reshape(len(y_test), self.config["n_out"])))
         evaluator = RegressionMetric(y_test.to_numpy(), y_hat)
         return self.log_eval_results(evaluator, run, len(y_test))
 
@@ -275,10 +306,10 @@ class FCN2Model(NNModel):
         input_shape = len(config["features"]) - 1
         self.model = keras.Sequential([
             keras.Input(shape=(input_shape,)),
-            layers.Dense(64, activation='relu'),
+            layers.Dense(config["neurons"], activation=self.activation, kernel_initializer=self.initializer),
             layers.Dropout(config['dropout']),
-            layers.Dense(32, activation='relu'),
-            layers.Dense(config["n_out"])  # perform regression
+            layers.Dense(config["neurons"], activation=self.activation, kernel_initializer=self.initializer),
+            layers.Dense(config["n_out"], activation="linear")  # perform regression
         ])
 
 
@@ -289,9 +320,9 @@ class FCN3Model(NNModel):
         input_shape = len(config["features"]) - 1
         self.model = keras.Sequential([
             keras.Input(shape=(input_shape,)),
-            layers.Dense(64, activation='relu'),
+            layers.Dense(config["neurons"], activation=self.activation, kernel_initializer=self.initializer),
             layers.Dropout(config['dropout']),
-            layers.Dense(config["n_out"])  # perform regression
+            layers.Dense(config["n_out"], activation="linear")  # perform regression
         ])
 
 

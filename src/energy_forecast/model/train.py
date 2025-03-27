@@ -9,7 +9,7 @@ from tqdm import tqdm
 
 try:
     from src.energy_forecast.plots import plot_means, plot_std, plot_train_val_test_split
-    from src.energy_forecast.config import REFERENCES_DIR, FEATURE_SETS
+    from src.energy_forecast.config import REFERENCES_DIR, FEATURE_SETS, PROCESSED_DATA_DIR
     from src.energy_forecast.dataset import Dataset, TrainingDataset, TrainDataset90
     from src.energy_forecast.model.models import Model, FCNModel, DTModel, LinearRegressorModel, RegressionModel, \
         NNModel, \
@@ -49,7 +49,7 @@ def get_model(config: dict) -> Model:
         raise Exception(f"Unknown model {config['model']}")
 
 
-def get_data(config: dict) -> tuple[pl.DataFrame, dict]:
+def get_data(config: dict) -> TrainingDataset:
     """
     Creates a Dataset and returns its polars.DataFrame. One-Hot-Encodes data and updates config with new feature names.
     Adds multiple forecast data if needed. Filters for energy type.
@@ -59,100 +59,119 @@ def get_data(config: dict) -> tuple[pl.DataFrame, dict]:
     Returns:
 
     """
-    if config["missing_data"] == 90:
-        ds = TrainDataset90(config)
-    else:
+    try:
+        if config["missing_data"] == 90:
+            ds = TrainDataset90(config)
+        else:
+            ds = TrainingDataset(config)
+    except KeyError:
         ds = TrainingDataset(config)
     ds.load_feat_data()  # all data
-    df, config = ds.preprocess()  # preprocess data for training
-    return df, config
+    ds.preprocess()  # preprocess data for training
+    return ds
 
 
-def train_test_split_group_based(df, train_per):
+def train_test_split_group_based(ds: TrainingDataset, train_per: float) -> tuple[
+    pl.DataFrame, pl.DataFrame, pl.DataFrame]:
+    df = ds.df
+    df = df.sort([pl.col("id"), pl.col("datetime")])
     gss = GroupShuffleSplit(n_splits=1, test_size=1 - train_per, random_state=42)
     df = df.with_row_index()
     for train_idx, test_idx in gss.split(df, groups=df["id"]):
         train_data = df.filter(pl.col("index").is_in(train_idx))
         test_val_df = df.filter(pl.col("index").is_in(test_idx))
+        ds.train_idxs = list(train_idx)
+        ds.test_idxs = test_idx
     # split test into validation and test
     test_val_df = test_val_df.drop("index").with_row_index()
     gss = GroupShuffleSplit(n_splits=1, test_size=0.5, random_state=43)
     for test_idx, val_idx in gss.split(test_val_df, groups=test_val_df["id"]):
         test_data = test_val_df.filter(pl.col("index").is_in(test_idx))
         val_data = test_val_df.filter(pl.col("index").is_in(val_idx))
+        ds.val_idxs = list(ds.test_idxs[val_idx])
+        ds.test_idxs = list(ds.test_idxs[test_idx])
 
     return train_data, val_data, test_data
 
 
-def train_test_split_time_based(df: pl.DataFrame, train_per: float):
+def train_test_split_time_based(ds: TrainingDataset, train_per: float) -> tuple[
+    pl.DataFrame, pl.DataFrame, pl.DataFrame]:
+    df = ds.df
     df = df.sort([pl.col("id"), pl.col("datetime")])
+    df = df.with_row_index()
 
     # Group by building index and split
     train_dfs = []
-    val_test_dfs = []
     test_dfs = []
     val_dfs = []
 
     for group in df.group_by(pl.col("id")):
-        building_df = group[1]  # Extract grouped DataFrame
-        building_df = building_df.with_row_index()
-        split_idx = int(len(building_df) * train_per)
+        b_df = group[1]  # Extract grouped DataFrame
+        b_df = b_df.with_row_index("b_idx")
+        split_idx = int(len(b_df) * train_per)
+        split_idx_two = int(len(b_df) * (((1 - train_per) / 2) + train_per))
 
-        train_dfs.append(building_df.filter(pl.col("index") <= split_idx).drop(["index"]))
-        val_test_dfs.append(building_df.filter(pl.col("index") > split_idx).drop(["index"]))
+        train_b_df = b_df.filter(pl.col("b_idx") <= split_idx).drop(["b_idx"])
+        test_b_df = b_df.filter((pl.col("b_idx") > split_idx).and_(pl.col("b_idx") <= split_idx_two)).drop(["b_idx"])
+        val_b_df = b_df.filter(pl.col("b_idx") > split_idx_two).drop(["b_idx"])
 
-    for building_df in val_test_dfs:
-        building_df = building_df.with_row_index()
-        split_idx = int(len(building_df) * 0.5)
+        train_dfs.append(train_b_df)
+        test_dfs.append(test_b_df)
+        val_dfs.append(val_b_df)
 
-        val_dfs.append(building_df.filter(pl.col("index") <= split_idx).drop(["index"]))
-        test_dfs.append(building_df.filter(pl.col("index") > split_idx).drop(["index"]))
+        ds.train_idxs.extend(train_b_df["index"].to_list())
+        ds.test_idxs.extend(test_b_df["index"].to_list())
+        ds.val_idxs.extend(val_b_df["index"].to_list())
 
     # Concatenate results
-    train_df = pl.concat(train_dfs)
-    val_df = pl.concat(val_dfs)
-    test_df = pl.concat(test_dfs)
+    train_df = pl.concat(train_dfs).drop("index")
+    val_df = pl.concat(val_dfs).drop("index")
+    test_df = pl.concat(test_dfs).drop("index")
     # plot_train_val_test_split(train_df, val_df, test_df)
     assert len(df) == (len(train_df) + len(val_df) + len(test_df))
     return train_df, val_df, test_df
 
 
-def get_train_test_val_split(config: dict, df: pl.DataFrame) -> tuple[
-    pd.DataFrame, pd.DataFrame, pd.DataFrame, pd.DataFrame, pd.DataFrame, pd.DataFrame]:
+def get_train_test_val_split(ds: TrainingDataset) -> TrainingDataset:
     """
     Train-test-val split for data. Ratio is 0.8/0.1/0.1
-    :param config: setting "n_out" parameter for creating correct feature name list
-    :param df: data
+    :param ds: training dataset object, storing config, setting "n_out" parameter for creating correct feature name list
     :return: train-test-val split for data
     """
     train_per = 0.8
+    config = ds.config
     try:
         split_method = config["train_test_split_method"]
     except KeyError:
         config["train_test_split_method"] = "time"  # default
     if config["train_test_split_method"] == "group":
-        train_data, val_data, test_data = train_test_split_group_based(df, train_per)
+        train_data, val_data, test_data = train_test_split_group_based(ds, train_per)
     elif config["train_test_split_method"] == "time":
-        train_data, val_data, test_data = train_test_split_time_based(df, train_per)
+        train_data, val_data, test_data = train_test_split_time_based(ds, train_per)
 
     # transform to pandas DataFrame input
     target_vars = ["diff"]
     if config["n_out"] > 1:
         target_vars += [f"diff_t+{i}" for i in range(1, config["n_out"])]
-    X_train = train_data.to_pandas()[list(set(config["features"]) - set(target_vars))]
-    y_train = train_data.to_pandas()[target_vars]
-    X_val = val_data.to_pandas()[list(set(config["features"]) - set(target_vars))]
-    y_val = val_data.to_pandas()[target_vars]
-    X_test: pd.DataFrame = test_data.to_pandas()[list(set(config["features"]) - set(target_vars))]
-    y_test: pd.DataFrame = test_data.to_pandas()[target_vars]
+
+    train_data = train_data.sort([pl.col("id"), pl.col("datetime")])
+    test_data = test_data.sort([pl.col("id"), pl.col("datetime")])
+    val_data = val_data.sort([pl.col("id"), pl.col("datetime")])
+    # selects only features and target variable
+    ds.X_train = train_data.to_pandas()[list(set(config["features"]) - set(target_vars))]
+    ds.y_train = train_data.to_pandas()[target_vars]
+    ds.X_val = val_data.to_pandas()[list(set(config["features"]) - set(target_vars))]
+    ds.y_val = val_data.to_pandas()[target_vars]
+    ds.X_test = test_data.to_pandas()[list(set(config["features"]) - set(target_vars))]
+    ds.y_test = test_data.to_pandas()[target_vars]
 
     # plot_means(X_train, y_train, X_val, y_val, X_test, y_test)
     # plot_std(X_train, y_train, X_val, y_val, X_test, y_test)
 
-    logger.info(f"Train data shape: {X_train.shape}")
-    logger.info(f"Test data shape: {X_test.shape}")
-    logger.info(f"Validation data shape: {X_val.shape}")
-    return X_train, X_test, X_val, y_train, y_test, y_val
+    logger.info(f"Train data shape: {ds.X_train.shape}")
+    logger.info(f"Test data shape: {ds.X_test.shape}")
+    logger.info(f"Validation data shape: {ds.X_val.shape}")
+    return ds
 
 
 def get_features(code: int):
@@ -165,21 +184,32 @@ def train(config: dict):
     except KeyError:
         config["features"] = get_features(config["feature_code"])
     # Load the data
-    df, config = get_data(config)
+    ds = get_data(config)
 
     # train test split
-    df_train, df_test, df_val, df_y_train, df_y_test, df_y_val = get_train_test_val_split(config, df)
+    ds = get_train_test_val_split(ds)
 
     # get model and baseline
     m = get_model(config)
     baseline = Baseline(config)
 
     # train
-    model, run = m.train(df_train, df_y_train, df_val, df_y_val)
+    model, run = m.train(ds.X_train, ds.y_train, ds.X_val, ds.y_val)
 
     # Evaluate the models
-    baseline.evaluate(df_test, df_y_test, run)
-    m.evaluate(df_test, df_y_test, run)
+    X_test_copy = ds.X_test.copy()
+    y_test_copy = ds.y_test.copy()
+    m.evaluate(ds.X_test, ds.y_test, run)
+    assert X_test_copy.equals(ds.X_test)
+    assert y_test_copy.equals(ds.y_test)
+    eval_dict_m = m.evaluate_per_cluster(ds.X_test, ds.y_test, run, ds.compute_clusters())
+    assert X_test_copy.equals(ds.X_test)
+    assert y_test_copy.equals(ds.y_test)
+    baseline.evaluate(ds, run)
+    assert X_test_copy.equals(ds.X_test)
+    assert y_test_copy.equals(ds.y_test)
+    eval_dict_b = baseline.evaluate_per_cluster(ds, run)
+    pl.concat([pl.DataFrame(eval_dict_m), pl.DataFrame(eval_dict_b)], how="horizontal").write_csv(PROCESSED_DATA_DIR / "results_cluster_eval.csv")
 
     # save model on disk and in wandb
     m.save()

@@ -34,6 +34,8 @@ FEATURES = ["diff"] + CATEGORICAL_FEATURES + CONTINUOUS_FEATURES + CATEGORICAL_F
 FEATURES_DIFF = ["diff", "diff_t-1"]
 FEATURES_WEATHER = ['hum_avg', 'hum_min', 'hum_max', 'tavg', 'tmin', 'tmax', 'prcp', 'snow', 'wdir', 'wspd',
                     'wpgt', 'pres', 'tsun']
+FEATURES_WEATHER_NO_SNOW = list(set(FEATURES_WEATHER) - {"snow"})
+FEATURES_WEATHER = FEATURES_WEATHER_NO_SNOW  # snow has lots of missing values
 FEATURES_WEATHER_SIGNIFICANT = ["tmax", "tsun", "wpgt", "hum_avg"]
 FEATURES_BUILDING = ["daily_avg", "heated_area", "anzahlwhg", "typ", "primary_energy"]
 FEATURES_BUILDING_NO_APPARTMENT = list(set(FEATURES_BUILDING) - {"anzahlwhg"})

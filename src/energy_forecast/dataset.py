@@ -6,13 +6,14 @@ import pandas as pd
 import polars as pl
 from loguru import logger
 from overrides import overrides
+from sklearn.cluster import AgglomerativeClustering
 from sklearn.model_selection import GroupKFold, GroupShuffleSplit
 from sklearn.preprocessing import LabelEncoder, OneHotEncoder
 from pandas import DataFrame
 
 from src.energy_forecast.config import RAW_DATA_DIR, DATA_DIR, PROCESSED_DATA_DIR, CATEGORICAL_FEATURES, FEATURES
 from src.energy_forecast.data_processing.data_source import LegacyDataLoader, KinergyDataLoader, DHDataLoader
-from src.energy_forecast.plots import plot_missing_dates_per_building
+from src.energy_forecast.plots import plot_missing_dates_per_building, plot_clusters
 from src.energy_forecast.util import get_missing_dates, find_time_spans
 
 
@@ -348,6 +349,19 @@ class TrainingDataset(Dataset):
             ""
         ]
 
+        # train test val split (pandas DataFrames)
+        self.X_train = None
+        self.y_train = None
+        self.X_test = None
+        self.y_test = None
+        self.X_val = None
+        self.y_val = None
+
+        # indexes for each part of the split, correlating to self.df
+        self.train_idxs = list()
+        self.test_idxs = list()
+        self.val_idxs = list()
+
     def one_hot_encode(self):
         """
         One hot encode categorical features. Returns updated config with new feature names.
@@ -391,6 +405,52 @@ class TrainingDataset(Dataset):
         logger.info(f"Training Features: {self.config['features']}")
         self.remove_corrupt_buildings()
         return self.df, self.config
+
+    def compute_clusters(self) -> dict:
+        """
+        Compute cluster mappings with meta data
+        :return:
+        """
+        n_clusters = 3
+        logger.info(f"Computing {n_clusters} clusters")
+        df = self.df.group_by("id").agg(pl.col("diff"),
+                      pl.col("daily_avg").mode().first().alias("avg"),
+                      pl.col("diff").std().alias("std"),
+                      pl.col("diff").median().alias("median"),
+                      pl.col("diff").min().alias("min"),
+                      pl.col("diff").max().alias("max"),
+                      pl.col("diff").head(30).alias("month"),
+                      pl.len()
+                      ).sort("len")
+        df.drop(["diff", "month"]).write_csv(DATA_DIR / "processed" / "buildings_consumption_info.csv")
+        data = df.drop(["id", "diff", "month", "len"]).to_numpy()
+
+        # Create the AgglomerativeClustering model
+        model = AgglomerativeClustering(n_clusters=n_clusters, linkage='ward')
+
+        # Fit the model and predict cluster labels
+        labels = model.fit_predict(data)
+        plot_clusters(df, labels)
+
+        # add label column to dataframe
+        df = df.with_columns(pl.Series(labels).alias("label"))
+        for c_id in range(n_clusters):
+            logger.info(f"Computed Cluster {c_id} with n={len(df.filter(pl.col('label')==c_id))}")
+        cluster_id_map = dict()  # map each id to a cluster
+        for row in df.iter_rows():
+            cluster_id_map[row[0]] = row[-1]
+        df = self.df.select(pl.col("id")).with_row_index()
+        # get only test data
+        df_test = df.filter(pl.col("index").is_in(self.test_idxs)).with_row_index("test_idx")
+        # map each id to cluster label
+        df_test = df_test.with_columns(pl.col("id").replace(cluster_id_map).alias("label"))
+        # create cluster mapping each cluster label to list of test indexes
+        cluster_map = dict()
+        for label in df_test["label"].unique():
+            cluster_map[label] = df_test.filter(pl.col("label") == label)["test_idx"].to_list()
+        return cluster_map
+
+
 
 class TrainDataset90(TrainingDataset):
     def __init__(self, config: dict):

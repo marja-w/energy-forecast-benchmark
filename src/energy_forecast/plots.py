@@ -116,6 +116,18 @@ def plot_missing_dates_per_building(df: pl.DataFrame):
     for (b_id, b_df) in df.group_by(["id"]):
         plot_missing_dates(b_df, sensor_id=b_id[0])
 
+def plot_clusters(df: pl.DataFrame, labels: np.ndarray):
+    fig, ax = plt.subplots()
+    sns.scatterplot(
+        pl.concat([df, pl.DataFrame(labels, schema=["label"])], how="horizontal").to_pandas(),
+        x="avg",
+        y="std",
+        hue="label",
+        ax=ax,
+    )
+    plt.savefig(FIGURES_DIR / "clusters.png")
+    logger.success("Cluster plots saved")
+
 
 if __name__ == "__main__":
     df_daily = pl.read_csv(PROCESSED_DATA_DIR / "dataset_daily.csv").with_columns(pl.col("datetime").str.to_datetime())

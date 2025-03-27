@@ -19,12 +19,14 @@ from loguru import logger
 from wandb.integration.keras import WandbMetricsLogger
 from wandb.sdk.wandb_run import Run
 from pandas import DataFrame
+import polars as pl
 
 from src.energy_forecast.config import MODELS_DIR, CATEGORICAL_FEATURES, CATEGORICAL_FEATURES_BINARY, \
     CONTINUOUS_FEATURES
 import statsmodels.api as sm
 from permetrics.regression import RegressionMetric
 
+from src.energy_forecast.dataset import TrainingDataset
 from src.energy_forecast.plots import plot_means
 
 
@@ -84,14 +86,26 @@ class Model:
         evaluator = RegressionMetric(y_test.to_numpy(), y_hat)
         return self.log_eval_results(evaluator, run, len(y_test))
 
-    def log_eval_results(self, evaluator, run, len_y_test: int):
+    def evaluate_per_cluster(self, X_test: DataFrame, y_test: DataFrame, run: Run, clusters: dict) -> dict:
+        """
+        Evaluate the Model per cluster. Clusters are defined in clusters as mapping to indexes.
+        """
+        eval_dict = {"metric": ["mse", "mae", "nrmse", "rmse"]}
+        for (idx, cluster) in clusters.items():
+            logger.info(f"Evaluating Cluster {idx}")
+            cluster_X_test = X_test.iloc[cluster]
+            cluster_y_test = y_test.iloc[cluster]
+            eval_dict[f"model_cluster_{idx}"] = self.evaluate(cluster_X_test, cluster_y_test, run, log=False)
+        return eval_dict
+
+    def log_eval_results(self, evaluator, run, len_y_test: int, log: bool = True):
         # logging
         test_mse = evaluator.mean_squared_error()
         test_mae = evaluator.mean_absolute_error()
         test_nrmse = evaluator.normalized_root_mean_square_error()
         test_rmse = evaluator.root_mean_squared_error()
         if self.config["n_out"] > 1:
-            run.log(data={"test_nrmse_ind": test_nrmse, "test_mse_ind": test_mse, "test_mae_ind": test_mae})
+            if log: run.log(data={"test_nrmse_ind": test_nrmse, "test_mse_ind": test_mse, "test_mae_ind": test_mae})
             logger.info(f"MSE Loss on test data per index: {test_mse}")
             logger.info(f"MAE Loss on test data per index: {test_mae}")
             logger.info(f"RMSE Loss on test data per index: {test_rmse}")
@@ -100,12 +114,13 @@ class Model:
             test_rmse = mean(test_rmse)
             test_mse = mean(test_mse)
             test_mae = mean(test_mae)
-        run.log(data={"test_data_length": len_y_test,
-                      "test_mse": test_mse,
-                      "test_mae": test_mae,
-                      "test_rmse": test_rmse,
-                      "test_nrmse": test_nrmse
-                      })
+        if log:
+            run.log(data={"test_data_length": len_y_test,
+                          "test_mse": test_mse,
+                          "test_mae": test_mae,
+                          "test_rmse": test_rmse,
+                          "test_nrmse": test_nrmse
+                          })
         logger.info(f"MSE Loss on test data: {test_mse}")
         logger.info(f"MAE Loss on test data: {test_mae}")
         logger.info(f"RMSE on test data: {test_rmse}")
@@ -135,9 +150,16 @@ class Baseline(Model):
         self.name = "baseline"
 
     @overrides(check_signature=False)
-    def evaluate(self, X_test: DataFrame, y_test: DataFrame, run: Run) -> tuple:
-        y_hat = y_test.shift(1, fill_value=0)  # predictions are value of yesterday, first day is zero
-        evaluator = RegressionMetric(y_test.to_numpy(), y_hat.to_numpy())
+    def evaluate(self, ds: TrainingDataset, run: Run, cluster_idxs=None, log: bool = True) -> tuple:
+        y_test = ds.df.with_row_index().select(["datetime", "index", "id", "diff"]
+                                               ).filter(pl.col("index").is_in(ds.test_idxs)
+                                                        ).sort(["id", "datetime"])
+        y_test = y_test.to_pandas()
+        if cluster_idxs is not None:
+            y_test = y_test.iloc[cluster_idxs]
+        y_hat = y_test.groupby("id")["diff"].shift(1,
+                                                   fill_value=0)  # predictions are value of yesterday, first day is zero
+        evaluator = RegressionMetric(y_test["diff"].to_numpy(), y_hat.to_numpy())
         b_nrmse = evaluator.normalized_root_mean_square_error()
         b_rmse = evaluator.root_mean_squared_error()
         b_mae = evaluator.mean_absolute_error()
@@ -147,18 +169,28 @@ class Baseline(Model):
         logger.info(f"Baseline RMSE on test data: {b_rmse}")
         logger.info(f"Baseline NRMSE on test data: {b_nrmse}")
         if self.config["n_out"] == 1:
-            run.log({"b_nrmse": b_nrmse, "b_rmse": b_rmse, "b_mae": b_mae, "b_mse": b_mse})
+            if log: run.log({"b_nrmse": b_nrmse, "b_rmse": b_rmse, "b_mae": b_mae, "b_mse": b_mse})
         else:
             logger.info(f"Average Baseline MSE on test data: {b_mse}")
             logger.info(f"Average Baseline MAE on test data: {mean(b_mse)}")
             logger.info(f"Average Baseline RMSE on test data: {mean(b_rmse)}")
             logger.info(f"Average Baseline NRMSE on test data: {mean(b_nrmse)}")
-            run.log({"b_nrmse": mean(b_nrmse), "b_nrmse_ind": b_nrmse,
+            if log:
+                run.log({"b_nrmse": mean(b_nrmse), "b_nrmse_ind": b_nrmse,
                      "b_rmse": mean(b_rmse), "b_rmse_ind": b_rmse,
                      "b_mae": mean(b_mae), "b_mae_ind": b_mae,
                      "b_mse": mean(b_mse), "b_mse_ind": b_mse
                      })
-        return b_nrmse
+        return b_mse, b_mae, b_nrmse, b_rmse
+
+    @overrides(check_signature=False)
+    def evaluate_per_cluster(self, ds: TrainingDataset, run: Run) -> dict:
+        clusters = ds.compute_clusters()
+        eval_dict = dict()
+        for (idx, cluster) in clusters.items():
+            logger.info(f"Evaluating Cluster {idx}")
+            eval_dict[f"baseline_cluster_{idx}"] = list(self.evaluate(ds, run, cluster, log=False))
+        return eval_dict
 
 
 class NNModel(Model):
@@ -225,10 +257,11 @@ class NNModel(Model):
             self.scaler_y = scaler_y.fit(y)
 
         # scale
-        X[self.cont_features] = self.scaler_X.transform(X[self.cont_features])
-        y = self.scaler_y.transform(y)
+        X_scaled = X.copy()  # dont scale base dataframe
+        X_scaled[self.cont_features] = self.scaler_X.transform(X[self.cont_features])
+        y_scaled = self.scaler_y.transform(y)
 
-        return X, DataFrame(y)
+        return X_scaled, DataFrame(y_scaled)
 
     @overrides
     def train(self, X_train: DataFrame, y_train: DataFrame, X_val: DataFrame, y_val: DataFrame) -> tuple[
@@ -263,25 +296,27 @@ class NNModel(Model):
         return self.model, run
 
     @overrides
-    def evaluate(self, X_test: DataFrame, y_test: DataFrame, run: Run) -> tuple:
+    def evaluate(self, X_test: DataFrame, y_test: DataFrame, run: Run, log: bool = True) -> tuple:
         """
         Evaluate the NNModel on the test data. Log metrics to wandb.
+        :param log: whether to log metrics to wandb
         """
         # scale and encode input data if neccessary
-        X_test, y_test = self.scale_input_data(X_test, y_test)
+        X_test_scaled, y_test_scaled = self.scale_input_data(X_test, y_test)
         # get predictions
-        y_hat = self.predict(X_test)
+        y_hat_scaled = self.predict(X_test_scaled)
         if self.scaler_X is not None:
-            scaled_ev = RegressionMetric(y_test.to_numpy(), y_hat)
+            scaled_ev = RegressionMetric(y_test_scaled.to_numpy(), y_hat_scaled)
             test_mse_scaled = scaled_ev.mean_squared_error()
             test_mae_scaled = scaled_ev.mean_absolute_error()
-            run.log({"test_mse_scaled": test_mse_scaled, "test_mae_scaled": test_mae_scaled})
+            if log:
+                run.log({"test_mse_scaled": test_mse_scaled, "test_mae_scaled": test_mae_scaled})
             # rescale predictions
-            y_hat = self.scaler_y.inverse_transform(y_hat.reshape(len(y_hat), self.config["n_out"]))
-            y_test = pd.DataFrame(
-                self.scaler_y.inverse_transform(y_test.to_numpy().reshape(len(y_test), self.config["n_out"])))
+            y_hat = self.scaler_y.inverse_transform(y_hat_scaled.reshape(len(y_hat_scaled), self.config["n_out"]))
+        else:
+            y_hat = y_hat_scaled
         evaluator = RegressionMetric(y_test.to_numpy(), y_hat)
-        return self.log_eval_results(evaluator, run, len(y_test))
+        return self.log_eval_results(evaluator, run, len(y_test), log)
 
 
 class FCNModel(NNModel):

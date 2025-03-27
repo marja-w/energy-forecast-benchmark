@@ -13,8 +13,6 @@ from sklearn.preprocessing import OneHotEncoder, StandardScaler
 
 from src.energy_forecast.config import PADDING_VALUE, PROJ_ROOT
 
-app = typer.Typer()
-
 
 def get_split(df: pl.DataFrame) -> tuple:
     # Ensure new_id is of type str

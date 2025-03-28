@@ -84,7 +84,7 @@ def get_missing_dates(df: pl.DataFrame, frequency: str = "D") -> pl.DataFrame:
 
         missing_dates_sensor = list(set(date_list) - set(date_list_rec))
         missing_dates_sensor.sort()
-        logger.info(f"Missing dates for sensor {id}: {len(missing_dates_sensor)}")
+        # logger.info(f"Missing dates for sensor {id}: {len(missing_dates_sensor)}")
         missing_dates.append(
             {"id": id, "missing_dates": missing_dates_sensor, "len": len(missing_dates_sensor), "n": row[1],
              "per": ((len(date_list_rec) / (1 + len(date_list))) * 100), "start_date": start_date, "end_date": end_date})

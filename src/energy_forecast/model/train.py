@@ -8,8 +8,8 @@ from tensorflow.keras import layers
 from tqdm import tqdm
 
 try:
-    from src.energy_forecast.plots import plot_means, plot_std, plot_train_val_test_split
-    from src.energy_forecast.config import REFERENCES_DIR, FEATURE_SETS, PROCESSED_DATA_DIR
+    from src.energy_forecast.plots import plot_means, plot_std
+    from src.energy_forecast.config import REFERENCES_DIR, FEATURE_SETS, PROCESSED_DATA_DIR, REPORTS_DIR
     from src.energy_forecast.dataset import Dataset, TrainingDataset, TrainDataset90
     from src.energy_forecast.model.models import Model, FCNModel, DTModel, LinearRegressorModel, RegressionModel, \
         NNModel, \
@@ -25,7 +25,7 @@ except ModuleNotFoundError:
         par_dir = os.path.dirname(os.path.dirname(os.path.dirname(curr_dir)))
         sys.path.insert(0, par_dir)
 
-        from src.energy_forecast.plots import plot_means, plot_std
+        from src.energy_forecast.plots import plot_means, plot_std, plot_train_val_test_split
         from src.energy_forecast.config import REFERENCES_DIR, FEATURE_SETS
         from src.energy_forecast.dataset import Dataset, TrainingDataset, TrainDataset90
         from src.energy_forecast.model.models import Model, FCNModel, DTModel, LinearRegressorModel, RegressionModel, \
@@ -66,7 +66,8 @@ def get_data(config: dict) -> TrainingDataset:
             ds = TrainingDataset(config)
     except KeyError:
         ds = TrainingDataset(config)
-    ds.load_feat_data()  # all data
+    interpolate = config["interpolate"]
+    ds.load_feat_data(bool(interpolate))  # all data
     ds.preprocess()  # preprocess data for training
     return ds
 
@@ -202,17 +203,17 @@ def train(config: dict):
     m.evaluate(ds.X_test, ds.y_test, run)
     assert X_test_copy.equals(ds.X_test)
     assert y_test_copy.equals(ds.y_test)
-    eval_dict_m = m.evaluate_per_cluster(ds.X_test, ds.y_test, run, ds.compute_clusters())
+    # eval_dict_m = m.evaluate_per_cluster(ds.X_test, ds.y_test, run, ds.compute_clusters())
     assert X_test_copy.equals(ds.X_test)
     assert y_test_copy.equals(ds.y_test)
     baseline.evaluate(ds, run)
     assert X_test_copy.equals(ds.X_test)
     assert y_test_copy.equals(ds.y_test)
-    eval_dict_b = baseline.evaluate_per_cluster(ds, run)
-    pl.concat([pl.DataFrame(eval_dict_m), pl.DataFrame(eval_dict_b)], how="horizontal").write_csv(PROCESSED_DATA_DIR / "results_cluster_eval.csv")
+    # eval_dict_b = baseline.evaluate_per_cluster(ds, run)
+    # pl.concat([pl.DataFrame(eval_dict_m), pl.DataFrame(eval_dict_b)], how="horizontal").write_csv(REPORTS_DIR / "results_cluster_eval.csv")
 
     # save model on disk and in wandb
-    m.save()
+    m.save()  # TODO: store cluster eval results here too
     return m, run
 
 

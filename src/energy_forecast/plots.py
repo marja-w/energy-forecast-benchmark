@@ -1,5 +1,7 @@
 from datetime import timedelta, datetime, date
+from pathlib import Path
 
+import darts
 import numpy as np
 import pandas as pd
 import polars as pl
@@ -113,8 +115,32 @@ def plot_missing_dates(df_data: pl.DataFrame, sensor_id: str):
 
 
 def plot_missing_dates_per_building(df: pl.DataFrame):
+    logger.info(f"Plotting missing date plots to {FIGURES_DIR / 'missing_data'}")
     for (b_id, b_df) in df.group_by(["id"]):
         plot_missing_dates(b_df, sensor_id=b_id[0])
+
+def plot_interpolated_series(series: darts.TimeSeries, b_id: str, data_source: str):
+    # logger.info(f"Plotting interpolated series to {FIGURES_DIR / 'interpolated_data'}")
+    fig, ax = plt.subplots()
+    ax = series.plot()
+    ax.set_title(data_source + " " + b_id)
+    plt.savefig(FIGURES_DIR / "interpolated_data" / f"{b_id}.png")
+    plt.close()
+
+def plot_series(series: darts.TimeSeries, b_id: str, data_source: str, folder: Path):
+    # logger.info(f"Plotting interpolated series to {FIGURES_DIR / 'interpolated_data'}")
+    plt.subplots()
+    ax = series.plot()
+    ax.set_title(data_source + " " + b_id)
+    plt.savefig(folder / f"{b_id}.png")
+    plt.close()
+
+def plot_dataframe(df: pl.DataFrame, b_id: str, data_source: str, folder: Path):
+    fig, ax = plt.subplots()
+    sns.lineplot(data=df, x="datetime", y="diff")
+    ax.set_title(data_source + " " + b_id)
+    plt.savefig(folder / f"{b_id}.png")
+    plt.close()
 
 def plot_clusters(df: pl.DataFrame, labels: np.ndarray):
     fig, ax = plt.subplots()

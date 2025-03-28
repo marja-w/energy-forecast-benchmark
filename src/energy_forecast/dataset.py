@@ -2,18 +2,23 @@ import datetime
 from datetime import timedelta
 from pathlib import Path
 
+import darts
 import pandas as pd
 import polars as pl
+from darts.utils.missing_values import fill_missing_values, extract_subseries
 from loguru import logger
+from matplotlib import pyplot as plt
 from overrides import overrides
 from sklearn.cluster import AgglomerativeClustering
 from sklearn.model_selection import GroupKFold, GroupShuffleSplit
 from sklearn.preprocessing import LabelEncoder, OneHotEncoder
 from pandas import DataFrame
 
-from src.energy_forecast.config import RAW_DATA_DIR, DATA_DIR, PROCESSED_DATA_DIR, CATEGORICAL_FEATURES, FEATURES
+from src.energy_forecast.config import RAW_DATA_DIR, DATA_DIR, PROCESSED_DATA_DIR, CATEGORICAL_FEATURES, FEATURES, \
+    FIGURES_DIR
 from src.energy_forecast.data_processing.data_source import LegacyDataLoader, KinergyDataLoader, DHDataLoader
-from src.energy_forecast.plots import plot_missing_dates_per_building, plot_clusters
+from src.energy_forecast.plots import plot_missing_dates_per_building, plot_clusters, plot_interpolated_series, \
+    plot_series, plot_dataframe
 from src.energy_forecast.util import get_missing_dates, find_time_spans
 
 
@@ -33,6 +38,10 @@ def remove_neg_diff_vals(df):
     )
 
 
+def remove_positive_jumps(df: pl.DataFrame) -> pl.DataFrame:
+    return df.filter((pl.col("diff") < pl.col("diff").median() * 50).over("id"))
+
+
 def filter_outliers_iqr(df, column):
     """
     Filter outliers in the specified column of the DataFrame using the 1.5 IQR method.
@@ -50,7 +59,7 @@ def filter_outliers_iqr(df, column):
     filtered_df = df.filter(pl.col(column) <= upper_bound)
     filtered_count = len(df) - len(filtered_df)
 
-    logger.info(f"Filtered {filtered_count} rows for column {column} for ID {df['id'][0]}")
+    # logger.info(f"Filtered {filtered_count} rows for column {column} for ID {df['id'][0]}")
 
     return filtered_df
 
@@ -85,7 +94,7 @@ def filter_flat_lines(df: pl.DataFrame, thresh: int) -> pl.DataFrame:
         df = df.filter(~(pl.col("index").is_in(range(start_idx, end_idx))))
 
     df = df.drop(["index"])
-    logger.info(f"Filtered {starting_n - len(df)} rows for ID {df['id'][0]}")
+    # logger.info(f"Filtered {starting_n - len(df)} rows for ID {df['id'][0]}")
     return df
 
 
@@ -108,7 +117,7 @@ def filter_connection_errors(df: pl.DataFrame, freq: str) -> pl.DataFrame:
         df = df.filter(~(pl.col("index") == error_val_idx))  # remove row with erroneous value TODO: interpolate?
 
     df = df.drop(["index"])
-    logger.info(f"Filtered {start_n - len(df)} rows for ID {df['id'][0]}")
+    # logger.info(f"Filtered {start_n - len(df)} rows for ID {df['id'][0]}")
     return df
 
 
@@ -133,10 +142,11 @@ class Dataset:
             raise ValueError(f"Unknown value for resolution: {res}")
         self.df = pl.DataFrame()
         self.name = self.res
+        self.df_meta = pl.DataFrame()
 
     def create(self):
         dfs = list()
-        cols = ["id", "datetime", "diff"]
+        cols = ["id", "datetime", "diff", "value"]
         logger.info(f"Creating {self.res} dataset")
         for data_source in self.data_sources:
             dfs.append(pl.read_csv(RAW_DATA_DIR / f"{data_source}_{self.res}.csv").select(cols).with_columns(
@@ -147,7 +157,7 @@ class Dataset:
         logger.info(f"Number of sensors: {n_sensors}")
         self.df = df
 
-    def clean(self):
+    def clean(self, plot: bool = False):
         logger.info(f"Cleaning {self.res} dataset")
         df = self.df
         logger.info(f"Number of rows: {len(df)}")
@@ -166,13 +176,15 @@ class Dataset:
         logger.info(f"Number of rows after filtering outliers: {len(df)}")
 
         logger.info("Filtering flat lines")
-        thresh = 14 * 24 if self.res == "hourly" else 14  # allowed length of flat lines
+        thresh = 12 if self.res == "hourly" else 7  # allowed length of flat lines
         df = filter_flat_lines_by_id(df, thresh)
         logger.info(f"Number of rows after filtering flat lines: {len(df)}")
 
-        plot_missing_dates_per_building(df)
+        if plot: plot_missing_dates_per_building(df)
         df_md = get_missing_dates(df)
-        df_md.select(["id", "len", "n", "per", "start_date", "end_date"]).sort(pl.col("per"), descending=True).write_csv(RAW_DATA_DIR / "missing_dates.csv")
+        df_md.select(["id", "len", "n", "per", "start_date", "end_date"]).sort(pl.col("per"),
+                                                                               descending=True).write_csv(
+            RAW_DATA_DIR / "missing_dates.csv")
         logger.success(f"Number of rows after cleaning data: {len(df)}")
         self.df = df
 
@@ -223,6 +235,7 @@ class Dataset:
                 holiday_dict[row[0]].extend([row[1]])
 
         attributes = FEATURES
+        self.df_meta = df_meta
 
         def is_weekend(date: datetime.datetime):
             if date.weekday() > 4:
@@ -239,7 +252,8 @@ class Dataset:
         def add_meta(df):
             enc = LabelEncoder()
             df = (df.join(df_meta, on="id", how="left")
-                  .join(df_weather, on=["datetime", "plz"], how="left")
+                  .join(df_weather.with_columns(pl.col("datetime").dt.cast_time_unit("ns")), on=["datetime", "plz"],
+                        how="left")
                   .with_columns(
                 # set 0 values in heated area to null
                 pl.when(pl.col("heated_area") == 0).then(None).otherwise(pl.col("heated_area")).name.keep(),
@@ -261,7 +275,8 @@ class Dataset:
             ).with_columns(
                 (pl.col("sum") / pl.col("count")).alias("daily_avg")).select("id", "daily_avg")
             df = df.join(df_daily_avg, on="id", how="left")
-            return add_holidays(df)
+            # df = add_holidays(df)  # TODO: add holidays for more data
+            return df
 
         logger.info(f"Adding {attributes} to dataset, this might take a while")
         # create diff of past day feature
@@ -282,21 +297,23 @@ class Dataset:
         logger.info(f"Saving {self.res} dataset to {output_file_path}")
         self.df.write_csv(output_file_path)
 
-    def load_feat_data(self):
-        self.df = pl.read_csv(f"{PROCESSED_DATA_DIR}/dataset_{self.res}_feat.csv").cast(
+    def load_feat_data(self, interpolate: bool = False):
+        if interpolate:
+            file_path = f"{PROCESSED_DATA_DIR}/dataset_interpolate_{self.res}_feat.csv"
+        else:
+            file_path = f"{PROCESSED_DATA_DIR}/dataset_{self.res}_feat.csv"
+        self.df = pl.read_csv(file_path).cast(
             {"heated_area": pl.Float64,
              "anzahlwhg": pl.Int64,
-             "max_vorlauf_temp": pl.Float64,
-             "min_vorlauf_temp": pl.Float64,
              "building_height": pl.Float64,
              "storeys_above_ground": pl.Int64,
              "ground_surface": pl.Float64,
              "tsun": pl.Float64}
         ).with_columns(pl.col("datetime").str.to_datetime())
 
-    def create_and_clean(self):
+    def create_and_clean(self, plot: bool = False):
         self.create()
-        self.clean()
+        self.clean(plot=plot)
         self.save(output_file_path=f"{PROCESSED_DATA_DIR}/dataset_{self.name}.csv")
 
     def create_clean_and_add_feat(self):
@@ -308,13 +325,23 @@ class Dataset:
 
 def interpolate_values(df: pl.DataFrame) -> pl.DataFrame:
     freq = "D"  # TODO: for hours
-    # create dataframe from start to end date
-    start_date = df["datetime"].min()
-    end_date = df["datetime"].max()
-    df_date_list = pl.DataFrame(pl.from_pandas(pd.date_range(start_date, end_date, freq=freq)), schema={"datetime": pl.Datetime})
-    df = df.with_columns(pl.col("datetime").dt.cast_time_unit("ns").alias("datetime"))
-    df_dates = df_date_list.join(df, on="datetime", how="left")
-    pass  # TODO
+    data_source = df["source"].mode().item()
+    building_id = df["id"].mode().item()
+    # use darts and pandas for interpolating values
+    series = darts.TimeSeries.from_dataframe(df, time_col="datetime", value_cols="value", freq=freq,
+                                             fill_missing_dates=True)  # fill missing dates with nan values
+    series_filled = fill_missing_values(series, "auto",
+                                        method="linear")  # use pandas interpolate for linear interpolation
+    df_filled = series_filled.to_dataframe(backend="polars", time_as_index=False)  # convert back to polars dataframe
+    df_filled = df_filled.with_columns(pl.col("value").diff().alias("diff"),  # recompute diff column with added values
+                                       pl.lit(data_source).alias("source"),
+                                       pl.lit(building_id).alias("id"))
+    if df_filled["datetime"][0] == df["datetime"][0]:
+        df_filled = df_filled.fill_null(df["diff"][0])  # replace first diff with known diff from old df
+    else:
+        df_filled = df_filled.drop_nans(subset=["diff"])
+    # plot_interpolated_series(series_filled, building_id, data_source)
+    return df_filled
 
 
 def interpolate_values_by_id(df: pl.DataFrame):
@@ -322,18 +349,81 @@ def interpolate_values_by_id(df: pl.DataFrame):
     return interpolated_df
 
 
+def split_series(df: pl.DataFrame, min_gap_size: int, plot: bool = True) -> pl.DataFrame:
+    freq = "D"  # TODO: for hours
+    data_source = df["source"].mode().item()
+    building_id = df["id"].mode().item()
+    # use darts for extracting subseries
+    series = darts.TimeSeries.from_dataframe(df, time_col="datetime", value_cols=["value", "diff"], freq=freq,
+                                             fill_missing_dates=True)
+    if plot:
+        series.plot(label=building_id)
+        plt.show()
+    subseries = extract_subseries(series, min_gap_size=min_gap_size)
+    if len(subseries) == 1:
+        if plot: plot_dataframe(df, building_id, data_source, folder=FIGURES_DIR / "interpolated_and_split_data")
+        return df  # if we dont have any gaps, return original dataframe
+    if plot:
+        [s["diff"].plot(label=building_id) for s in subseries]
+        plt.show()
+    df_subs_raw = [s.to_dataframe(backend="polars", time_as_index=False) for s in subseries]
+    df_subs = list()
+    for idx, df_sub in enumerate(df_subs_raw):
+        if len(df_sub) > min_gap_size:  # dont add if it is shorter than min gap size
+            new_building_id = f"{building_id}-{idx}"
+            df_sub = df_sub.with_columns(pl.lit(data_source).alias("source"),
+                                         pl.lit(new_building_id).alias("id"))
+            if plot: plot_dataframe(df_sub, new_building_id, data_source,
+                                    folder=FIGURES_DIR / "interpolated_and_split_data")
+            df_subs.append(df_sub)
+    if len(df_subs) > 0:
+        df_concat = pl.concat(df_subs)
+        df_concat = df_concat.with_columns(pl.col("datetime").dt.cast_time_unit("ns"))
+        return df_concat
+    else:
+        return pl.DataFrame(schema={"datetime": pl.Datetime, "value": pl.Float64, "diff": pl.Float64, "id": pl.String,
+                                    "source": pl.String})
+
+
+def split_series_by_id_list(df: pl.DataFrame, min_gap_size: int, plot: bool = False) -> pl.DataFrame:
+    concat_df = pl.DataFrame(
+        schema={"datetime": pl.Datetime, "value": pl.Float64, "diff": pl.Float64, "id": pl.String, "source": pl.String})
+    concat_df = concat_df.with_columns(pl.col("datetime").dt.cast_time_unit("ns"))
+    for b_idx in df["id"].unique():
+        df_b = df.filter(pl.col("id") == b_idx)
+        df_b = split_series(df_b, min_gap_size=min_gap_size, plot=plot)
+        concat_df = pl.concat([concat_df, df_b], how="diagonal")
+    return concat_df
+
+
+def split_series_by_id(df: pl.DataFrame, min_gap_size: int, plot: bool = False) -> pl.DataFrame:
+    interpolated_df = df.group_by("id").map_groups(lambda group: split_series(group, min_gap_size, plot))
+    return interpolated_df
+
+
 class InterpolatedDataset(Dataset):
     def __init__(self, res: str = "daily"):
         super().__init__(res)
-        self.name = f"interp_{res}"
+        self.name = f"interpolate_{res}"
 
-    def clean(self):
-        super().clean()
+    @overrides
+    def clean(self, plot: bool = False):
+        super().clean(plot=False)
         df = self.df
+        logger.info("Split series with long series of missing values")
+        df = df.with_columns(pl.col("datetime").dt.cast_time_unit("ns"))
+        df = split_series_by_id_list(df, 7, plot=False)  # split series if there are long missing periods
         logger.info("Interpolating values")
-        df = interpolate_values_by_id(df)
-        logger.info(f"Number of rows after filtering outliers: {len(df)}")
+        df = interpolate_values_by_id(df)  # interpolate missing dates/hours
+        logger.info("Remove negative consumption values")
+        df = remove_neg_diff_vals(df)  # interpolation might create new negative diff values, remove them
+        df = remove_positive_jumps(df)  # remove too high diff values
+        logger.info("Split series with long series of missing values")
+        df = split_series_by_id(df, 1, plot)  # split series if there were holes created by removing neg diff values
+        logger.info(f"Number of rows after interpolating: {len(df)}")
+        assert len(df.filter(pl.col("diff") < 0)) == 0  # no negative diff values should be present
         self.df = df
+
 
 class TrainingDataset(Dataset):
     """ Dataset for training a model"""
@@ -396,11 +486,11 @@ class TrainingDataset(Dataset):
         self.df = self.df.filter(~pl.col("id").is_in(self.corrupt_building_ids))
 
     def preprocess(self) -> tuple[pl.DataFrame, dict]:
-        self.one_hot_encode()
         self.add_multiple_forecast()
         # select energy type
         if self.config["energy"] != "all":
             self.df = self.df.filter(pl.col("primary_energy") == self.config["energy"])
+        self.one_hot_encode()
         self.df = self.df.drop_nulls(subset=self.config["features"])  # remove null values for used features
         logger.info(f"Training Features: {self.config['features']}")
         self.remove_corrupt_buildings()
@@ -414,14 +504,14 @@ class TrainingDataset(Dataset):
         n_clusters = 3
         logger.info(f"Computing {n_clusters} clusters")
         df = self.df.group_by("id").agg(pl.col("diff"),
-                      pl.col("daily_avg").mode().first().alias("avg"),
-                      pl.col("diff").std().alias("std"),
-                      pl.col("diff").median().alias("median"),
-                      pl.col("diff").min().alias("min"),
-                      pl.col("diff").max().alias("max"),
-                      pl.col("diff").head(30).alias("month"),
-                      pl.len()
-                      ).sort("len")
+                                        pl.col("daily_avg").mode().first().alias("avg"),
+                                        pl.col("diff").std().alias("std"),
+                                        pl.col("diff").median().alias("median"),
+                                        pl.col("diff").min().alias("min"),
+                                        pl.col("diff").max().alias("max"),
+                                        pl.col("diff").head(30).alias("month"),
+                                        pl.len()
+                                        ).sort("len")
         df.drop(["diff", "month"]).write_csv(DATA_DIR / "processed" / "buildings_consumption_info.csv")
         data = df.drop(["id", "diff", "month", "len"]).to_numpy()
 
@@ -435,7 +525,7 @@ class TrainingDataset(Dataset):
         # add label column to dataframe
         df = df.with_columns(pl.Series(labels).alias("label"))
         for c_id in range(n_clusters):
-            logger.info(f"Computed Cluster {c_id} with n={len(df.filter(pl.col('label')==c_id))}")
+            logger.info(f"Computed Cluster {c_id} with n={len(df.filter(pl.col('label') == c_id))}")
         cluster_id_map = dict()  # map each id to a cluster
         for row in df.iter_rows():
             cluster_id_map[row[0]] = row[-1]
@@ -451,7 +541,6 @@ class TrainingDataset(Dataset):
         return cluster_map
 
 
-
 class TrainDataset90(TrainingDataset):
     def __init__(self, config: dict):
         super().__init__(config)
@@ -463,6 +552,7 @@ class TrainDataset90(TrainingDataset):
         allowed_ids = md_df.filter(pl.col("per") > 90)["id"].to_list()
         self.df = self.df.filter(pl.col("id").is_in(allowed_ids))
         logger.info(f"Data length after filtering: {len(self.df)}")
+
 
 class TimeSeriesDataset(TrainingDataset):
     def __init__(self, config: dict):
@@ -492,8 +582,12 @@ if __name__ == '__main__':
 
     logger.info("Finish data loading")
 
-    ds = Dataset()
-    ds.create_and_clean()
+    ds = InterpolatedDataset()
+    # ds.create_and_clean(plot=True)
+    ds.create_clean_and_add_feat()
+
+    # ds = Dataset()
+    # ds.create_and_clean()
     # ds.create_clean_and_add_feat()
 
     # ds.load_feat_data()

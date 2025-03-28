@@ -23,8 +23,8 @@ FIGURES_DIR = REPORTS_DIR / "figures"
 
 REFERENCES_DIR = PROJ_ROOT / "references"
 
-CATEGORICAL_FEATURES = ["typ", "min_vorlauf_temp", "max_vorlauf_temp", "primary_energy"]
-CATEGORICAL_FEATURES_BINARY = ["weekend", "holiday"]
+CATEGORICAL_FEATURES = ["typ", "primary_energy"]
+CATEGORICAL_FEATURES_BINARY = ["weekend"] # , "holiday"]
 CONTINUOUS_FEATURES = ["diff_t-1", 'hum_avg', 'hum_min', 'hum_max', 'tavg', 'tmin', 'tmax', 'prcp', 'snow', 'wdir',
                        'wspd', 'wpgt', 'pres', 'tsun', "daily_avg", "heated_area", "anzahlwhg", "ground_surface",
                        "building_height", "storeys_above_ground"]
@@ -39,7 +39,7 @@ FEATURES_WEATHER = FEATURES_WEATHER_NO_SNOW  # snow has lots of missing values
 FEATURES_WEATHER_SIGNIFICANT = ["tmax", "tsun", "wpgt", "hum_avg"]
 FEATURES_BUILDING = ["daily_avg", "heated_area", "anzahlwhg", "typ", "primary_energy"]
 FEATURES_BUILDING_NO_APPARTMENT = list(set(FEATURES_BUILDING) - {"anzahlwhg"})
-FEATURES_TIME = ["weekend", "holiday"]
+FEATURES_TIME = CATEGORICAL_FEATURES_BINARY
 FEATURES_DH = ["ground_surface", "building_height", "storeys_above_ground", "heated_area"]
 FEATURES_ALL = FEATURES_DIFF + FEATURES_WEATHER + FEATURES_BUILDING + FEATURES_TIME
 

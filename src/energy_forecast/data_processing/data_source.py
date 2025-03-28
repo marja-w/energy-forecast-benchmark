@@ -4,11 +4,14 @@ from datetime import datetime
 from pathlib import Path
 
 import polars as pl
+from darts.utils.missing_values import missing_values_ratio
 from loguru import logger
 
 from src.energy_forecast.config import RAW_DATA_DIR, DATA_DIR, REFERENCES_DIR
 from src.energy_forecast.util import sum_columns, replace_title_values, remove_leading_zeros, get_id_from_address, \
     add_env_energy
+
+import darts
 
 
 def update_df_with_corrections(df: pl.DataFrame, correction_csv_path: Path) -> pl.DataFrame:
@@ -207,17 +210,26 @@ class LegacyDataLoader(DataLoader):
             pl.col("lastAggregated").str.to_datetime()
         ).unique(subset=["GSM_ID", "TP", "Tag", "datetime"]  # remove duplicates
                  ).sort(by=["GSM_ID", "TP", "Tag", "datetime"])
-              .with_columns(
+        .with_columns(
             pl.col("primary_energy").str.to_lowercase(),
             pl.when(pl.col("Unit") == "CBM")
-            .then(pl.col("Val") * 11.3).alias("Val"),
+            .then(pl.col("Val") * 11.3).alias("Val"),  # turn into kwh if it is other unit
             pl.when(pl.col("Unit") == "CBM")
             .then(pl.lit("KWH")).alias("Unit"),
-            pl.col("plz").str.strip_chars().cast(pl.Int64),
-            pl.col("Val").diff().over(pl.col("id")).alias("diff")
-            # compute diff column  TODO: Datenlücken bei date? check
-        ).drop_nulls(subset=["diff"])
-              )
+            pl.col("plz").str.strip_chars().cast(pl.Int64)
+        )
+        )
+
+        # data_list_raw = darts.TimeSeries.from_group_dataframe(
+        #     df.to_pandas()[["ArrivalTime", "GSM_ID", "Val"]], group_cols="GSM_ID", time_col="ArrivalTime",
+        #     value_cols=["Val"], freq="D", fill_missing_dates=True)
+        #
+        # b_dfs = list()
+        # for s in data_list_raw:
+        #     if missing_values_ratio(s) > 0:  # if there are missing values in the series
+
+        # compute diff column  TODO: Datenlücken bei date? ja -> interpolieren?
+        df = df.with_columns(pl.col("Val").diff().over(pl.col("id")).alias("diff")).drop_nulls(subset=["diff"])
 
         # unify naming of gas meters
         df = replace_title_values(df, [("Gas Zähler", "Gaszähler"),

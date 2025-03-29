@@ -13,7 +13,7 @@ A short description of the project.
 ├── Makefile           <- Makefile with convenience commands like `make data` or `make train`
 ├── README.md          <- The top-level README for developers using this project.
 ├── data
-│   ├── external       <- Data from third party sources.
+│   ├── external       <- Data from third party sources. (features created by feature_generation.py)
 │   ├── interim        <- Intermediate data that has been transformed.
 │   ├── processed      <- The final, canonical data sets for modeling.
 │   └── raw            <- The original, immutable data dump.
@@ -59,3 +59,11 @@ A short description of the project.
 
 --------
 
+# Folder Structure
+
+## [Data](data)
+
+### [External](data/external)
+
+- [Features](data/external/features): stores features created by [feature_generation.py](src/energy_forecast/data_processing/feature_generation.py)
+                                        , like weather data, holiday features, and information used for their creation, like building locations

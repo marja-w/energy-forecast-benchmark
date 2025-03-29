@@ -92,24 +92,25 @@ class Model:
         """
         eval_dict = {"metric": ["mse", "mae", "nrmse", "rmse"]}
         for (idx, cluster) in clusters.items():
-            logger.info(f"Evaluating Cluster {idx}")
+            # logger.info(f"Evaluating Cluster {idx}")
             cluster_X_test = X_test.iloc[cluster]
             cluster_y_test = y_test.iloc[cluster]
             eval_dict[f"model_cluster_{idx}"] = self.evaluate(cluster_X_test, cluster_y_test, run, log=False)
         return eval_dict
 
-    def log_eval_results(self, evaluator, run, len_y_test: int, log: bool = True):
+    def log_eval_results(self, evaluator, run, len_y_test: int, log: bool = True) -> tuple:
         # logging
         test_mse = evaluator.mean_squared_error()
         test_mae = evaluator.mean_absolute_error()
         test_nrmse = evaluator.normalized_root_mean_square_error()
         test_rmse = evaluator.root_mean_squared_error()
         if self.config["n_out"] > 1:
-            if log: run.log(data={"test_nrmse_ind": test_nrmse, "test_mse_ind": test_mse, "test_mae_ind": test_mae})
-            logger.info(f"MSE Loss on test data per index: {test_mse}")
-            logger.info(f"MAE Loss on test data per index: {test_mae}")
-            logger.info(f"RMSE Loss on test data per index: {test_rmse}")
-            logger.info(f"NRMSE Loss on test data per index: {test_nrmse}")
+            if log:
+                run.log(data={"test_nrmse_ind": test_nrmse, "test_mse_ind": test_mse, "test_mae_ind": test_mae})
+                logger.info(f"MSE Loss on test data per index: {test_mse}")
+                logger.info(f"MAE Loss on test data per index: {test_mae}")
+                logger.info(f"RMSE Loss on test data per index: {test_rmse}")
+                logger.info(f"NRMSE Loss on test data per index: {test_nrmse}")
             test_nrmse = mean(test_nrmse)
             test_rmse = mean(test_rmse)
             test_mse = mean(test_mse)
@@ -121,10 +122,10 @@ class Model:
                           "test_rmse": test_rmse,
                           "test_nrmse": test_nrmse
                           })
-        logger.info(f"MSE Loss on test data: {test_mse}")
-        logger.info(f"MAE Loss on test data: {test_mae}")
-        logger.info(f"RMSE on test data: {test_rmse}")
-        logger.info(f"NRMSE on test data: {test_nrmse}")
+            logger.info(f"MSE Loss on test data: {test_mse}")
+            logger.info(f"MAE Loss on test data: {test_mae}")
+            logger.info(f"RMSE on test data: {test_rmse}")
+            logger.info(f"NRMSE on test data: {test_nrmse}")
         return test_mse, test_mae, test_nrmse, test_rmse
 
     def save(self) -> Path:
@@ -164,18 +165,19 @@ class Baseline(Model):
         b_rmse = evaluator.root_mean_squared_error()
         b_mae = evaluator.mean_absolute_error()
         b_mse = evaluator.mean_squared_error()
-        logger.info(f"Baseline MSE on test data: {b_mse}")
-        logger.info(f"Baseline MAE on test data: {b_mae}")
-        logger.info(f"Baseline RMSE on test data: {b_rmse}")
-        logger.info(f"Baseline NRMSE on test data: {b_nrmse}")
+        if log:
+            logger.info(f"Baseline MSE on test data: {b_mse}")
+            logger.info(f"Baseline MAE on test data: {b_mae}")
+            logger.info(f"Baseline RMSE on test data: {b_rmse}")
+            logger.info(f"Baseline NRMSE on test data: {b_nrmse}")
         if self.config["n_out"] == 1:
             if log: run.log({"b_nrmse": b_nrmse, "b_rmse": b_rmse, "b_mae": b_mae, "b_mse": b_mse})
         else:
-            logger.info(f"Average Baseline MSE on test data: {b_mse}")
-            logger.info(f"Average Baseline MAE on test data: {mean(b_mse)}")
-            logger.info(f"Average Baseline RMSE on test data: {mean(b_rmse)}")
-            logger.info(f"Average Baseline NRMSE on test data: {mean(b_nrmse)}")
             if log:
+                logger.info(f"Average Baseline MSE on test data: {b_mse}")
+                logger.info(f"Average Baseline MAE on test data: {mean(b_mse)}")
+                logger.info(f"Average Baseline RMSE on test data: {mean(b_rmse)}")
+                logger.info(f"Average Baseline NRMSE on test data: {mean(b_nrmse)}")
                 run.log({"b_nrmse": mean(b_nrmse), "b_nrmse_ind": b_nrmse,
                      "b_rmse": mean(b_rmse), "b_rmse_ind": b_rmse,
                      "b_mae": mean(b_mae), "b_mae_ind": b_mae,
@@ -184,8 +186,7 @@ class Baseline(Model):
         return b_mse, b_mae, b_nrmse, b_rmse
 
     @overrides(check_signature=False)
-    def evaluate_per_cluster(self, ds: TrainingDataset, run: Run) -> dict:
-        clusters = ds.compute_clusters()
+    def evaluate_per_cluster(self, ds: TrainingDataset, run: Run, clusters: dict) -> dict:
         eval_dict = dict()
         for (idx, cluster) in clusters.items():
             logger.info(f"Evaluating Cluster {idx}")

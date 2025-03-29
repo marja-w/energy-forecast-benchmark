@@ -6,6 +6,9 @@ from loguru import logger
 # Load environment variables from .env file if it exists
 load_dotenv()
 
+# other variables
+N_CLUSTER = 4  # number of clusters for clustering
+
 # Paths
 PROJ_ROOT = Path(__file__).resolve().parents[2]  # energy-forecast-wahl/src/energy_forecast
 logger.info(f"PROJ_ROOT path is: {PROJ_ROOT}")
@@ -15,6 +18,9 @@ RAW_DATA_DIR = DATA_DIR / "raw"
 INTERIM_DATA_DIR = DATA_DIR / "interim"
 PROCESSED_DATA_DIR = DATA_DIR / "processed"
 EXTERNAL_DATA_DIR = DATA_DIR / "external"
+
+FEATURES_DIR = EXTERNAL_DATA_DIR / "features"
+META_DIR = INTERIM_DATA_DIR / "meta"
 
 MODELS_DIR = PROJ_ROOT / "models"
 

@@ -1,4 +1,5 @@
 import datetime
+import os
 from datetime import timedelta
 from pathlib import Path
 
@@ -15,7 +16,7 @@ from sklearn.preprocessing import LabelEncoder, OneHotEncoder
 from pandas import DataFrame
 
 from src.energy_forecast.config import RAW_DATA_DIR, DATA_DIR, PROCESSED_DATA_DIR, CATEGORICAL_FEATURES, FEATURES, \
-    FIGURES_DIR
+    FIGURES_DIR, FEATURES_DIR, META_DIR, INTERIM_DATA_DIR, N_CLUSTER
 from src.energy_forecast.data_processing.data_source import LegacyDataLoader, KinergyDataLoader, DHDataLoader
 from src.energy_forecast.plots import plot_missing_dates_per_building, plot_clusters, plot_interpolated_series, \
     plot_series, plot_dataframe
@@ -143,6 +144,7 @@ class Dataset:
         self.df = pl.DataFrame()
         self.name = self.res
         self.df_meta = pl.DataFrame()
+        self.file_path = PROCESSED_DATA_DIR / f"dataset_{self.name}.csv"
 
     def create(self):
         dfs = list()
@@ -202,20 +204,20 @@ class Dataset:
 
         """
         # load all the feature dataframes
-        df_weather = pl.read_csv(RAW_DATA_DIR / f"weather_daily.csv").with_columns(
+        df_weather = pl.read_csv(FEATURES_DIR / "weather_daily.csv").with_columns(
             pl.col("time").str.to_datetime().alias("datetime"))
-        df_holidays = pl.read_csv(RAW_DATA_DIR / "holidays.csv").with_columns(pl.col("start").str.to_date(),
+        df_holidays = pl.read_csv(FEATURES_DIR / "holidays.csv").with_columns(pl.col("start").str.to_date(),
                                                                               pl.col("end").str.to_date(strict=False))
-        df_cities = pl.read_csv(RAW_DATA_DIR / "cities.csv")
+        df_cities = pl.read_csv(FEATURES_DIR / "city_info.csv")
 
         # META DATA
-        df_meta_l = pl.read_csv(RAW_DATA_DIR / "legacy_meta.csv").with_columns(pl.col("plz").str.strip_chars())
-        df_meta_dh = pl.read_csv(RAW_DATA_DIR / "dh_meta.csv").rename({"eco_u_id": "id"})
-        df_lod = pl.read_csv(RAW_DATA_DIR / "dh_meta_lod.csv").rename(
+        df_meta_l = pl.read_csv(META_DIR / "legacy_meta.csv").with_columns(pl.col("plz").str.strip_chars())
+        df_meta_dh = pl.read_csv(META_DIR / "dh_meta.csv").rename({"eco_u_id": "id"})
+        df_lod = pl.read_csv(META_DIR / "dh_meta_lod.csv").rename(
             {"adresse": "address"})  # dh data with lod building data
         df_meta_dh = df_meta_dh.join(df_lod, on=["address"]).drop(
             ["id_right", "postal_code_right", "city", "postal_code"])
-        df_meta_k = pl.read_csv(RAW_DATA_DIR / "kinergy_meta.csv", null_values="")
+        df_meta_k = pl.read_csv(META_DIR / "kinergy_meta.csv", null_values="")
         df_meta = pl.concat(
             [df_meta_l.cast({"plz": pl.Int64}).rename(
                 {"qmbehfl": "heated_area", "anzlwhg": "anzahlwhg", "adresse": "address"}).with_columns(
@@ -275,7 +277,7 @@ class Dataset:
             ).with_columns(
                 (pl.col("sum") / pl.col("count")).alias("daily_avg")).select("id", "daily_avg")
             df = df.join(df_daily_avg, on="id", how="left")
-            # df = add_holidays(df)  # TODO: add holidays for more data
+            df = add_holidays(df)  # TODO: add holidays for more data
             return df
 
         logger.info(f"Adding {attributes} to dataset, this might take a while")
@@ -317,8 +319,12 @@ class Dataset:
         self.save(output_file_path=f"{PROCESSED_DATA_DIR}/dataset_{self.name}.csv")
 
     def create_clean_and_add_feat(self):
-        self.create()
-        self.clean()
+        if os.path.exists(self.file_path):
+            self.df = pl.read_csv(self.file_path).with_columns(pl.col("datetime").str.to_datetime()).with_columns(
+                pl.col("datetime").dt.cast_time_unit("ns"))
+        else:
+            self.create()
+            self.clean()
         self.add_features()
         self.save(output_file_path=f"{PROCESSED_DATA_DIR}/dataset_{self.name}_feat.csv")
 
@@ -403,6 +409,7 @@ def split_series_by_id(df: pl.DataFrame, min_gap_size: int, plot: bool = False) 
 
 class InterpolatedDataset(Dataset):
     def __init__(self, res: str = "daily"):
+        self.name = f"interpolate_{res}"
         super().__init__(res)
         self.name = f"interpolate_{res}"
 
@@ -501,7 +508,7 @@ class TrainingDataset(Dataset):
         Compute cluster mappings with meta data
         :return:
         """
-        n_clusters = 3
+        n_clusters = N_CLUSTER
         logger.info(f"Computing {n_clusters} clusters")
         df = self.df.group_by("id").agg(pl.col("diff"),
                                         pl.col("daily_avg").mode().first().alias("avg"),

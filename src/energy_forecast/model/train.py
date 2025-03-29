@@ -1,15 +1,17 @@
 import jsonlines
 import pandas as pd
 import polars as pl
+import wandb
 from loguru import logger
 from sklearn.model_selection import GroupShuffleSplit
 from tensorflow import keras
 from tensorflow.keras import layers
 from tqdm import tqdm
+import os
 
 try:
     from src.energy_forecast.plots import plot_means, plot_std
-    from src.energy_forecast.config import REFERENCES_DIR, FEATURE_SETS, PROCESSED_DATA_DIR, REPORTS_DIR
+    from src.energy_forecast.config import REFERENCES_DIR, FEATURE_SETS, PROCESSED_DATA_DIR, REPORTS_DIR, N_CLUSTER
     from src.energy_forecast.dataset import Dataset, TrainingDataset, TrainDataset90
     from src.energy_forecast.model.models import Model, FCNModel, DTModel, LinearRegressorModel, RegressionModel, \
         NNModel, \
@@ -179,6 +181,21 @@ def get_features(code: int):
     return FEATURE_SETS[code]
 
 
+def per_cluster_evaluation(baseline: Baseline, ds: TrainingDataset, m: Model,
+                           wandb_run: wandb.sdk.wandb_run.Run) -> None:
+    clusters = ds.compute_clusters()
+    eval_dict_m = m.evaluate_per_cluster(ds.X_test, ds.y_test, wandb_run, clusters)
+    eval_dict_b = baseline.evaluate_per_cluster(ds, wandb_run, clusters)
+    eval_df = pl.concat([pl.DataFrame(eval_dict_m), pl.DataFrame(eval_dict_b)], how="horizontal")
+    eval_df.write_csv(REPORTS_DIR / "results_cluster_eval.csv")
+    # save to wandb run
+    # copy to wandb run dir to fix symlink issue
+    os.makedirs(os.path.join(wandb.run.dir, "reports"))
+    wandb_run_dir_eval = os.path.join(wandb.run.dir, os.path.join("reports", "results_cluster_eval.txt"))
+    eval_df.to_pandas().to_csv(wandb_run_dir_eval, header=True, index=None, sep="\t", mode="a")
+    wandb.save(wandb_run_dir_eval)
+
+
 def train(config: dict):
     try:
         logger.info(f"Features: {config['features']}")
@@ -203,14 +220,13 @@ def train(config: dict):
     m.evaluate(ds.X_test, ds.y_test, run)
     assert X_test_copy.equals(ds.X_test)
     assert y_test_copy.equals(ds.y_test)
-    # eval_dict_m = m.evaluate_per_cluster(ds.X_test, ds.y_test, run, ds.compute_clusters())
     assert X_test_copy.equals(ds.X_test)
     assert y_test_copy.equals(ds.y_test)
     baseline.evaluate(ds, run)
     assert X_test_copy.equals(ds.X_test)
     assert y_test_copy.equals(ds.y_test)
-    # eval_dict_b = baseline.evaluate_per_cluster(ds, run)
-    # pl.concat([pl.DataFrame(eval_dict_m), pl.DataFrame(eval_dict_b)], how="horizontal").write_csv(REPORTS_DIR / "results_cluster_eval.csv")
+
+    per_cluster_evaluation(baseline, ds, m, run)
 
     # save model on disk and in wandb
     m.save()  # TODO: store cluster eval results here too

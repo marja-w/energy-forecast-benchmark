@@ -1,4 +1,4 @@
-from datetime import timedelta, datetime, date
+from datetime import timedelta, datetime
 from pathlib import Path
 
 import darts
@@ -9,8 +9,8 @@ from loguru import logger
 from matplotlib import pyplot as plt
 import seaborn as sns
 
-from src.energy_forecast.config import RAW_DATA_DIR, PROCESSED_DATA_DIR, FIGURES_DIR
-from src.energy_forecast.util import find_time_spans, get_missing_dates
+from src.energy_forecast.config import PROCESSED_DATA_DIR, FIGURES_DIR
+from src.energy_forecast.utils.util import find_time_spans, get_missing_dates
 
 
 def plot_means(X_train, y_train, X_val, y_val, X_test, y_test):

@@ -8,7 +8,7 @@ from keras.utils import timeseries_dataset_from_array
 from loguru import logger
 from numpy import ndarray
 
-from src.energy_forecast.config import RAW_DATA_DIR
+from src.energy_forecast.config import REPORTS_DIR
 
 
 def add_env_energy(df: pl.DataFrame, df_raw: pl.DataFrame, address: str, col_gas: str, col_env: str):
@@ -66,6 +66,13 @@ def sum_columns(df, address, col_1, col_2):
 
 
 def get_missing_dates(df: pl.DataFrame, frequency: str = "D") -> pl.DataFrame:
+    """
+    Get missing dates/hours, depending on frequency parameter
+    :param df: DataFrame with datetime column
+    :param frequency: "D" or "h"
+    :return: DataFrame with missing dates as list, length of data versus length of missing dates, and start and end date
+            of data series
+    """
     missing_dates = []
     df_time = df.group_by(pl.col("id")).agg(pl.len(),
                                             pl.col("datetime").min().alias("min_date"),
@@ -87,8 +94,15 @@ def get_missing_dates(df: pl.DataFrame, frequency: str = "D") -> pl.DataFrame:
         # logger.info(f"Missing dates for sensor {id}: {len(missing_dates_sensor)}")
         missing_dates.append(
             {"id": id, "missing_dates": missing_dates_sensor, "len": len(missing_dates_sensor), "n": row[1],
-             "per": ((len(date_list_rec) / (1 + len(date_list))) * 100), "start_date": start_date, "end_date": end_date})
+             "per": ((len(date_list_rec) / (1 + len(date_list))) * 100), "start_date": start_date,
+             "end_date": end_date})
     df_missing_dates = pl.DataFrame(missing_dates).sort(pl.col("len"), descending=True)
+    # write to csv
+    missing_dates_csv_ = REPORTS_DIR / "missing_dates.csv"
+    df_missing_dates.select(["id", "len", "n", "per", "start_date", "end_date"]).sort(pl.col("per"),
+                                                                                      descending=True).write_csv(
+        missing_dates_csv_)
+    logger.info(f"Wrote information about missing dates to {missing_dates_csv_}")
     return df_missing_dates
 
 
@@ -179,6 +193,7 @@ def replace_title_values(df, titles_replace: List[Tuple[str, str]]):
             pl.when(pl.col("Title") == title_to_be_replaced).then(pl.lit(new_title)).otherwise("Title").alias("Title"))
     return df
 
+## OLD COMPANY PROJECT METHODS ##
 
 def create_diff(df: pl.DataFrame):
     """
@@ -218,7 +233,7 @@ def add_last_n_diffs_all_gas_meters(df, n):
     :return: polars DataFrame with added columns (t-n, t-(n-1),..., t-1)
     """
 
-    df = df.group_by("new_id").map_groups(lambda group: add_last_n_diffs(group, n))
+    df = df.group_by("id").map_groups(lambda group: add_last_n_diffs(group, n))
     return df
 
 
@@ -238,48 +253,3 @@ def get_date_range_from_id(df: pl.DataFrame, gas_id: str):
 
 def get_address_from_id(df: pl.DataFrame, gas_id: str):
     return df.filter(pl.col("new_id") == gas_id)["adresse"].unique()[0]
-
-
-def realign_predictions(predictions, sensor_data_lengths, t_in, t_out):
-    """
-    Realigns the predictions to match the original sensor data lengths.
-
-    Args:
-        predictions (np.ndarray): Array of predictions.
-        sensor_data_lengths (list): List of lengths of the sensor data.
-        t_in (int): Number of input time steps.
-        t_out (int): Number of output time steps.
-
-    Returns:
-        list: List of realigned predictions for each sensor.
-    """
-    # Number of sensors
-    n_sensors = len(sensor_data_lengths)
-
-    # Placeholder to store the realigned predictions for each sensor
-    realigned_predictions = [np.zeros(sensor_data_lengths[i]) for i in range(n_sensors)]
-
-    # Track the index for the start of each prediction in the sensor data
-    current_start_idx = [0] * n_sensors  # Starting index for each sensor
-
-    # Iterate over all the predictions
-    prediction_idx = 0
-    for sensor_idx in range(n_sensors):
-        while True:
-            # Get the starting index for this sensor
-            start_idx = current_start_idx[sensor_idx]
-
-            # Check if the prediction would exceed the sensor's length
-            if start_idx + t_in + t_out > sensor_data_lengths[sensor_idx]:
-                # If true, we are done with this sensor
-                break
-
-            # Place the prediction into the correct part of the sensor data
-            datapoint = predictions[prediction_idx]
-            realigned_predictions[sensor_idx][start_idx: start_idx + len(datapoint)] = datapoint
-
-            # Update the prediction index and starting point for the next prediction
-            prediction_idx += 1
-            current_start_idx[sensor_idx] += 1  # Shift start by one for sliding window
-
-    return realigned_predictions

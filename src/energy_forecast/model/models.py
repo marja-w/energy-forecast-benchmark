@@ -1,33 +1,31 @@
 import math
 import os
-import shutil
 from pathlib import Path
 from statistics import mean
 from typing import Union
 
+import darts
 import numpy as np
 import pandas as pd
+import polars as pl
+import statsmodels.api as sm
 import wandb
+from darts.models import RNNModel
 from keras.src.callbacks import LearningRateScheduler
+from loguru import logger
 from networkx.generators import trees
 from overrides import overrides
-from sklearn.preprocessing import MinMaxScaler, StandardScaler, OneHotEncoder
+from pandas import DataFrame
+from permetrics.regression import RegressionMetric
+from sklearn import tree
+from sklearn.preprocessing import MinMaxScaler, StandardScaler
 from tensorflow import keras
 from tensorflow.keras import layers, optimizers
-from sklearn import tree
-from loguru import logger
 from wandb.integration.keras import WandbMetricsLogger
 from wandb.sdk.wandb_run import Run
-from pandas import DataFrame
-import polars as pl
 
-from src.energy_forecast.config import MODELS_DIR, CATEGORICAL_FEATURES, CATEGORICAL_FEATURES_BINARY, \
-    CONTINUOUS_FEATURES
-import statsmodels.api as sm
-from permetrics.regression import RegressionMetric
-
+from src.energy_forecast.config import MODELS_DIR, CONTINUOUS_FEATURES
 from src.energy_forecast.dataset import TrainingDataset
-from src.energy_forecast.plots import plot_means
 
 
 def root_mean_squared_error(y_true, y_pred):
@@ -38,7 +36,7 @@ def root_mean_squared_error(y_true, y_pred):
 def step_decay(epoch):
     initial_lrate = 0.01
     drop = 0.5
-    epochs_drop = 10.0
+    epochs_drop = 20.0
     lrate = initial_lrate * math.pow(drop, math.floor((1 + epoch) / epochs_drop))
     return lrate
 
@@ -53,7 +51,7 @@ class Model:
     def get_model(self):
         return self.model
 
-    def init_wandb(self, X_train: DataFrame, X_val: Union[DataFrame, None]) -> tuple:
+    def init_wandb(self, X_train: DataFrame, X_val: Union[DataFrame, None] = None) -> tuple[dict, Run]:
         # Setup wandb training
         config = self.config
         config["train_data_length"] = len(X_train)
@@ -67,12 +65,15 @@ class Model:
         logger.info(f"Training {self.name} on {X_train.shape}")
         return config, run
 
-    def train(self, X_train: DataFrame, y_train: DataFrame, X_val: DataFrame, y_val: DataFrame) -> tuple[
+    def train(self, ds: TrainingDataset) -> tuple[
         keras.Sequential, Run]:
         pass
 
     def predict(self, X: DataFrame) -> np.ndarray:
         return self.model.predict(X)
+
+    def evaluate_ds(self, ds: TrainingDataset, run: Run) -> tuple:
+        return self.evaluate(ds.X_test, ds.y_test, run)
 
     def evaluate(self, X_test: DataFrame, y_test: DataFrame, run: Run) -> tuple:
         """
@@ -90,13 +91,7 @@ class Model:
         """
         Evaluate the Model per cluster. Clusters are defined in clusters as mapping to indexes.
         """
-        eval_dict = {"metric": ["mse", "mae", "nrmse", "rmse"]}
-        for (idx, cluster) in clusters.items():
-            # logger.info(f"Evaluating Cluster {idx}")
-            cluster_X_test = X_test.iloc[cluster]
-            cluster_y_test = y_test.iloc[cluster]
-            eval_dict[f"model_cluster_{idx}"] = self.evaluate(cluster_X_test, cluster_y_test, run, log=False)
-        return eval_dict
+        pass
 
     def log_eval_results(self, evaluator, run, len_y_test: int, log: bool = True) -> tuple:
         # logging
@@ -152,12 +147,12 @@ class Baseline(Model):
 
     @overrides(check_signature=False)
     def evaluate(self, ds: TrainingDataset, run: Run, cluster_idxs=None, log: bool = True) -> tuple:
-        y_test = ds.df.with_row_index().select(["datetime", "index", "id", "diff"]
-                                               ).filter(pl.col("index").is_in(ds.test_idxs)
-                                                        ).sort(["id", "datetime"])
+        y_test = ds.df.sort(["id", "datetime"]).with_row_index().select(["datetime", "index", "id", "diff"]
+                                                                        ).filter(pl.col("index").is_in(ds.test_idxs)
+                                                                                 ).sort(["id", "datetime"])
         y_test = y_test.to_pandas()
         if cluster_idxs is not None:
-            y_test = y_test.iloc[cluster_idxs]
+            y_test = y_test.iloc[cluster_idxs].sort_values(by=["id", "datetime"])
         y_hat = y_test.groupby("id")["diff"].shift(1,
                                                    fill_value=0)  # predictions are value of yesterday, first day is zero
         evaluator = RegressionMetric(y_test["diff"].to_numpy(), y_hat.to_numpy())
@@ -179,10 +174,10 @@ class Baseline(Model):
                 logger.info(f"Average Baseline RMSE on test data: {mean(b_rmse)}")
                 logger.info(f"Average Baseline NRMSE on test data: {mean(b_nrmse)}")
                 run.log({"b_nrmse": mean(b_nrmse), "b_nrmse_ind": b_nrmse,
-                     "b_rmse": mean(b_rmse), "b_rmse_ind": b_rmse,
-                     "b_mae": mean(b_mae), "b_mae_ind": b_mae,
-                     "b_mse": mean(b_mse), "b_mse_ind": b_mse
-                     })
+                         "b_rmse": mean(b_rmse), "b_rmse_ind": b_rmse,
+                         "b_mae": mean(b_mae), "b_mae_ind": b_mae,
+                         "b_mse": mean(b_mse), "b_mse_ind": b_mse
+                         })
         return b_mse, b_mae, b_nrmse, b_rmse
 
     @overrides(check_signature=False)
@@ -265,8 +260,11 @@ class NNModel(Model):
         return X_scaled, DataFrame(y_scaled)
 
     @overrides
-    def train(self, X_train: DataFrame, y_train: DataFrame, X_val: DataFrame, y_val: DataFrame) -> tuple[
-        keras.Sequential, Run]:
+    def train(self, ds: TrainingDataset) -> tuple[keras.Sequential, Run]:
+        X_train = ds.X_train
+        X_val = ds.X_val
+        y_train = ds.y_train
+        y_val = ds.y_val
         config, run = self.init_wandb(X_train, X_val)
         # early_stop = EarlyStopping(monitor='val_loss', patience=2)
         # Compile the model
@@ -296,12 +294,17 @@ class NNModel(Model):
         logger.success("Modeling training complete.")
         return self.model, run
 
-    @overrides
-    def evaluate(self, X_test: DataFrame, y_test: DataFrame, run: Run, log: bool = True) -> tuple:
+    @overrides(check_signature=False)
+    def evaluate(self, ds: Union[TrainingDataset, tuple[DataFrame, DataFrame]], run: Run, log: bool = True) -> tuple:
         """
         Evaluate the NNModel on the test data. Log metrics to wandb.
         :param log: whether to log metrics to wandb
         """
+        if type(ds) == TrainingDataset:
+            X_test = ds.X_test
+            y_test = ds.y_test
+        else:
+            X_test, y_test = ds
         # scale and encode input data if neccessary
         X_test_scaled, y_test_scaled = self.scale_input_data(X_test, y_test)
         # get predictions
@@ -318,6 +321,18 @@ class NNModel(Model):
             y_hat = y_hat_scaled
         evaluator = RegressionMetric(y_test.to_numpy(), y_hat)
         return self.log_eval_results(evaluator, run, len(y_test), log)
+
+    def evaluate_per_cluster(self, X_test: DataFrame, y_test: DataFrame, run: Run, clusters: dict) -> dict:
+        """
+        Evaluate the Model per cluster. Clusters are defined in clusters as mapping to indexes.
+        """
+        eval_dict = {"metric": ["mse", "mae", "nrmse", "rmse"]}
+        for (idx, cluster) in clusters.items():
+            # logger.info(f"Evaluating Cluster {idx}")
+            cluster_X_test = X_test.iloc[cluster]
+            cluster_y_test = y_test.iloc[cluster]
+            eval_dict[f"model_cluster_{idx}"] = self.evaluate((cluster_X_test, cluster_y_test), run, log=False)
+        return eval_dict
 
 
 class FCNModel(NNModel):
@@ -366,7 +381,9 @@ class RNN1Model(NNModel):
     def __init__(self, config):
         super().__init__(config)
         self.name = "RNN"
+        input_shape = len(config["n_in"]) - 1
         self.model = keras.Sequential([
+            keras.Input(shape=(input_shape,)),
             layers.SimpleRNN(128),
             layers.Dense(64, activation='relu'),
             layers.Dropout(config['dropout']),
@@ -408,22 +425,21 @@ class RNN1Model(NNModel):
         return agg
 
     @overrides
-    def train(self, X_train: DataFrame, y_train: DataFrame, X_val: DataFrame, y_val: DataFrame) -> tuple[
-        keras.Sequential, Run]:  # TODO
-        X_train = self.series_to_supervised(X_train, n_in=self.config["n_in"], n_out=self.config["n_out"])
-        X_val = self.series_to_supervised(X_val, n_in=self.config["n_in"], n_out=self.config["n_out"])
-        return super().train(X_train, y_train, X_val, y_val)
+    def train(self, ds: TrainingDataset) -> tuple[keras.Sequential, Run]:  # TODO
+        X_train = self.series_to_supervised(ds.X_train, n_in=self.config["n_in"], n_out=self.config["n_out"])
+        X_val = self.series_to_supervised(ds.X_val, n_in=self.config["n_in"], n_out=self.config["n_out"])
+        return super().train(X_train, ds.y_train, X_val, ds.y_val)
 
 
 class RegressionModel(Model):
     def __init__(self, config):
         super().__init__(config)
 
-    @overrides()
-    def train(self, X_train: DataFrame, y_train: DataFrame, X_val: DataFrame, y_val: DataFrame) -> tuple[
+    @overrides
+    def train(self, ds: TrainingDataset) -> tuple[
         keras.Sequential, Run]:
-        config, run = self.init_wandb(X_train, None)
-        self.fit(X_train, y_train)
+        config, run = self.init_wandb(ds.X_train, None)
+        self.fit(ds.X_train, ds.y_train)
         return self.model, run
 
     def fit(self, X_train, y_train):
@@ -441,7 +457,7 @@ class LinearRegressorModel(RegressionModel):
         est = sm.OLS(y_train, X2)
         self.model = est.fit()
 
-    @overrides
+    @overrides(check_signature=False)
     def evaluate(self, X_test: DataFrame, y_test: DataFrame, run: Run) -> tuple:
         X2 = sm.add_constant(X_test, has_constant="add")
         return super().evaluate(X2, y_test, run)
@@ -482,3 +498,63 @@ class DTModel(RegressionModel):
     @overrides
     def save(self) -> Path:
         pass  # TODO
+
+
+class DartsModel(NNModel):
+    def __init__(self, config):
+        super().__init__(config)
+        self.name = "RNN2"
+
+    @overrides(check_signature=False)
+    def train(self, ds: TrainingDataset) -> tuple[darts.models.RNNModel, Run]:
+        config, run = self.init_wandb(ds.X_train)
+        train_df = ds.df.sort(by=["id", "datetime"]).to_pandas().iloc[ds.train_idxs].sort_values(
+            by=["id", "datetime"])  # sort before and after for reproducibility
+        train_df = train_df[["datetime", "id"] + self.config["features"]]
+
+        # create list of darts Series objects
+        train_list = darts.TimeSeries.from_group_dataframe(train_df,
+                                                           group_cols="id",
+                                                           time_col="datetime",
+                                                           value_cols=self.config["features"],
+                                                           freq="D",
+                                                           fill_missing_dates=True
+                                                           )
+
+        self.model = RNNModel(
+            model="RNN",
+            hidden_dim=20,
+            n_rnn_layers=2,
+            dropout=self.config["dropout"],
+            batch_size=self.config["batch_size"],
+            n_epochs=self.config["epochs"],
+            input_chunk_length=self.config["n_in"],
+            output_chunk_length=self.config["n_out"],
+            output_chunk_shift=0,
+            training_length=self.config["train_len"]
+        )
+
+        self.model.fit(train_list)
+        return self.model, run
+
+    @overrides(check_signature=False)
+    def predict(self, X: list[darts.TimeSeries]) -> list[darts.TimeSeries]:
+        return self.model.predict(self.config["n_out"], X)
+
+    @overrides(check_signature=False)
+    def evaluate(self, ds: TrainingDataset, run: Run, log: bool = False) -> tuple:
+        test_df = ds.df.sort(by=["id", "datetime"]).to_pandas().iloc[ds.test_idxs]
+        test_df = test_df[["datetime", "id"] + self.config["features"]]
+
+        # create list of darts Series objects
+        test_list = darts.TimeSeries.from_group_dataframe(test_df,
+                                                          group_cols="id",
+                                                          time_col="datetime",
+                                                          value_cols=self.config["features"],
+                                                          freq="D",
+                                                          fill_missing_dates=True
+                                                          )
+        # get predictions
+        y_hat = self.predict(test_list)
+        evaluator = RegressionMetric(test_list.to_numpy(), y_hat)
+        return self.log_eval_results(evaluator, run, len(test_df), log=log)

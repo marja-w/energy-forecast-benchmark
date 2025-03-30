@@ -4,19 +4,15 @@ from datetime import datetime
 from pathlib import Path
 
 import polars as pl
-from darts.utils.missing_values import missing_values_ratio
 from loguru import logger
 
-from src.energy_forecast.config import RAW_DATA_DIR, DATA_DIR, REFERENCES_DIR
-from src.energy_forecast.util import sum_columns, replace_title_values, remove_leading_zeros, get_id_from_address, \
-    add_env_energy
-
-import darts
+from src.energy_forecast.config import RAW_DATA_DIR, DATA_DIR, REFERENCES_DIR, META_DIR
+from src.energy_forecast.utils.util import sum_columns, replace_title_values, remove_leading_zeros, get_id_from_address
 
 
 def update_df_with_corrections(df: pl.DataFrame, correction_csv_path: Path) -> pl.DataFrame:
     """
-    Updates the main DataFrame `df` with corrections from a CSV file.
+    Updates the main DataFrame `df` with corrections from a CSV file. Used by LegacyDataLoader.
 
     Parameters:
     - df: polars.DataFrame
@@ -128,7 +124,7 @@ class DataLoader(object):  #
     def write_meta_data(self):
         # extract metadata
         df_meta = self.df_raw.group_by(self.meta_cols).agg()
-        meta_data_csv = RAW_DATA_DIR / f"{self.name}_meta.csv"
+        meta_data_csv = META_DIR / f"{self.name}_meta.csv"
         logger.info(f"Writing meta data file to {meta_data_csv}")
         df_meta.write_csv(meta_data_csv)
 

@@ -67,3 +67,9 @@ A short description of the project.
 
 - [Features](data/external/features): stores features created by [feature_generation.py](src/energy_forecast/data_processing/feature_generation.py)
                                         , like weather data, holiday features, and information used for their creation, like building locations
+## [Reports](reports)
+
+Files reporting about data and processing steps. 
+
+### [Figures](reports/figures)
+

@@ -1,135 +1,24 @@
 import datetime
+import math
 import os
-from datetime import timedelta
-from pathlib import Path
 
-import darts
 import pandas as pd
 import polars as pl
-from darts.utils.missing_values import fill_missing_values, extract_subseries
 from loguru import logger
-from matplotlib import pyplot as plt
 from overrides import overrides
-from sklearn.cluster import AgglomerativeClustering
-from sklearn.model_selection import GroupKFold, GroupShuffleSplit
-from sklearn.preprocessing import LabelEncoder, OneHotEncoder
 from pandas import DataFrame
+from sklearn.cluster import AgglomerativeClustering
+from sklearn.model_selection import GroupShuffleSplit
+from sklearn.preprocessing import LabelEncoder, OneHotEncoder
 
-from src.energy_forecast.config import RAW_DATA_DIR, DATA_DIR, PROCESSED_DATA_DIR, CATEGORICAL_FEATURES, FEATURES, \
-    FIGURES_DIR, FEATURES_DIR, META_DIR, INTERIM_DATA_DIR, N_CLUSTER
-from src.energy_forecast.data_processing.data_source import LegacyDataLoader, KinergyDataLoader, DHDataLoader
-from src.energy_forecast.plots import plot_missing_dates_per_building, plot_clusters, plot_interpolated_series, \
-    plot_series, plot_dataframe
-from src.energy_forecast.util import get_missing_dates, find_time_spans
-
-
-def remove_neg_diff_vals(df):
-    """
-    Remove faulty gas meter data points that caused negative diff values
-    :param df:
-    :return:
-    """
-
-    # die diffs stimmen jetzt nicht mehr, wenn reihen entfernt werden. Problem?
-    # die diffs sollten weiterhin stimmen, da die differenz vom "falschen" Gaszählerstand immer noch die richtige
-    # differenz ist
-
-    return df.filter(
-        pl.col("diff") >= 0  # remove all rows with negative usage
-    )
-
-
-def remove_positive_jumps(df: pl.DataFrame) -> pl.DataFrame:
-    return df.filter((pl.col("diff") < pl.col("diff").median() * 50).over("id"))
-
-
-def filter_outliers_iqr(df, column):
-    """
-    Filter outliers in the specified column of the DataFrame using the 1.5 IQR method.
-
-    :param df: polars DataFrame
-    :param column: column name to filter outliers
-    :return: DataFrame with outliers removed
-    """
-    q25 = df[column].quantile(0.25)
-    q75 = df[column].quantile(0.75)
-    iqr = q75 - q25
-
-    upper_bound = q75 + 1.5 * iqr
-
-    filtered_df = df.filter(pl.col(column) <= upper_bound)
-    filtered_count = len(df) - len(filtered_df)
-
-    # logger.info(f"Filtered {filtered_count} rows for column {column} for ID {df['id'][0]}")
-
-    return filtered_df
-
-
-def filter_outliers_by_id(df, filter_column):
-    """
-    Apply the filter_outliers_iqr function to each subset of the DataFrame grouped by the id_column.
-
-    :param df: polars DataFrame
-    :param filter_column: column name to filter outliers
-    :return: DataFrame with outliers removed for each group
-    """
-
-    filtered_df = df.group_by("id").map_groups(lambda group: filter_outliers_iqr(group, filter_column))
-    return filtered_df
-
-
-def filter_flat_lines(df: pl.DataFrame, thresh: int) -> pl.DataFrame:
-    df = df.sort(pl.col("datetime"))  # make sure it is in right order
-    starting_n = len(df)
-    df = df.with_row_index()
-    # get a list of number of cumulative zeros and their ending index
-    cum_zeros = df.with_columns(
-        pl.col("diff").cum_count().over(
-            pl.when(pl.col("diff") != 0).then(1).cum_sum().forward_fill()) - 1
-    ).filter(pl.col("diff") > thresh  # filter everything longer than threshold
-             ).select(["index", "diff"])
-
-    for row in cum_zeros.iter_rows():
-        start_idx = row[0] - (row[1] - 1)
-        end_idx = row[0] + 1
-        df = df.filter(~(pl.col("index").is_in(range(start_idx, end_idx))))
-
-    df = df.drop(["index"])
-    # logger.info(f"Filtered {starting_n - len(df)} rows for ID {df['id'][0]}")
-    return df
-
-
-def filter_connection_errors(df: pl.DataFrame, freq: str) -> pl.DataFrame:
-    start_n = len(df)
-    df = df.with_row_index()
-    df = df.with_columns(pl.col("datetime").str.to_datetime())
-    m_dates = get_missing_dates(df, frequency=freq)["missing_dates"].to_list()[0]
-    delta = timedelta(days=1) if freq == "D" else timedelta(hours=1)
-    spans = find_time_spans(m_dates, delta)
-
-    if freq == "h":
-        spans = spans.filter(pl.col("n") > 2)  # only remove if span big enough
-
-    for row in spans.iter_rows():
-        start = row[0]
-        end = row[1]
-        n = row[2]
-        error_val_idx = df.filter(pl.col("datetime") == end + delta)["index"].item()
-        df = df.filter(~(pl.col("index") == error_val_idx))  # remove row with erroneous value TODO: interpolate?
-
-    df = df.drop(["index"])
-    # logger.info(f"Filtered {start_n - len(df)} rows for ID {df['id'][0]}")
-    return df
-
-
-def filter_flat_lines_by_id(df: pl.DataFrame, thresh: int) -> pl.DataFrame:
-    filtered_df = df.group_by("id").map_groups(lambda group: filter_flat_lines(group, thresh))
-    return filtered_df
-
-
-def filter_connection_errors_by_id(df: pl.DataFrame, freq: str) -> pl.DataFrame:
-    filtered_df = df.group_by("id").map_groups(lambda group: filter_connection_errors(group, freq))
-    return filtered_df
+from src.energy_forecast.config import DATA_DIR, PROCESSED_DATA_DIR, CATEGORICAL_FEATURES, FEATURES, \
+    FEATURES_DIR, META_DIR, INTERIM_DATA_DIR, N_CLUSTER, REPORTS_DIR, CONTINUOUS_FEATURES_CYCLIC
+from src.energy_forecast.plots import plot_missing_dates_per_building, plot_clusters
+from src.energy_forecast.utils.cluster import hierarchical_clustering_on_meta_data
+from src.energy_forecast.utils.data_processing import remove_neg_diff_vals, filter_connection_errors_by_id, \
+    filter_outliers_by_id, filter_flat_lines_by_id, split_series_by_id_list, interpolate_values_by_id, \
+    remove_positive_jumps, split_series_by_id
+from src.energy_forecast.utils.util import get_missing_dates
 
 
 class Dataset:
@@ -151,7 +40,7 @@ class Dataset:
         cols = ["id", "datetime", "diff", "value"]
         logger.info(f"Creating {self.res} dataset")
         for data_source in self.data_sources:
-            dfs.append(pl.read_csv(RAW_DATA_DIR / f"{data_source}_{self.res}.csv").select(cols).with_columns(
+            dfs.append(pl.read_csv(INTERIM_DATA_DIR / f"{data_source}_{self.res}.csv").select(cols).with_columns(
                 pl.lit(data_source).alias("source")))
         df = pl.concat(dfs)
         logger.info(f"Number of rows: {df.shape[0]}")
@@ -159,7 +48,11 @@ class Dataset:
         logger.info(f"Number of sensors: {n_sensors}")
         self.df = df
 
-    def clean(self, plot: bool = False):
+    def clean(self, plot: bool = False) -> None:
+        """
+        Clean DataFrame from outliers, negative values, filter connection errors, flat lines, and store missing dates
+        :param plot: whether to plot each building with missing dates to FIGURES_DIR
+        """
         logger.info(f"Cleaning {self.res} dataset")
         df = self.df
         logger.info(f"Number of rows: {len(df)}")
@@ -183,10 +76,7 @@ class Dataset:
         logger.info(f"Number of rows after filtering flat lines: {len(df)}")
 
         if plot: plot_missing_dates_per_building(df)
-        df_md = get_missing_dates(df)
-        df_md.select(["id", "len", "n", "per", "start_date", "end_date"]).sort(pl.col("per"),
-                                                                               descending=True).write_csv(
-            RAW_DATA_DIR / "missing_dates.csv")
+        get_missing_dates(df)
         logger.success(f"Number of rows after cleaning data: {len(df)}")
         self.df = df
 
@@ -201,7 +91,6 @@ class Dataset:
             heated area, number of appartments, type of building (school, gym, museum, multiple appartments, ...)
         - engineered features: "weekend" (whether it is a workday or the weekend), "yearly_consumption" (how much energy
             the building needs a year)
-
         """
         # load all the feature dataframes
         df_weather = pl.read_csv(FEATURES_DIR / "weather_daily.csv").with_columns(
@@ -251,7 +140,7 @@ class Dataset:
                     lambda x: 1 if x["datetime"] in holiday_dict[x["state"]] else 0,
                     return_dtype=pl.Int64).alias("holiday"))
 
-        def add_meta(df):
+        def add_features(df):
             enc = LabelEncoder()
             df = (df.join(df_meta, on="id", how="left")
                   .join(df_weather.with_columns(pl.col("datetime").dt.cast_time_unit("ns")), on=["datetime", "plz"],
@@ -266,7 +155,7 @@ class Dataset:
                     pl.col("typ")).name.keep(),
             ).with_columns(
                 # set values in n appartments to null if it is 0 and a if building is multiple appartment building
-                pl.when((pl.col("anzahlwhg") == 0).and_(pl.col("typ") == "Mehramilienhaus")
+                pl.when((pl.col("anzahlwhg") == 0).and_(pl.col("typ") == "Mehrfamilienhaus")
                         ).then(None).otherwise(pl.col("anzahlwhg")).name.keep()
             ).with_columns(pl.col("typ").map_batches(enc.fit_transform))  # make typ column categorical
                   )
@@ -278,13 +167,17 @@ class Dataset:
                 (pl.col("sum") / pl.col("count")).alias("daily_avg")).select("id", "daily_avg")
             df = df.join(df_daily_avg, on="id", how="left")
             df = add_holidays(df)  # TODO: add holidays for more data
+
+            # add cyclic encoded weekdays
+            df = df.with_columns(pl.col("datetime").dt.weekday().alias("weekday"),
+                                 pl.col("datetime").dt.day().alias("day_of_month"))
             return df
 
         logger.info(f"Adding {attributes} to dataset, this might take a while")
         # create diff of past day feature
         self.df = self.df.with_columns(pl.col("diff").shift(1).over("id").alias("diff_t-1")).drop_nulls(
             subset=["diff_t-1"])
-        self.df = add_meta(self.df).select(["id", "datetime"] + attributes)
+        self.df = add_features(self.df).select(["id", "datetime"] + attributes)
         logger.success("Added features to dataset")
 
     def get_train_and_test(self, train_per: float):
@@ -327,84 +220,6 @@ class Dataset:
             self.clean()
         self.add_features()
         self.save(output_file_path=f"{PROCESSED_DATA_DIR}/dataset_{self.name}_feat.csv")
-
-
-def interpolate_values(df: pl.DataFrame) -> pl.DataFrame:
-    freq = "D"  # TODO: for hours
-    data_source = df["source"].mode().item()
-    building_id = df["id"].mode().item()
-    # use darts and pandas for interpolating values
-    series = darts.TimeSeries.from_dataframe(df, time_col="datetime", value_cols="value", freq=freq,
-                                             fill_missing_dates=True)  # fill missing dates with nan values
-    series_filled = fill_missing_values(series, "auto",
-                                        method="linear")  # use pandas interpolate for linear interpolation
-    df_filled = series_filled.to_dataframe(backend="polars", time_as_index=False)  # convert back to polars dataframe
-    df_filled = df_filled.with_columns(pl.col("value").diff().alias("diff"),  # recompute diff column with added values
-                                       pl.lit(data_source).alias("source"),
-                                       pl.lit(building_id).alias("id"))
-    if df_filled["datetime"][0] == df["datetime"][0]:
-        df_filled = df_filled.fill_null(df["diff"][0])  # replace first diff with known diff from old df
-    else:
-        df_filled = df_filled.drop_nans(subset=["diff"])
-    # plot_interpolated_series(series_filled, building_id, data_source)
-    return df_filled
-
-
-def interpolate_values_by_id(df: pl.DataFrame):
-    interpolated_df = df.group_by("id").map_groups(lambda group: interpolate_values(group))
-    return interpolated_df
-
-
-def split_series(df: pl.DataFrame, min_gap_size: int, plot: bool = True) -> pl.DataFrame:
-    freq = "D"  # TODO: for hours
-    data_source = df["source"].mode().item()
-    building_id = df["id"].mode().item()
-    # use darts for extracting subseries
-    series = darts.TimeSeries.from_dataframe(df, time_col="datetime", value_cols=["value", "diff"], freq=freq,
-                                             fill_missing_dates=True)
-    if plot:
-        series.plot(label=building_id)
-        plt.show()
-    subseries = extract_subseries(series, min_gap_size=min_gap_size)
-    if len(subseries) == 1:
-        if plot: plot_dataframe(df, building_id, data_source, folder=FIGURES_DIR / "interpolated_and_split_data")
-        return df  # if we dont have any gaps, return original dataframe
-    if plot:
-        [s["diff"].plot(label=building_id) for s in subseries]
-        plt.show()
-    df_subs_raw = [s.to_dataframe(backend="polars", time_as_index=False) for s in subseries]
-    df_subs = list()
-    for idx, df_sub in enumerate(df_subs_raw):
-        if len(df_sub) > min_gap_size:  # dont add if it is shorter than min gap size
-            new_building_id = f"{building_id}-{idx}"
-            df_sub = df_sub.with_columns(pl.lit(data_source).alias("source"),
-                                         pl.lit(new_building_id).alias("id"))
-            if plot: plot_dataframe(df_sub, new_building_id, data_source,
-                                    folder=FIGURES_DIR / "interpolated_and_split_data")
-            df_subs.append(df_sub)
-    if len(df_subs) > 0:
-        df_concat = pl.concat(df_subs)
-        df_concat = df_concat.with_columns(pl.col("datetime").dt.cast_time_unit("ns"))
-        return df_concat
-    else:
-        return pl.DataFrame(schema={"datetime": pl.Datetime, "value": pl.Float64, "diff": pl.Float64, "id": pl.String,
-                                    "source": pl.String})
-
-
-def split_series_by_id_list(df: pl.DataFrame, min_gap_size: int, plot: bool = False) -> pl.DataFrame:
-    concat_df = pl.DataFrame(
-        schema={"datetime": pl.Datetime, "value": pl.Float64, "diff": pl.Float64, "id": pl.String, "source": pl.String})
-    concat_df = concat_df.with_columns(pl.col("datetime").dt.cast_time_unit("ns"))
-    for b_idx in df["id"].unique():
-        df_b = df.filter(pl.col("id") == b_idx)
-        df_b = split_series(df_b, min_gap_size=min_gap_size, plot=plot)
-        concat_df = pl.concat([concat_df, df_b], how="diagonal")
-    return concat_df
-
-
-def split_series_by_id(df: pl.DataFrame, min_gap_size: int, plot: bool = False) -> pl.DataFrame:
-    interpolated_df = df.group_by("id").map_groups(lambda group: split_series(group, min_gap_size, plot))
-    return interpolated_df
 
 
 class InterpolatedDataset(Dataset):
@@ -461,7 +276,7 @@ class TrainingDataset(Dataset):
 
     def one_hot_encode(self):
         """
-        One hot encode categorical features. Returns updated config with new feature names.
+        One hot encode categorical features. Updates config with new feature names.
         """
         df = self.df.to_pandas()
         config = self.config
@@ -492,6 +307,19 @@ class TrainingDataset(Dataset):
     def remove_corrupt_buildings(self):
         self.df = self.df.filter(~pl.col("id").is_in(self.corrupt_building_ids))
 
+    def encode_cyclic_features(self):
+        """
+        Encode cyclic features used for training with sine and cosine functions. Update features in config variable.
+        """
+        fs = list(set(self.config["features"]) & set(CONTINUOUS_FEATURES_CYCLIC))
+        if len(fs) > 0:
+            for f in fs:
+                self.df = self.df.with_columns(((2 * math.pi * pl.col(f)) / 24).sin().alias(f"{f}_sin"),
+                                               ((2 * math.pi * pl.col(f)) / 24).cos().alias(f"{f}_cos"))
+                self.df = self.df.drop(f)
+            self.config["features"] = (list(set(self.config["features"]) - set(fs))
+                                   + [f"{f}_sin" for f in fs] + [f"{f}_cos" for f in fs])
+
     def preprocess(self) -> tuple[pl.DataFrame, dict]:
         self.add_multiple_forecast()
         # select energy type
@@ -501,42 +329,20 @@ class TrainingDataset(Dataset):
         self.df = self.df.drop_nulls(subset=self.config["features"])  # remove null values for used features
         logger.info(f"Training Features: {self.config['features']}")
         self.remove_corrupt_buildings()
+        self.encode_cyclic_features()
         return self.df, self.config
 
     def compute_clusters(self) -> dict:
         """
         Compute cluster mappings with meta data
-        :return:
+        :return: dictionary mapping each cluster ID to a list of test ID indexes
         """
         n_clusters = N_CLUSTER
-        logger.info(f"Computing {n_clusters} clusters")
-        df = self.df.group_by("id").agg(pl.col("diff"),
-                                        pl.col("daily_avg").mode().first().alias("avg"),
-                                        pl.col("diff").std().alias("std"),
-                                        pl.col("diff").median().alias("median"),
-                                        pl.col("diff").min().alias("min"),
-                                        pl.col("diff").max().alias("max"),
-                                        pl.col("diff").head(30).alias("month"),
-                                        pl.len()
-                                        ).sort("len")
-        df.drop(["diff", "month"]).write_csv(DATA_DIR / "processed" / "buildings_consumption_info.csv")
-        data = df.drop(["id", "diff", "month", "len"]).to_numpy()
-
-        # Create the AgglomerativeClustering model
-        model = AgglomerativeClustering(n_clusters=n_clusters, linkage='ward')
-
-        # Fit the model and predict cluster labels
-        labels = model.fit_predict(data)
-        plot_clusters(df, labels)
-
-        # add label column to dataframe
-        df = df.with_columns(pl.Series(labels).alias("label"))
-        for c_id in range(n_clusters):
-            logger.info(f"Computed Cluster {c_id} with n={len(df.filter(pl.col('label') == c_id))}")
+        df = hierarchical_clustering_on_meta_data(self.df, n_clusters)
         cluster_id_map = dict()  # map each id to a cluster
         for row in df.iter_rows():
             cluster_id_map[row[0]] = row[-1]
-        df = self.df.select(pl.col("id")).with_row_index()
+        df = self.df.sort(by=["id", "datetime"]).select(pl.col("id")).with_row_index()
         # get only test data
         df_test = df.filter(pl.col("index").is_in(self.test_idxs)).with_row_index("test_idx")
         # map each id to cluster label
@@ -566,12 +372,8 @@ class TimeSeriesDataset(TrainingDataset):
         super().__init__(config)
 
     @overrides
-    def add_multiple_forecast(self) -> None:
-        """
-        Transform dataset into time series data for training.
-        :return:
-        """
-        pass
+    def preprocess(self) -> tuple[pl.DataFrame, dict]:
+        super().preprocess()  # TODO
 
 
 if __name__ == '__main__':
@@ -579,13 +381,13 @@ if __name__ == '__main__':
     logger.info("Start data loading")
 
     # daily data
-    # LegacyDataLoader(DATA_DIR / "legacy_data" / "legacy_systen_counter_daily_values.csv").write_data_and_meta()
-    # KinergyDataLoader(DATA_DIR / "kinergy").write_data_and_meta()
-    # DHDataLoader(DATA_DIR / "district_heating_data").write_data_and_meta()
+    # LegacyDataLoader(RAW_DATA_DIR / "legacy_data" / "legacy_systen_counter_daily_values.csv").write_data_and_meta()
+    # KinergyDataLoader(RAW_DATA_DIR / "kinergy").write_data_and_meta()
+    # DHDataLoader(RAW_DATA_DIR / "district_heating_data").write_data_and_meta()
     #
     # # hourly data
-    # KinergyDataLoader(DATA_DIR / "kinergy", res="hourly").write_data_and_meta()
-    # DHDataLoader(DATA_DIR / "district_heating_data", res="hourly").write_data_and_meta()
+    # KinergyDataLoader(RAW_DATA_DIR / "kinergy", res="hourly").write_data_and_meta()
+    # DHDataLoader(RAW_DATA_DIR / "district_heating_data", res="hourly").write_data_and_meta()
 
     logger.info("Finish data loading")
 
@@ -593,9 +395,9 @@ if __name__ == '__main__':
     # ds.create_and_clean(plot=True)
     ds.create_clean_and_add_feat()
 
-    # ds = Dataset()
+    ds = Dataset()
     # ds.create_and_clean()
-    # ds.create_clean_and_add_feat()
+    ds.create_clean_and_add_feat()
 
     # ds.load_feat_data()
     # df_train, df_test = ds.get_train_and_test(0.8)

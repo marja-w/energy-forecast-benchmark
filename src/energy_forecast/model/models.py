@@ -1,5 +1,6 @@
 import math
 import os
+from itertools import product
 from pathlib import Path
 from statistics import mean
 from typing import Union
@@ -10,7 +11,7 @@ import pandas as pd
 import polars as pl
 import statsmodels.api as sm
 import wandb
-from darts.models import RNNModel
+from darts.models import RNNModel as DartsRNNModel
 from keras.src.callbacks import LearningRateScheduler
 from loguru import logger
 from networkx.generators import trees
@@ -19,6 +20,7 @@ from pandas import DataFrame
 from permetrics.regression import RegressionMetric
 from sklearn import tree
 from sklearn.preprocessing import MinMaxScaler, StandardScaler
+from sktime.transformations.panel.catch22 import feature_names
 from tensorflow import keras
 from tensorflow.keras import layers, optimizers
 from wandb.integration.keras import WandbMetricsLogger
@@ -26,6 +28,7 @@ from wandb.sdk.wandb_run import Run
 
 from src.energy_forecast.config import MODELS_DIR, CONTINUOUS_FEATURES
 from src.energy_forecast.dataset import TrainingDataset
+from src.energy_forecast.utils.time_series import series_to_supervised
 
 
 def root_mean_squared_error(y_true, y_pred):
@@ -147,10 +150,8 @@ class Baseline(Model):
 
     @overrides(check_signature=False)
     def evaluate(self, ds: TrainingDataset, run: Run, cluster_idxs=None, log: bool = True) -> tuple:
-        y_test = ds.df.sort(["id", "datetime"]).with_row_index().select(["datetime", "index", "id", "diff"]
-                                                                        ).filter(pl.col("index").is_in(ds.test_idxs)
-                                                                                 ).sort(["id", "datetime"])
-        y_test = y_test.to_pandas()
+        y_test = ds.get_test_df().select(["datetime", "index", "id", "diff"]).to_pandas()
+
         if cluster_idxs is not None:
             y_test = y_test.iloc[cluster_idxs].sort_values(by=["id", "datetime"])
         y_hat = y_test.groupby("id")["diff"].shift(1,
@@ -298,6 +299,8 @@ class NNModel(Model):
     def evaluate(self, ds: Union[TrainingDataset, tuple[DataFrame, DataFrame]], run: Run, log: bool = True) -> tuple:
         """
         Evaluate the NNModel on the test data. Log metrics to wandb.
+        :param run:
+        :param ds:
         :param log: whether to log metrics to wandb
         """
         if type(ds) == TrainingDataset:
@@ -377,58 +380,80 @@ class FCN3Model(NNModel):
         ])
 
 
-class RNN1Model(NNModel):
+class RNNModel(NNModel):
     def __init__(self, config):
         super().__init__(config)
-        self.name = "RNN"
-        input_shape = len(config["n_in"]) - 1
-        self.model = keras.Sequential([
-            keras.Input(shape=(input_shape,)),
-            layers.SimpleRNN(128),
-            layers.Dense(64, activation='relu'),
-            layers.Dropout(config['dropout']),
-            layers.Dense(32, activation='relu'),
-            layers.Dense(config["n_out"])
-        ])
 
-    def series_to_supervised(self, df, n_in=1, n_out=1, dropnan=True):
+    def set_model(self, X_train: pd.DataFrame):
         """
-        Convert series to supervised learning
-        Args:
-            data:
-            n_in:
-            n_out:
-            dropnan:
-
-        Returns:
-
+        Define model structure and set self.model parameter. Use X_train for setting input dimensions
+        :return:
         """
-        n_vars = 1 if type(df) is list else df.shape[1]
-        cols, names = list(), list()
-        # input sequence (t-n, ... t-1)
-        for i in range(n_in, 0, -1):
-            cols.append(df.shift(i))
-            names += [('var%d(t-%d)' % (j + 1, i)) for j in range(n_vars)]
-        # forecast sequence (t, t+1, ... t+n)
-        for i in range(0, n_out):
-            cols.append(df.shift(-i))
-            if i == 0:
-                names += [('var%d(t)' % (j + 1)) for j in range(n_vars)]
-            else:
-                names += [('var%d(t+%d)' % (j + 1, i)) for j in range(n_vars)]
-        # put it all together
-        agg = pd.concat(cols, axis=1)
-        agg.columns = names
-        # drop rows with NaN values
-        if dropnan:
-            agg.dropna(inplace=True)
-        return agg
+        pass
+
+    def create_time_series(self, df: pl.DataFrame) -> tuple[np.ndarray, pl.DataFrame]:
+        feature_names = list(set(df.columns) - {"id"})
+        n_in = self.config["n_in"]
+        n_out = self.config["n_out"]
+        df = df.group_by("id").map_groups(lambda group: series_to_supervised(group, n_in, n_out))
+
+        # split into input and outputs
+        input_names = [f"{f}(t-{i})" for i, f in product(range(1, n_in + 1), feature_names)]
+        future_cov_names = [f"{f}(t+{i})" if i != 0 else f"{f}(t)" for i, f in
+                            product(range(n_in), list(set(feature_names) - {"diff"}))]
+        target_names = [f"diff(t+{i})" if i != 0 else f"diff(t)" for i in range(n_in)]
+        X, y = df[input_names], df[target_names]
+
+        # reshape input to be 3D [samples, timesteps, features] numpy array
+        X = X.to_numpy().reshape((X.shape[0], n_in, len(feature_names)))
+        return X, y
 
     @overrides
-    def train(self, ds: TrainingDataset) -> tuple[keras.Sequential, Run]:  # TODO
-        X_train = self.series_to_supervised(ds.X_train, n_in=self.config["n_in"], n_out=self.config["n_out"])
-        X_val = self.series_to_supervised(ds.X_val, n_in=self.config["n_in"], n_out=self.config["n_out"])
-        return super().train(X_train, ds.y_train, X_val, ds.y_val)
+    def train(self, ds: TrainingDataset) -> tuple[keras.Sequential, Run]:
+        # TODO
+        # create time series data from training and validation data
+        train = ds.get_train_df().select(["id"] + self.config["features"])
+        val = ds.get_val_df().select(["id"] + self.config["features"])
+
+        X_train, y_train = self.create_time_series(train)
+        X_val, y_val = self.create_time_series(val)
+
+        self.set_model(X_train)
+
+        self.model.compile(
+            loss=self.config["loss"],
+            optimizer=self.config["optimizer"]
+        )
+        self.model.fit(X_train,
+                       y_train,
+                       epochs=self.config["epochs"],
+                       batch_size=self.config["batch_size"],
+                       validation_data=(X_val, y_val)
+                       )
+
+        return self.model, None
+
+    def evaluate_ds(self, ds: TrainingDataset, run: Run) -> tuple:
+        test = ds.get_test_df().select(["id"] + self.config["features"])
+        X_test, y_test = self.create_time_series(test)
+
+        y_hat = self.model.predict(X_test)
+        evaluator = RegressionMetric(y_test.to_numpy(), y_hat)
+        logger.info(f"RSME {evaluator.root_mean_squared_error()}")
+        logger.info(f"MAPE {evaluator.mean_absolute_percentage_error()}")
+
+
+class RNN1Model(RNNModel):
+    def __init__(self, config):
+        super().__init__(config)
+        self.name = "RNN1"
+
+    def set_model(self, X_train: pd.DataFrame):
+        self.model = keras.Sequential([
+            layers.SimpleRNN(50, input_shape=(X_train.shape[1], X_train.shape[2])),
+            layers.Dropout(self.config['dropout']),
+            layers.Dense(self.config["n_out"], activation="linear")
+        ])
 
 
 class RegressionModel(Model):
@@ -521,7 +546,7 @@ class DartsModel(NNModel):
                                                            fill_missing_dates=True
                                                            )
 
-        self.model = RNNModel(
+        self.model = DartsRNNModel(
             model="RNN",
             hidden_dim=20,
             n_rnn_layers=2,

@@ -2,12 +2,53 @@ import numpy as np
 import pandas as pd
 import re
 
+import polars as pl
+
 from src.energy_forecast.config import PADDING_VALUE
+
 
 ## DATA PROCESSING ##
 ## PROCESS DATA FOR LSTM TRAINING ##
+def series_to_supervised(df: pl.DataFrame, n_in: int = 1, n_out: int = 1, dropnan: bool = True) -> pl.DataFrame:
+    """
+    Convert series to supervised learning
+    Args:
+        data:
+        n_in:
+        n_out:
+        dropnan:
 
-def series_to_supervised(df: pd.DataFrame, config: dict, past_diffs: bool, dropnan=True):
+    Returns:
+
+    """
+    b_id = df["id"].mode().item()
+    df = df.drop("id").to_pandas()
+    c_names = list(df.columns)
+
+    cols, names = list(), list()
+    # input sequence (t-n, ... t-1)
+    for i in range(n_in, 0, -1):
+        cols.append(df.shift(i))
+        names += [f"{c_names[j]}(t-{i})" for j in range(len(c_names))]
+    # forecast sequence (t, t+1, ... t+n)
+    for i in range(0, n_out):
+        cols.append(df.shift(-i))
+        if i == 0:
+            names += [f"{c_names[j]}(t)" for j in range(len(c_names))]
+        else:
+            names += [f"{c_names[j]}(t+{i})" for j in range(len(c_names))]
+    # put it all together
+    agg = pd.concat(cols, axis=1)
+    agg.columns = names
+    # drop rows with NaN values
+    if dropnan:
+        agg.dropna(inplace=True)
+    df = pl.DataFrame(agg)
+    df = df.with_columns(pl.lit(b_id).alias("id"))
+    return df
+
+
+def series_to_supervised_old(df: pd.DataFrame, config: dict, past_diffs: bool, dropnan=True):
     """
     Frames a multivariate time series as a supervised learning dataset.
 
@@ -20,9 +61,9 @@ def series_to_supervised(df: pd.DataFrame, config: dict, past_diffs: bool, dropn
     :param dropnan: Whether to drop NaN values after shifting.
     :return: Tuple of input and output arrays for supervised learning, as well as the dates for each datapoint.
     """
-    n_in = config["n_steps_in"]
-    n_out = config["n_steps_out"]
-    n_steps_future = config["n_steps_future"]
+    n_in = config["n_in"]
+    n_out = config["n_out"]
+    n_steps_future = config["n_future"]
 
     dates = df.pop("datetime")  # remove date column from data and save dates for later
     n_vars = df.shape[1]
@@ -75,10 +116,11 @@ def series_to_supervised(df: pd.DataFrame, config: dict, past_diffs: bool, dropn
     return X, y, np.array(dates)
 
 
-def sensors_to_supervised(data, config, idx, dates, past_diffs=True):
+def sensors_to_supervised(data: pl.DataFrame, config: dict, past_diffs=True):
     """
     Convert sensor data into a supervised learning dataset.
 
+    :param config:
     :param dates:
     :param n_steps_future:
     :param past_diffs:
@@ -89,8 +131,7 @@ def sensors_to_supervised(data, config, idx, dates, past_diffs=True):
     :return: Tuple of input and output arrays for supervised learning.
     """
     # create dataframe with id as index and add the date column
-    df = pd.DataFrame(data, index=idx)
-    df.insert(0, "datetime", list(dates))
+    df = data.to_pandas()
 
     groups = df.groupby("id").apply(lambda x: series_to_supervised(x, config, past_diffs))
 

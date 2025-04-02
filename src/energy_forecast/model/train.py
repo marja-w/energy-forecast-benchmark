@@ -118,7 +118,7 @@ def train(config: dict):
     # Evaluate the models
     X_test_copy = ds.X_test.copy()
     y_test_copy = ds.y_test.copy()
-    m.evaluate(ds, run)
+    m.evaluate_ds(ds, run)
     assert X_test_copy.equals(ds.X_test)
     assert y_test_copy.equals(ds.y_test)
     baseline.evaluate(ds, run)
@@ -128,7 +128,7 @@ def train(config: dict):
     per_cluster_evaluation(baseline, ds, m, run)
 
     # save model on disk and in wandb
-    m.save()  # TODO: store cluster eval results here too
+    m.save()
     return m, run
 
 

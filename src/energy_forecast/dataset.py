@@ -1,6 +1,7 @@
 import datetime
 import math
 import os
+from argparse import ArgumentError
 
 import pandas as pd
 import polars as pl
@@ -18,6 +19,7 @@ from src.energy_forecast.utils.cluster import hierarchical_clustering_on_meta_da
 from src.energy_forecast.utils.data_processing import remove_neg_diff_vals, filter_connection_errors_by_id, \
     filter_outliers_by_id, filter_flat_lines_by_id, split_series_by_id_list, interpolate_values_by_id, \
     remove_positive_jumps, split_series_by_id
+from src.energy_forecast.utils.time_series import sensors_to_supervised
 from src.energy_forecast.utils.util import get_missing_dates
 
 
@@ -274,6 +276,38 @@ class TrainingDataset(Dataset):
         self.test_idxs = list()
         self.val_idxs = list()
 
+    def get_from_idxs(self, data_split: str) -> pl.DataFrame:
+        """
+        Given the name of the split (either, "train", "test", or "val), return the corresponding data for training/
+        testing.
+        :param data_split:
+        :return:
+        """
+        match data_split:
+            case "train":
+                idxs = self.train_idxs
+            case "test":
+                idxs = self.test_idxs
+            case "val":
+                idxs = self.val_idxs
+            case _:
+                idxs = None
+        if idxs is None: raise ValueError("Invalid value for data_split")
+        df = self.df.sort(by=["id", "datetime"]).with_row_index()
+        return df.filter(pl.col("index").is_in(idxs)).select(["id"] + self.config["features"])
+
+    def get_train_df(self) -> pl.DataFrame:
+        return self.get_from_idxs("train")
+
+    def get_test_df(self) -> pl.DataFrame:
+        """
+        Get the data of the test split with all columns, not only feature data
+        """
+        return self.get_from_idxs("test")
+
+    def get_val_df(self) -> pl.DataFrame:
+        return self.get_from_idxs("val")
+
     def one_hot_encode(self):
         """
         One hot encode categorical features. Updates config with new feature names.
@@ -318,9 +352,13 @@ class TrainingDataset(Dataset):
                                                ((2 * math.pi * pl.col(f)) / 24).cos().alias(f"{f}_cos"))
                 self.df = self.df.drop(f)
             self.config["features"] = (list(set(self.config["features"]) - set(fs))
-                                   + [f"{f}_sin" for f in fs] + [f"{f}_cos" for f in fs])
+                                       + [f"{f}_sin" for f in fs] + [f"{f}_cos" for f in fs])
 
     def preprocess(self) -> tuple[pl.DataFrame, dict]:
+        """
+        Preprocessing of data for model training.
+        :return: preprocessed DataFrame and updated config dictionary
+        """
         self.add_multiple_forecast()
         # select energy type
         if self.config["energy"] != "all":
@@ -374,6 +412,7 @@ class TimeSeriesDataset(TrainingDataset):
     @overrides
     def preprocess(self) -> tuple[pl.DataFrame, dict]:
         super().preprocess()  # TODO
+        sensors_to_supervised(self.df, self.config)
 
 
 if __name__ == '__main__':

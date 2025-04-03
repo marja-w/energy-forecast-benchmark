@@ -108,28 +108,25 @@ def train(config: dict):
     # train test split
     ds = get_train_test_val_split(ds)
 
+    # scaling
+    ds.fit_scalers()
+
     # get model and baseline
     m = get_model(config)
     baseline = Baseline(config)
 
     # train
-    model, run = m.train(ds)
+    run = m.train_ds(ds)
 
     # Evaluate the models
-    X_test_copy = ds.X_test.copy()
-    y_test_copy = ds.y_test.copy()
     m.evaluate_ds(ds, run)
-    assert X_test_copy.equals(ds.X_test)
-    assert y_test_copy.equals(ds.y_test)
     baseline.evaluate(ds, run)
-    assert X_test_copy.equals(ds.X_test)
-    assert y_test_copy.equals(ds.y_test)
 
-    per_cluster_evaluation(baseline, ds, m, run)
+    # per_cluster_evaluation(baseline, ds, m, run)
 
     # save model on disk and in wandb
     m.save()
-    return m, run
+    return run
 
 
 if __name__ == '__main__':
@@ -147,5 +144,5 @@ if __name__ == '__main__':
             configs.append(config_dict)
 
     for config_dict in tqdm(configs):  # start one training for each config
-        _, run = train(config_dict)
+        run = train(config_dict)
         run.finish()  # finish run to start new run with next config

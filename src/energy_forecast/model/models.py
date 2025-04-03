@@ -68,9 +68,15 @@ class Model:
         logger.info(f"Training {self.name} on {X_train.shape}")
         return config, run
 
-    def train(self, ds: TrainingDataset) -> tuple[
-        keras.Sequential, Run]:
+    def train(self, X_train: DataFrame, y_train: DataFrame, X_val: DataFrame, y_val: DataFrame) -> Run:
+        """
+        Train the model.
+        :return: wandb.Run object.
+        """
         pass
+
+    def train_ds(self, ds: TrainingDataset) -> Run:
+        return self.train(ds.X_train, ds.y_train, ds.X_val, ds.y_val)
 
     def predict(self, X: DataFrame) -> np.ndarray:
         return self.model.predict(X)
@@ -150,13 +156,24 @@ class Baseline(Model):
 
     @overrides(check_signature=False)
     def evaluate(self, ds: TrainingDataset, run: Run, cluster_idxs=None, log: bool = True) -> tuple:
-        y_test = ds.get_test_df().select(["datetime", "index", "id", "diff"]).to_pandas()
-
+        target_vars = ["diff"] + [f"diff(t+{i})" for i in range(1, self.config["n_out"])]
+        y_test = ds.get_test_df().select(["index", "datetime", "id"] + target_vars).to_pandas()
         if cluster_idxs is not None:
-            y_test = y_test.iloc[cluster_idxs].sort_values(by=["id", "datetime"])
-        y_hat = y_test.groupby("id")["diff"].shift(1,
-                                                   fill_value=0)  # predictions are value of yesterday, first day is zero
-        evaluator = RegressionMetric(y_test["diff"].to_numpy(), y_hat.to_numpy())
+            y_test = y_test.iloc[cluster_idxs].sort_values(
+                by=["id", "datetime"])  # TODO: does clustering work, are those the right indexes?
+        y_test = y_test.drop(columns=["datetime", "index"])
+        y_hat = y_test.groupby("id")[target_vars].shift(self.config["n_out"],
+                                                        # shift by number of predictions to be made
+                                                        fill_value=0)  # predictions are value of last n days, first day is zero
+        y_test = y_test.drop(columns=["id"])
+
+        # drop all rows that are equal to 0 and the corresponding rows in y_test
+        idxs_to_drop = y_hat.loc[(y_hat == 0).all(axis=1)].index
+        y_test = y_test.drop(idxs_to_drop)
+        y_hat = y_hat.drop(idxs_to_drop)
+
+        # compute metrics
+        evaluator = RegressionMetric(y_test[target_vars].to_numpy(), y_hat.to_numpy())
         b_nrmse = evaluator.normalized_root_mean_square_error()
         b_rmse = evaluator.root_mean_squared_error()
         b_mae = evaluator.mean_absolute_error()
@@ -170,7 +187,7 @@ class Baseline(Model):
             if log: run.log({"b_nrmse": b_nrmse, "b_rmse": b_rmse, "b_mae": b_mae, "b_mse": b_mse})
         else:
             if log:
-                logger.info(f"Average Baseline MSE on test data: {b_mse}")
+                logger.info(f"Average Baseline MSE on test data: {mean(b_mse)}")
                 logger.info(f"Average Baseline MAE on test data: {mean(b_mse)}")
                 logger.info(f"Average Baseline RMSE on test data: {mean(b_rmse)}")
                 logger.info(f"Average Baseline NRMSE on test data: {mean(b_nrmse)}")
@@ -261,11 +278,8 @@ class NNModel(Model):
         return X_scaled, DataFrame(y_scaled)
 
     @overrides
-    def train(self, ds: TrainingDataset) -> tuple[keras.Sequential, Run]:
-        X_train = ds.X_train
-        X_val = ds.X_val
-        y_train = ds.y_train
-        y_val = ds.y_val
+    def train(self, X_train: Union[np.ndarray, DataFrame], y_train: DataFrame, X_val: Union[np.ndarray, DataFrame],
+              y_val: DataFrame) -> Run:
         config, run = self.init_wandb(X_train, X_val)
         # early_stop = EarlyStopping(monitor='val_loss', patience=2)
         # Compile the model
@@ -276,6 +290,7 @@ class NNModel(Model):
         self.model.compile(optimizer=optimizer,
                            loss=config["loss"],
                            metrics=["mae"])
+
         # scaling, doesnt scale for scaler="none"
         X_train, y_train = self.scale_input_data(X_train, y_train)
         X_val, y_val = self.scale_input_data(X_val, y_val)
@@ -292,8 +307,8 @@ class NNModel(Model):
                        validation_data=(X_val, y_val),
                        batch_size=config["batch_size"],
                        callbacks=train_callbacks)
-        logger.success("Modeling training complete.")
-        return self.model, run
+        logger.success("Model training complete.")
+        return run
 
     @overrides(check_signature=False)
     def evaluate(self, ds: Union[TrainingDataset, tuple[DataFrame, DataFrame]], run: Run, log: bool = True) -> tuple:
@@ -309,7 +324,10 @@ class NNModel(Model):
         else:
             X_test, y_test = ds
         # scale and encode input data if neccessary
-        X_test_scaled, y_test_scaled = self.scale_input_data(X_test, y_test)
+        if ds.scale:  # scaling happened in dataset
+            X_test_scaled, y_test_scaled = ds.X_test_scaled, ds.y_test_scaled
+        else:
+            X_test_scaled, y_test_scaled = self.scale_input_data(X_test, y_test)
         # get predictions
         y_hat_scaled = self.predict(X_test_scaled)
         if self.scaler_X is not None:
@@ -383,8 +401,10 @@ class FCN3Model(NNModel):
 class RNNModel(NNModel):
     def __init__(self, config):
         super().__init__(config)
+        self.target_names = ["diff"] + [f"diff(t+{i})" for i in range(1, self.config["n_out"])]
+        self.scaled = False  # whether we have already scaled data
 
-    def set_model(self, X_train: pd.DataFrame):
+    def set_model(self, X_train: np.ndarray):
         """
         Define model structure and set self.model parameter. Use X_train for setting input dimensions
         :return:
@@ -401,46 +421,66 @@ class RNNModel(NNModel):
         input_names = [f"{f}(t-{i})" for i, f in product(range(1, n_in + 1), feature_names)]
         future_cov_names = [f"{f}(t+{i})" if i != 0 else f"{f}(t)" for i, f in
                             product(range(n_in), list(set(feature_names) - {"diff"}))]
-        target_names = [f"diff(t+{i})" if i != 0 else f"diff(t)" for i in range(n_in)]
-        X, y = df[input_names], df[target_names]
+        X, y = df[input_names], df[self.target_names]
 
         # reshape input to be 3D [samples, timesteps, features] numpy array
         X = X.to_numpy().reshape((X.shape[0], n_in, len(feature_names)))
         return X, y
 
     @overrides
-    def train(self, ds: TrainingDataset) -> tuple[keras.Sequential, Run]:
-        # TODO
+    def scale_input_data(self, X: DataFrame, y: DataFrame) -> tuple[DataFrame, DataFrame]:
+        """ Override method so it doesnt scale in super().train() """
+        if not self.scaled:
+            self.scaled = True
+            return super().scale_input_data(X, y)
+        else:
+            return X, y
+
+    @overrides
+    def train_ds(self, ds: TrainingDataset) -> Run:
+        # get data split either scaled or not
+        train = ds.get_train_df(ds.scale).select(["id"] + self.config["features"])
+        val = ds.get_val_df(ds.scale).select(["id"] + self.config["features"])
+        self.scaled = True  # either way, scaling is done
+
         # create time series data from training and validation data
-        train = ds.get_train_df().select(["id"] + self.config["features"])
-        val = ds.get_val_df().select(["id"] + self.config["features"])
-
         X_train, y_train = self.create_time_series(train)
+        logger.info(f"Training data shape after time series transform: X {X_train.shape}, y {y_train.shape}")
         X_val, y_val = self.create_time_series(val)
+        logger.info(f"Validation data shape after time series transform: X {X_val.shape}, y {y_val.shape}")
 
-        self.set_model(X_train)
+        self.set_model(X_train)  # need to set model before training
 
-        self.model.compile(
-            loss=self.config["loss"],
-            optimizer=self.config["optimizer"]
-        )
-        self.model.fit(X_train,
-                       y_train,
-                       epochs=self.config["epochs"],
-                       batch_size=self.config["batch_size"],
-                       validation_data=(X_val, y_val)
-                       )
-
-        return self.model, None
+        return super().train(X_train, y_train, X_val, y_val)
+        # self.set_model(X_train)
+        #
+        # self.model.compile(
+        #     loss=self.config["loss"],
+        #     optimizer=self.config["optimizer"]
+        # )
+        # self.model.fit(X_train,
+        #                y_train,
+        #                epochs=self.config["epochs"],
+        #                batch_size=self.config["batch_size"],
+        #                validation_data=(X_val, y_val)
+        #                )
+        #
+        # return self.model, None
 
     def evaluate_ds(self, ds: TrainingDataset, run: Run) -> tuple:
-        test = ds.get_test_df().select(["id"] + self.config["features"])
-        X_test, y_test = self.create_time_series(test)
-
-        y_hat = self.model.predict(X_test)
-        evaluator = RegressionMetric(y_test.to_numpy(), y_hat)
-        logger.info(f"RSME {evaluator.root_mean_squared_error()}")
-        logger.info(f"MAPE {evaluator.mean_absolute_percentage_error()}")
+        test = ds.get_test_df(ds.scale).select(["id"] + self.config["features"])
+        ds.X_test_scaled, ds.y_test_scaled = self.create_time_series(test)
+        # update X_test and y_test for evaluation
+        ds.X_test, ds.y_test = self.create_time_series(ds.get_test_df().select(["id"] + self.config["features"]))
+        logger.info(f"Test data shape after time series transform: {ds.X_test.shape}")
+        # for inverse transforming in evaluate
+        self.scaler_X = ds.scaler_X
+        self.scaler_y = ds.scaler_y
+        super().evaluate(ds, run)
+        # y_hat = self.model.predict(X_test)
+        # evaluator = RegressionMetric(y_test.to_numpy(), y_hat)
+        # logger.info(f"RSME {evaluator.root_mean_squared_error()}")
+        # logger.info(f"MAPE {evaluator.mean_absolute_percentage_error()}")
 
 
 class RNN1Model(RNNModel):
@@ -448,9 +488,10 @@ class RNN1Model(RNNModel):
         super().__init__(config)
         self.name = "RNN1"
 
-    def set_model(self, X_train: pd.DataFrame):
+    @overrides
+    def set_model(self, X_train: np.ndarray):
         self.model = keras.Sequential([
-            layers.SimpleRNN(50, input_shape=(X_train.shape[1], X_train.shape[2])),
+            layers.SimpleRNN(self.config["neurons"], input_shape=(X_train.shape[1], X_train.shape[2])),
             layers.Dropout(self.config['dropout']),
             layers.Dense(self.config["n_out"], activation="linear")
         ])
@@ -461,11 +502,10 @@ class RegressionModel(Model):
         super().__init__(config)
 
     @overrides
-    def train(self, ds: TrainingDataset) -> tuple[
-        keras.Sequential, Run]:
+    def train_ds(self, ds: TrainingDataset) -> Run:
         config, run = self.init_wandb(ds.X_train, None)
         self.fit(ds.X_train, ds.y_train)
-        return self.model, run
+        return run
 
     def fit(self, X_train, y_train):
         self.model.fit(X_train, y_train)
@@ -530,8 +570,8 @@ class DartsModel(NNModel):
         super().__init__(config)
         self.name = "RNN2"
 
-    @overrides(check_signature=False)
-    def train(self, ds: TrainingDataset) -> tuple[darts.models.RNNModel, Run]:
+    @overrides
+    def train_ds(self, ds: TrainingDataset) -> Run:
         config, run = self.init_wandb(ds.X_train)
         train_df = ds.df.sort(by=["id", "datetime"]).to_pandas().iloc[ds.train_idxs].sort_values(
             by=["id", "datetime"])  # sort before and after for reproducibility
@@ -560,14 +600,14 @@ class DartsModel(NNModel):
         )
 
         self.model.fit(train_list)
-        return self.model, run
+        return run
 
     @overrides(check_signature=False)
     def predict(self, X: list[darts.TimeSeries]) -> list[darts.TimeSeries]:
         return self.model.predict(self.config["n_out"], X)
 
     @overrides(check_signature=False)
-    def evaluate(self, ds: TrainingDataset, run: Run, log: bool = False) -> tuple:
+    def evaluate_ds(self, ds: TrainingDataset, run: Run, log: bool = False) -> tuple:
         test_df = ds.df.sort(by=["id", "datetime"]).to_pandas().iloc[ds.test_idxs]
         test_df = test_df[["datetime", "id"] + self.config["features"]]
 

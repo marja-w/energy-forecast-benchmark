@@ -2,7 +2,9 @@ import datetime
 import math
 import os
 from argparse import ArgumentError
+from itertools import product
 
+import numpy as np
 import pandas as pd
 import polars as pl
 from loguru import logger
@@ -10,16 +12,16 @@ from overrides import overrides
 from pandas import DataFrame
 from sklearn.cluster import AgglomerativeClustering
 from sklearn.model_selection import GroupShuffleSplit
-from sklearn.preprocessing import LabelEncoder, OneHotEncoder
+from sklearn.preprocessing import LabelEncoder, OneHotEncoder, MinMaxScaler, StandardScaler
 
 from src.energy_forecast.config import DATA_DIR, PROCESSED_DATA_DIR, CATEGORICAL_FEATURES, FEATURES, \
-    FEATURES_DIR, META_DIR, INTERIM_DATA_DIR, N_CLUSTER, REPORTS_DIR, CONTINUOUS_FEATURES_CYCLIC
+    FEATURES_DIR, META_DIR, INTERIM_DATA_DIR, N_CLUSTER, REPORTS_DIR, CONTINUOUS_FEATURES_CYCLIC, CONTINUOUS_FEATURES
 from src.energy_forecast.plots import plot_missing_dates_per_building, plot_clusters
 from src.energy_forecast.utils.cluster import hierarchical_clustering_on_meta_data
 from src.energy_forecast.utils.data_processing import remove_neg_diff_vals, filter_connection_errors_by_id, \
     filter_outliers_by_id, filter_flat_lines_by_id, split_series_by_id_list, interpolate_values_by_id, \
     remove_positive_jumps, split_series_by_id
-from src.energy_forecast.utils.time_series import sensors_to_supervised
+from src.energy_forecast.utils.time_series import sensors_to_supervised, series_to_supervised
 from src.energy_forecast.utils.util import get_missing_dates
 
 
@@ -253,6 +255,13 @@ class TrainingDataset(Dataset):
     """ Dataset for training a model"""
 
     def __init__(self, config: dict):
+        # scaling parameters
+        self.scaler_y = None
+        self.scaler_X = None
+        self.cont_features = None
+        self.scale = False  # whether scalers are fit / needed
+        self.X_test_scaled = None
+        self.y_test_scaled = None
         try:
             res = config["res"]
         except KeyError:
@@ -276,10 +285,11 @@ class TrainingDataset(Dataset):
         self.test_idxs = list()
         self.val_idxs = list()
 
-    def get_from_idxs(self, data_split: str) -> pl.DataFrame:
+    def get_from_idxs(self, data_split: str, scale: bool = False) -> pl.DataFrame:
         """
         Given the name of the split (either, "train", "test", or "val), return the corresponding data for training/
-        testing.
+        testing indexes. Returns all features.
+        :param scale: whether to scale data
         :param data_split:
         :return:
         """
@@ -294,19 +304,26 @@ class TrainingDataset(Dataset):
                 idxs = None
         if idxs is None: raise ValueError("Invalid value for data_split")
         df = self.df.sort(by=["id", "datetime"]).with_row_index()
-        return df.filter(pl.col("index").is_in(idxs)).select(["id"] + self.config["features"])
+        df = df.filter(pl.col("index").is_in(idxs))
+        if scale:
+            df = df.to_pandas()
+            if self.scaler_X is not None:  # if only diff is feature, we dont scale other features
+                df[self.cont_features] = self.scaler_X.transform(df[self.cont_features])
+            df["diff"] = self.scaler_y.transform(df["diff"].to_numpy().reshape(len(df), 1))
+            df = pl.DataFrame(df)
+        return df
 
-    def get_train_df(self) -> pl.DataFrame:
-        return self.get_from_idxs("train")
+    def get_train_df(self, scale: bool = False) -> pl.DataFrame:
+        return self.get_from_idxs("train", scale)
 
-    def get_test_df(self) -> pl.DataFrame:
+    def get_test_df(self, scale: bool = False) -> pl.DataFrame:
         """
         Get the data of the test split with all columns, not only feature data
         """
-        return self.get_from_idxs("test")
+        return self.get_from_idxs("test", scale)
 
-    def get_val_df(self) -> pl.DataFrame:
-        return self.get_from_idxs("val")
+    def get_val_df(self, scale: bool = False) -> pl.DataFrame:
+        return self.get_from_idxs("val", scale)
 
     def one_hot_encode(self):
         """
@@ -334,8 +351,8 @@ class TrainingDataset(Dataset):
         if n > 1:
             df = self.df
             for i in range(1, n):
-                df = df.with_columns(pl.col("diff").shift(-i).alias(f"diff_t+{i}"))
-            df = df.drop_nulls(["diff"] + [f"diff_t+{i}" for i in range(1, n)])
+                df = df.with_columns(pl.col("diff").shift(-i).alias(f"diff(t+{i})"))
+            df = df.drop_nulls(["diff"] + [f"diff(t+{i})" for i in range(1, n)])
             self.df = df
 
     def remove_corrupt_buildings(self):
@@ -353,6 +370,39 @@ class TrainingDataset(Dataset):
                 self.df = self.df.drop(f)
             self.config["features"] = (list(set(self.config["features"]) - set(fs))
                                        + [f"{f}_sin" for f in fs] + [f"{f}_cos" for f in fs])
+
+    def fit_scalers(self):
+        """
+        Fit the scalers according to the scaler stored in config.
+        Set continous features used for this training.
+        """
+        config = self.config
+
+        # set scaler if not set yet
+        if self.scaler_X is None and self.scaler_y is None:
+            if config["scaler"] == "minmax":
+                scaler_X = MinMaxScaler()
+                scaler_y = MinMaxScaler()
+            elif config["scaler"] == "standard":
+                scaler_X = StandardScaler()
+                scaler_y = StandardScaler()
+            elif config["scaler"] == "none":
+                self.scaler_X = None
+                self.scaler_y = None
+                pass
+            else:
+                raise NotImplementedError(f"Scaler {config['scaler']} not implemented")
+
+            # fit scaler
+            cont_features = list(set(config["features"]) & set(CONTINUOUS_FEATURES))
+            if len(cont_features) > 0:
+                self.scaler_X = scaler_X.fit(self.X_train[cont_features])
+                self.cont_features = cont_features
+            # target variable
+            self.scaler_y = scaler_y.fit(self.y_train["diff"].to_numpy().reshape(len(self.y_train), 1))
+            self.scale = True
+        else:  # already fitted
+            pass
 
     def preprocess(self) -> tuple[pl.DataFrame, dict]:
         """
@@ -412,7 +462,6 @@ class TimeSeriesDataset(TrainingDataset):
     @overrides
     def preprocess(self) -> tuple[pl.DataFrame, dict]:
         super().preprocess()  # TODO
-        sensors_to_supervised(self.df, self.config)
 
 
 if __name__ == '__main__':

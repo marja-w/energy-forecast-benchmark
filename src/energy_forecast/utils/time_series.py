@@ -34,7 +34,7 @@ def series_to_supervised(df: pl.DataFrame, n_in: int = 1, n_out: int = 1, dropna
     for i in range(0, n_out):
         cols.append(df.shift(-i))
         if i == 0:
-            names += [f"{c_names[j]}(t)" for j in range(len(c_names))]
+            names += [f"{c_names[j]}" for j in range(len(c_names))]
         else:
             names += [f"{c_names[j]}(t+{i})" for j in range(len(c_names))]
     # put it all together

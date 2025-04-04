@@ -373,7 +373,7 @@ class TrainingDataset(Dataset):
 
     def fit_scalers(self):
         """
-        Fit the scalers according to the scaler stored in config.
+        Fit the scalers according to the scaler stored in config on the train split.
         Set continous features used for this training.
         """
         config = self.config
@@ -395,7 +395,7 @@ class TrainingDataset(Dataset):
 
             # fit scaler
             cont_features = list(set(config["features"]) & set(CONTINUOUS_FEATURES))
-            if len(cont_features) > 0:
+            if len(cont_features) > 0:  # only if there are other continuous features other than diff
                 self.scaler_X = scaler_X.fit(self.X_train[cont_features])
                 self.cont_features = cont_features
             # target variable

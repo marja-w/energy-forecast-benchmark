@@ -291,7 +291,7 @@ class NNModel(Model):
                            loss=config["loss"],
                            metrics=["mae"])
 
-        # scaling, doesnt scale for scaler="none"
+        # scaling, doesnt scale for scaler="none"  TODO: integrate RNN training
         X_train, y_train = self.scale_input_data(X_train, y_train)
         X_val, y_val = self.scale_input_data(X_val, y_val)
 
@@ -330,7 +330,7 @@ class NNModel(Model):
             X_test_scaled, y_test_scaled = self.scale_input_data(X_test, y_test)
         # get predictions
         y_hat_scaled = self.predict(X_test_scaled)
-        if self.scaler_X is not None:
+        if self.scaler_y is not None:  # scaler_X might be None, if only diff as feature
             scaled_ev = RegressionMetric(y_test_scaled.to_numpy(), y_hat_scaled)
             test_mse_scaled = scaled_ev.mean_squared_error()
             test_mae_scaled = scaled_ev.mean_absolute_error()
@@ -413,9 +413,14 @@ class RNNModel(NNModel):
 
     def create_time_series(self, df: pl.DataFrame) -> tuple[np.ndarray, pl.DataFrame]:
         feature_names = list(set(df.columns) - {"id"})
+        test_feature = df["diff"]
         n_in = self.config["n_in"]
         n_out = self.config["n_out"]
+        df_pandas = df.to_pandas()
+        # df_p = df_pandas.groupby("id").apply(lambda group: series_to_supervised(group, n_in=n_in, n_out=n_out))
         df = df.group_by("id").map_groups(lambda group: series_to_supervised(group, n_in, n_out))
+        df = df.sort("id")
+        # assert df["diff"] == test_feature cant be the same because of removal of first n_in rows
 
         # split into input and outputs
         input_names = [f"{f}(t-{i})" for i, f in product(range(1, n_in + 1), feature_names)]
@@ -470,9 +475,10 @@ class RNNModel(NNModel):
     def evaluate_ds(self, ds: TrainingDataset, run: Run) -> tuple:
         test = ds.get_test_df(ds.scale).select(["id"] + self.config["features"])
         ds.X_test_scaled, ds.y_test_scaled = self.create_time_series(test)
-        # update X_test and y_test for evaluation
+        # update X_test and y_test for evaluation  # TODO: handle differently
         ds.X_test, ds.y_test = self.create_time_series(ds.get_test_df().select(["id"] + self.config["features"]))
         logger.info(f"Test data shape after time series transform: {ds.X_test.shape}")
+        assert (ds.scaler_y.transform(ds.X_test[0]) == ds.X_test_scaled[0]).all()
         # for inverse transforming in evaluate
         self.scaler_X = ds.scaler_X
         self.scaler_y = ds.scaler_y
@@ -493,6 +499,19 @@ class RNN1Model(RNNModel):
         self.model = keras.Sequential([
             layers.SimpleRNN(self.config["neurons"], input_shape=(X_train.shape[1], X_train.shape[2])),
             layers.Dropout(self.config['dropout']),
+            layers.Dense(self.config["n_out"], activation="linear")
+        ])
+
+class RNN3Model(RNNModel):
+    def __init__(self, config):
+        super().__init__(config)
+        self.name = "RNN3"
+
+    @overrides
+    def set_model(self, X_train: np.ndarray):
+        self.model = keras.Sequential([
+            layers.SimpleRNN(self.config["neurons"], input_shape=(X_train.shape[1], X_train.shape[2])),
+            layers.SimpleRNN(self.config["neurons"]),
             layers.Dense(self.config["n_out"], activation="linear")
         ])
 

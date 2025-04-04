@@ -17,7 +17,7 @@ try:
     from src.energy_forecast.dataset import Dataset, TrainingDataset, TrainDataset90
     from src.energy_forecast.model.models import Model, FCNModel, DTModel, LinearRegressorModel, RegressionModel, \
         NNModel, \
-        RNN1Model, FCN2Model, FCN3Model, Baseline, DartsModel
+        RNN1Model, FCN2Model, FCN3Model, Baseline, DartsModel, RNN3Model
 except ModuleNotFoundError:
     import sys
     import os
@@ -33,7 +33,7 @@ except ModuleNotFoundError:
         from src.energy_forecast.config import REFERENCES_DIR, FEATURE_SETS
         from src.energy_forecast.dataset import Dataset, TrainingDataset, TrainDataset90
         from src.energy_forecast.model.models import Model, FCNModel, DTModel, LinearRegressorModel, RegressionModel, \
-            NNModel, RNN1Model, FCN2Model, FCN3Model, Baseline
+            NNModel, RNN1Model, FCN2Model, FCN3Model, Baseline, DartsModel, RNN3Model
     else:
         raise IOError("Current Frame not found")
 
@@ -51,6 +51,8 @@ def get_model(config: dict) -> Model:
         return RNN1Model(config)
     elif config["model"] == "RNN2":
         return DartsModel(config)
+    elif config["model"] == "RNN3":
+        return RNN3Model(config)
     else:
         raise Exception(f"Unknown model {config['model']}")
 
@@ -137,12 +139,39 @@ if __name__ == '__main__':
     attributes_building = ["daily_avg", "heated_area", "anzahlwhg", "typ"]
     attributes_time = ["weekend", "holiday"]
     attributes_dh = ["ground_surface", "building_height", "storeys_above_ground"]
-    # Read in configs from .jsonl file
-    configs = list()
-    with jsonlines.open(configs_path) as reader:
-        for config_dict in reader.iter():
-            configs.append(config_dict)
+    config = {"project": "ma-wahl-forecast",
+              "energy": "all",
+              "res": "daily",
+              "interpolate": 1,
+              "model": "RNN1",
+              "train_len": 32,
+              "n_in": 14,
+              "n_out": 1,
+              "n_future": 7,
+              "scaler": "standard",
+              "feature_code": 12,
+              "train_test_split_method": "time",
+              "epochs": 50,
+              "optimizer": "adam",
+              "loss": "mean_squared_error",
+              "metrics": ["mae"],
+              "batch_size": 64,
+              "dropout": 0.1,
+              "neurons": 70,
+              "lr_scheduler": "none",
+              "weight_initializer": "glorot",
+              "activation": "relu"}
+    # config = None
+    if config is None:
+        # Read in configs from .jsonl file
+        configs = list()
+        with jsonlines.open(configs_path) as reader:
+            for config_dict in reader.iter():
+                configs.append(config_dict)
 
-    for config_dict in tqdm(configs):  # start one training for each config
-        run = train(config_dict)
-        run.finish()  # finish run to start new run with next config
+        for config_dict in tqdm(configs):  # start one training for each config
+            run = train(config_dict)
+            run.finish()  # finish run to start new run with next config
+    else:
+        run = train(config)
+        run.finish()

@@ -23,6 +23,8 @@ def series_to_supervised(df: pl.DataFrame, n_in: int = 1, n_out: int = 1, dropna
     """
     b_id = df["id"].mode().item()
     df = df.drop("id").to_pandas()
+    # b_id = df["id"][0]
+    # df = df.drop(columns=["id"])
     c_names = list(df.columns)
 
     cols, names = list(), list()
@@ -45,6 +47,7 @@ def series_to_supervised(df: pl.DataFrame, n_in: int = 1, n_out: int = 1, dropna
         agg.dropna(inplace=True)
     df = pl.DataFrame(agg)
     df = df.with_columns(pl.lit(b_id).alias("id"))
+    # agg["id"] = b_id
     return df
 
 

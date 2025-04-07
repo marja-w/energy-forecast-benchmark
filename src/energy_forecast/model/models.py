@@ -11,7 +11,8 @@ import pandas as pd
 import polars as pl
 import statsmodels.api as sm
 import wandb
-from darts.models import RNNModel as DartsRNNModel
+from darts import TimeSeries
+from darts.models import RNNModel as DartsRNNModel, TransformerModel
 from keras.src.callbacks import LearningRateScheduler
 from loguru import logger
 from networkx.generators import trees
@@ -502,6 +503,7 @@ class RNN1Model(RNNModel):
             layers.Dense(self.config["n_out"], activation="linear")
         ])
 
+
 class RNN3Model(RNNModel):
     def __init__(self, config):
         super().__init__(config)
@@ -584,7 +586,7 @@ class DTModel(RegressionModel):
         pass  # TODO
 
 
-class DartsModel(NNModel):
+class DartsModel(RNNModel):
     def __init__(self, config):
         super().__init__(config)
         self.name = "RNN2"
@@ -604,7 +606,7 @@ class DartsModel(NNModel):
                                                            freq="D",
                                                            fill_missing_dates=True
                                                            )
-
+        assert sum([np.isnan(t.values()).sum() for t in train_list]) == 0  # there should be no nans in the train series
         self.model = DartsRNNModel(
             model="RNN",
             hidden_dim=20,
@@ -640,5 +642,76 @@ class DartsModel(NNModel):
                                                           )
         # get predictions
         y_hat = self.predict(test_list)
-        evaluator = RegressionMetric(test_list.to_numpy(), y_hat)
+        self.model.backtest(test_list, forecast_horizon=1, retrain=False, metric=darts.metrics.metrics.rmse)  # TODO
+        evaluator = RegressionMetric(test_list.to_numpy(), np.hstack([s.values() for s in y_hat]).reshape(len(y_hat), 1))
+        return self.log_eval_results(evaluator, run, len(test_df), log=log)
+
+
+class DartsTransformer(DartsModel):
+    def __init__(self, config):
+        super().__init__(config)
+        self.name = "transformer_default"
+        self.model = TransformerModel(
+            input_chunk_length=self.config["n_in"],
+            output_chunk_length=self.config["n_out"],
+            batch_size=self.config["batch_size"],
+            n_epochs=self.config["epochs"],
+            model_name=self.name,
+            nr_epochs_val_period=1,  # number of epochs to wait before evaluating validation loss
+            d_model=512,
+            # dimensionality of the transformer architecture after embedding (default is 512 for text input)
+            nhead=8,  # number of heads in the multi-head attention layer
+            num_encoder_layers=3,  # number of encoder layers
+            num_decoder_layers=3,  # number of decoder layers
+            dim_feedforward=512,  # dimension of Feed-Forward Network model
+            dropout=config["dropout"],
+            activation=config["activation"],
+            random_state=None,  # randomness of weight initialization
+            save_checkpoints=False,
+            force_reset=True,  # reset model if already exists
+        )
+
+    @overrides(check_signature=False)
+    def create_time_series(self, df: pl.DataFrame) -> list[TimeSeries]:
+        df = df.with_columns(pl.col("datetime").dt.cast_time_unit("ns").dt.replace_time_zone(None)).to_pandas()
+        series = darts.TimeSeries.from_group_dataframe(df,
+                                                       group_cols="id",
+                                                       time_col="datetime",
+                                                       value_cols=self.config["features"],
+                                                       freq="D",
+                                                       fill_missing_dates=True
+                                                       )
+        return series
+
+    @overrides(check_signature=False)
+    def train(self, train: list[darts.TimeSeries], val: list[darts.TimeSeries]) -> Run:
+        # self.init_wandb()
+        self.model.fit(
+            series=train,
+            val_series=val,
+            # callbacks=[WandbMetricsLogger()]
+        )
+
+    @overrides
+    def train_ds(self, ds: TrainingDataset) -> Run:
+        # get data split either scaled or not
+        train = ds.get_train_df(ds.scale).select(["datetime", "id"] + self.config["features"])
+        val = ds.get_val_df(ds.scale).select(["datetime", "id"] + self.config["features"])
+        self.scaled = True  # either way, scaling is done
+
+        # create time series data from training and validation data
+        train_series = self.create_time_series(train)
+        logger.info(f"Training data length after time series transform: {len(train_series)}")
+        val_series = self.create_time_series(val)
+        logger.info(f"Validation data length after time series transform: {len(val_series)}")
+
+        self.train(train_series, val_series)
+
+    @overrides(check_signature=False)
+    def evaluate_ds(self, ds: TrainingDataset, run: Run, log: bool = False) -> tuple:
+        test_df = ds.get_test_df(ds.scale).select(["datetime", "id"] + self.config["features"])
+        test_series = self.create_time_series(test_df)
+
+        y_hat = self.predict(self.config["n_out"], test_series)
+        evaluator = RegressionMetric(test_series.to_numpy(), y_hat)
         return self.log_eval_results(evaluator, run, len(test_df), log=log)

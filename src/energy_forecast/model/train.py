@@ -16,8 +16,8 @@ try:
     from src.energy_forecast.config import REFERENCES_DIR, FEATURE_SETS, PROCESSED_DATA_DIR, REPORTS_DIR, N_CLUSTER
     from src.energy_forecast.dataset import Dataset, TrainingDataset, TrainDataset90
     from src.energy_forecast.model.models import Model, FCNModel, DTModel, LinearRegressorModel, RegressionModel, \
-        NNModel, \
-        RNN1Model, FCN2Model, FCN3Model, Baseline, DartsModel, RNN3Model
+    NNModel, \
+    RNN1Model, FCN2Model, FCN3Model, Baseline, DartsModel, RNN3Model, DartsTransformer
 except ModuleNotFoundError:
     import sys
     import os
@@ -53,6 +53,8 @@ def get_model(config: dict) -> Model:
         return DartsModel(config)
     elif config["model"] == "RNN3":
         return RNN3Model(config)
+    elif config["model"] == "transformer":
+        return DartsTransformer(config)
     else:
         raise Exception(f"Unknown model {config['model']}")
 
@@ -143,7 +145,7 @@ if __name__ == '__main__':
               "energy": "all",
               "res": "daily",
               "interpolate": 1,
-              "model": "RNN1",
+              "model": "RNN2",
               "train_len": 32,
               "n_in": 14,
               "n_out": 1,
@@ -151,7 +153,7 @@ if __name__ == '__main__':
               "scaler": "standard",
               "feature_code": 12,
               "train_test_split_method": "time",
-              "epochs": 50,
+              "epochs": 1,
               "optimizer": "adam",
               "loss": "mean_squared_error",
               "metrics": ["mae"],

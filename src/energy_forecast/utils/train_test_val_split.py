@@ -45,7 +45,7 @@ def train_test_split_time_based(ds: TrainingDataset, train_per: float) -> tuple[
         split_idx_two = int(len(b_df) * (((1 - train_per) / 2) + train_per))
 
         train_b_df = b_df.filter(pl.col("b_idx") <= split_idx).drop(["b_idx"])
-        if len(train_b_df) <= (ds.config["train_len"]):
+        if len(train_b_df) <= (ds.config["n_in"] + ds.config["n_out"]):  # if not one example can be produced from train series
             logger.info(f"Removing series of length {len(b_df)} for ID {group[0]}")
             continue  # if series is too short, discard
 

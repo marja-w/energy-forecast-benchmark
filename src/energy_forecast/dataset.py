@@ -35,8 +35,8 @@ class Dataset:
         else:
             raise ValueError(f"Unknown value for resolution: {res}")
         self.df = pl.DataFrame()
-        self.name = self.res
         self.df_meta = pl.DataFrame()
+        self.name = self.res
         self.file_path = PROCESSED_DATA_DIR / f"dataset_{self.name}.csv"
 
     def create(self):
@@ -146,8 +146,12 @@ class Dataset:
 
         def add_features(df):
             enc = LabelEncoder()
-            df = (df.join(df_meta, on="id", how="left")
-                  .join(df_weather.with_columns(pl.col("datetime").dt.cast_time_unit("ns")), on=["datetime", "plz"],
+            # join data with meta data
+            # create new id, needed if data series was split, but belongs to same building
+            df = df.with_columns(pl.col("id").str.replace("(-\d)?-\d$", "").alias("meta_id"))
+            df = df.join(df_meta.rename({"id": "meta_id"}), on="meta_id", how="left")
+            logger.info(f"Data length after joining with meta data: {len(df)}")
+            df = (df.join(df_weather.with_columns(pl.col("datetime").dt.cast_time_unit("ns")), on=["datetime", "plz"],
                         how="left")
                   .with_columns(
                 # set 0 values in heated area to null
@@ -163,13 +167,15 @@ class Dataset:
                         ).then(None).otherwise(pl.col("anzahlwhg")).name.keep()
             ).with_columns(pl.col("typ").map_batches(enc.fit_transform))  # make typ column categorical
                   )
+            logger.info(f"Data length after joining with weather data: {len(df)}")
             # get the daily consumption average for each building
-            df_daily_avg = df.select(["id", "datetime", "diff"]).group_by(["id"]).agg(
+            df_daily_avg = df.select(["meta_id", "datetime", "diff"]).group_by(["meta_id"]).agg(
                 pl.col("diff").sum().alias("sum"),
                 pl.col("diff").count().alias("count")
             ).with_columns(
-                (pl.col("sum") / pl.col("count")).alias("daily_avg")).select("id", "daily_avg")
-            df = df.join(df_daily_avg, on="id", how="left")
+                (pl.col("sum") / pl.col("count")).alias("daily_avg")).select("meta_id", "daily_avg")
+            df = df.join(df_daily_avg, on="meta_id", how="left")
+            logger.info(f"Data length after joining with daily average data: {len(df)}")
             df = add_holidays(df)  # TODO: add holidays for more data
 
             # add cyclic encoded weekdays
@@ -228,9 +234,9 @@ class Dataset:
 
 class InterpolatedDataset(Dataset):
     def __init__(self, res: str = "daily"):
-        self.name = f"interpolate_{res}"
         super().__init__(res)
         self.name = f"interpolate_{res}"
+        self.file_path = PROCESSED_DATA_DIR / f"dataset_{self.name}.csv"
 
     @overrides
     def clean(self, plot: bool = False):
@@ -480,12 +486,12 @@ if __name__ == '__main__':
     logger.info("Finish data loading")
 
     ds = InterpolatedDataset()
-    # ds.create_and_clean(plot=True)
+    # ds.create_and_clean(plot=False)
     ds.create_clean_and_add_feat()
 
     ds = Dataset()
-    # ds.create_and_clean()
-    ds.create_clean_and_add_feat()
+    ds.create_and_clean()
+    # ds.create_clean_and_add_feat()
 
     # ds.load_feat_data()
     # df_train, df_test = ds.get_train_and_test(0.8)

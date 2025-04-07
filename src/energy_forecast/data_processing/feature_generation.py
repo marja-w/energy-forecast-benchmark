@@ -17,7 +17,7 @@ from meteostat import Point, Daily, Hourly
 
 import holidays
 
-from src.energy_forecast.config import RAW_DATA_DIR, PROCESSED_DATA_DIR, DATA_DIR, FEATURES_DIR
+from src.energy_forecast.config import RAW_DATA_DIR, PROCESSED_DATA_DIR, DATA_DIR, FEATURES_DIR, META_DIR
 
 # %%
 
@@ -30,7 +30,7 @@ output_path_weather_daily = FEATURES_DIR / "weather_daily.csv"
 output_path_weather_hourly = FEATURES_DIR / "weather_hourly.csv"
 
 # PARAMETERS
-holiday = False  # whether to create holiday features
+holiday = True  # whether to create holiday features
 
 # %%
 data_df = pl.read_csv(dataset_daily_csv_).with_columns(pl.col("datetime").str.to_datetime())
@@ -38,9 +38,9 @@ data_df = pl.read_csv(dataset_daily_csv_).with_columns(pl.col("datetime").str.to
 # Find time intervals for every city
 # %%
 data_df = data_df.with_columns(
-    pl.coalesce(data_df.join(pl.read_csv(RAW_DATA_DIR / "kinergy_meta.csv"), on="id", how="left")["plz"],
-                data_df.join(pl.read_csv(RAW_DATA_DIR / "legacy_meta.csv"), on="id", how="left")["plz"],
-                data_df.join(pl.read_csv(RAW_DATA_DIR / "dh_meta.csv").rename({"eco_u_id": "id", "postal_code": "plz"}),
+    pl.coalesce(data_df.join(pl.read_csv(META_DIR / "kinergy_meta.csv"), on="id", how="left")["plz"],
+                data_df.join(pl.read_csv(META_DIR / "legacy_meta.csv"), on="id", how="left")["plz"],
+                data_df.join(pl.read_csv(META_DIR / "dh_meta.csv").rename({"eco_u_id": "id", "postal_code": "plz"}),
                              on="id", how="left")["plz"],
                 ).str.strip_chars())
 # %%

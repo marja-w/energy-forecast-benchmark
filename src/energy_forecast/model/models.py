@@ -12,6 +12,7 @@ import polars as pl
 import statsmodels.api as sm
 import wandb
 from darts import TimeSeries
+from darts.dataprocessing.transformers import BaseDataTransformer, Scaler
 from darts.models import RNNModel as DartsRNNModel, TransformerModel
 from keras.src.callbacks import LearningRateScheduler
 from loguru import logger
@@ -458,20 +459,6 @@ class RNNModel(NNModel):
         self.set_model(X_train)  # need to set model before training
 
         return super().train(X_train, y_train, X_val, y_val)
-        # self.set_model(X_train)
-        #
-        # self.model.compile(
-        #     loss=self.config["loss"],
-        #     optimizer=self.config["optimizer"]
-        # )
-        # self.model.fit(X_train,
-        #                y_train,
-        #                epochs=self.config["epochs"],
-        #                batch_size=self.config["batch_size"],
-        #                validation_data=(X_val, y_val)
-        #                )
-        #
-        # return self.model, None
 
     def evaluate_ds(self, ds: TrainingDataset, run: Run) -> tuple:
         test = ds.get_test_df(ds.scale).select(["id"] + self.config["features"])
@@ -484,10 +471,6 @@ class RNNModel(NNModel):
         self.scaler_X = ds.scaler_X
         self.scaler_y = ds.scaler_y
         super().evaluate(ds, run)
-        # y_hat = self.model.predict(X_test)
-        # evaluator = RegressionMetric(y_test.to_numpy(), y_hat)
-        # logger.info(f"RSME {evaluator.root_mean_squared_error()}")
-        # logger.info(f"MAPE {evaluator.mean_absolute_percentage_error()}")
 
 
 class RNN1Model(RNNModel):
@@ -594,18 +577,19 @@ class DartsModel(RNNModel):
     @overrides
     def train_ds(self, ds: TrainingDataset) -> Run:
         config, run = self.init_wandb(ds.X_train)
-        train_df = ds.df.sort(by=["id", "datetime"]).to_pandas().iloc[ds.train_idxs].sort_values(
-            by=["id", "datetime"])  # sort before and after for reproducibility
-        train_df = train_df[["datetime", "id"] + self.config["features"]]
+        train_df = ds.get_train_df(False).select(["datetime", "id"] + self.config["features"])
+        scaler = Scaler(ds.scaler_y, global_fit=True)  # TODO: multiple features scaling
 
         # create list of darts Series objects
-        train_list = darts.TimeSeries.from_group_dataframe(train_df,
+        train_list = darts.TimeSeries.from_group_dataframe(train_df.to_pandas(),
                                                            group_cols="id",
                                                            time_col="datetime",
                                                            value_cols=self.config["features"],
                                                            freq="D",
                                                            fill_missing_dates=True
                                                            )
+        train_list = scaler.fit_transform(train_list)
+        ds.scaler_y = scaler
         assert sum([np.isnan(t.values()).sum() for t in train_list]) == 0  # there should be no nans in the train series
         self.model = DartsRNNModel(
             model="RNN",
@@ -620,7 +604,7 @@ class DartsModel(RNNModel):
             training_length=self.config["train_len"]
         )
 
-        self.model.fit(train_list)
+        self.model.fit(train_list)  # TODO: wandbmetricslogger
         return run
 
     @overrides(check_signature=False)
@@ -629,22 +613,79 @@ class DartsModel(RNNModel):
 
     @overrides(check_signature=False)
     def evaluate_ds(self, ds: TrainingDataset, run: Run, log: bool = False) -> tuple:
-        test_df = ds.df.sort(by=["id", "datetime"]).to_pandas().iloc[ds.test_idxs]
-        test_df = test_df[["datetime", "id"] + self.config["features"]]
+        test_df = ds.get_test_df(scale=False).select(
+            ["datetime", "id"] + self.config["features"])  # data will be scaled in evaluate by backtest function
 
         # create list of darts Series objects
-        test_list = darts.TimeSeries.from_group_dataframe(test_df,
+        test_list = darts.TimeSeries.from_group_dataframe(test_df.to_pandas(),
                                                           group_cols="id",
                                                           time_col="datetime",
                                                           value_cols=self.config["features"],
                                                           freq="D",
                                                           fill_missing_dates=True
                                                           )
-        # get predictions
-        y_hat = self.predict(test_list)
-        self.model.backtest(test_list, forecast_horizon=1, retrain=False, metric=darts.metrics.metrics.rmse)  # TODO
-        evaluator = RegressionMetric(test_list.to_numpy(), np.hstack([s.values() for s in y_hat]).reshape(len(y_hat), 1))
-        return self.log_eval_results(evaluator, run, len(test_df), log=log)
+        # compute metrics
+        metrics = self.evaluate(test_list, ds, run)
+        return self.log_eval_results(metrics, len(test_df), run, log=log)
+
+    @overrides(check_signature=False)
+    def evaluate(self, n_series: list[darts.TimeSeries], ds: TrainingDataset, run: Run, log: bool = False) -> tuple:
+        # historical_forecasts = self.model.historical_forecasts(n_series,
+        #     last_points_only=False,
+        #     retrain=False,
+        #     forecast_horizon=self.config["n_out"]
+        # )
+
+        metrics = self.model.backtest(series=n_series,
+                                      # historical_forecasts=historical_forecasts,
+                                      forecast_horizon=self.config["n_out"],
+                                      retrain=False,
+                                      data_transformers={"series": ds.scaler_y},
+                                      last_points_only=False,  # retrieve all predicted values
+                                      metric=[darts.metrics.metrics.rmse,
+                                              darts.metrics.metrics.mse,
+                                              darts.metrics.metrics.mae,
+                                              darts.metrics.metrics.mase],
+                                      reduction=np.mean  # put None to get individual test scores
+                                      )
+        metrics = np.vstack(metrics).mean(axis=0)  # average each metric over all series
+        rmse = metrics[0]
+        # max_v = np.vstack([s.max(axis=0).values() for s in n_series]).max()
+        # min_v = np.vstack([s.min(axis=0).values() for s in n_series]).min()
+        # nrmse = rmse - (max_v - min_v)  # TODO: nrmse
+        self.log_eval_results(metrics, len(n_series), run, log)
+        return metrics
+
+    @overrides(check_signature=False)
+    def log_eval_results(self, metrics, len_y_test: int, run, log: bool = True) -> tuple:
+        rmse = metrics[0]
+        mse = metrics[1]
+        mae = metrics[2]
+        mase = metrics[3]
+
+        run.log(data={"test_data_length": len_y_test,
+                      "test_mse": mse,
+                      "test_mae": mae,
+                      "test_rmse": rmse,
+                      "test_mase": mase
+                      })
+        logger.info(f"MSE Loss on test data: {mse}")
+        logger.info(f"MAE Loss on test data: {mae}")
+        logger.info(f"RMSE on test data: {rmse}")
+        logger.info(f"MASE on test data: {mase}")
+
+    @overrides
+    def save(self) -> Path:
+        model_path = MODELS_DIR / f"{self.name}.pt"
+        self.model.save(str(model_path))
+        logger.success(f"Model saved to {model_path}")
+        # copy to wandb run dir to fix symlink issue
+        os.makedirs(os.path.join(wandb.run.dir, "models"))
+        wandb_run_dir_model = os.path.join(wandb.run.dir, os.path.join("models", os.path.basename(model_path)))
+        self.model.save(str(wandb_run_dir_model))
+        # shutil.copy(model_path, wandb_run_dir_model)
+        wandb.save(wandb_run_dir_model)
+        return model_path
 
 
 class DartsTransformer(DartsModel):

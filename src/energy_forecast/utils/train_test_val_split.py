@@ -38,6 +38,7 @@ def train_test_split_time_based(ds: TrainingDataset, train_per: float) -> tuple[
     test_dfs = []
     val_dfs = []
 
+    discarded_ids = list()
     for group in df.group_by(pl.col("id")):
         b_df = group[1]  # Extract grouped DataFrame
         b_df = b_df.with_row_index("b_idx")
@@ -47,17 +48,20 @@ def train_test_split_time_based(ds: TrainingDataset, train_per: float) -> tuple[
         train_b_df = b_df.filter(pl.col("b_idx") <= split_idx).drop(["b_idx"])
         min_len = ds.config["n_in"] + ds.config["n_out"]  # length needed for constructing one pair
         if len(train_b_df) <= min_len:  # if not one example can be produced from train series
-            logger.info(f"Removing series of length {len(b_df)} for ID {group[0]}")
+            # logger.info(f"Removing series of length {len(b_df)} for ID {group[0]}")
+            discarded_ids.append(group[0])
             continue  # if series is too short, discard
 
         test_b_df = b_df.filter((pl.col("b_idx") > split_idx).and_(pl.col("b_idx") <= split_idx_two)).drop(["b_idx"])
         if len(test_b_df) <= min_len:
-            logger.info(f"Removing series of length {len(b_df)} for ID {group[0]}")
+            # logger.info(f"Removing series of length {len(b_df)} for ID {group[0]}")
+            discarded_ids.append(group[0])
             continue  # if series is too short, discard
         val_b_df = b_df.filter(pl.col("b_idx") > split_idx_two).drop(["b_idx"])
         if len(val_b_df) <= min_len:
-            logger.info(f"Removing series of length {len(b_df)} for ID {group[0]}")
-
+            # logger.info(f"Removing series of length {len(b_df)} for ID {group[0]}")
+            discarded_ids.append(group[0])
+            continue
         train_dfs.append(train_b_df)
         test_dfs.append(test_b_df)
         val_dfs.append(val_b_df)
@@ -65,6 +69,8 @@ def train_test_split_time_based(ds: TrainingDataset, train_per: float) -> tuple[
         ds.train_idxs.extend(train_b_df["index"].to_list())
         ds.test_idxs.extend(test_b_df["index"].to_list())
         ds.val_idxs.extend(val_b_df["index"].to_list())
+
+    logger.info(f"Removed {len(discarded_ids)} series because they were too short")
 
     # sort indexes
     ds.train_idxs = sorted(ds.train_idxs)
@@ -116,7 +122,7 @@ def get_train_test_val_split(ds: TrainingDataset) -> TrainingDataset:
     # plot_means(X_train, y_train, X_val, y_val, X_test, y_test)
     # plot_std(X_train, y_train, X_val, y_val, X_test, y_test)
 
-    logger.info(f"Train data shape: {ds.X_train.shape}")
+    logger.info(f"Train data shape: {ds.X_train.shape}")  # TODO: fix shape output for one feature "diff"
     logger.info(f"Test data shape: {ds.X_test.shape}")
     logger.info(f"Validation data shape: {ds.X_val.shape}")
     return ds

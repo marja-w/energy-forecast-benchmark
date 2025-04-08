@@ -4,9 +4,11 @@ import os
 from argparse import ArgumentError
 from itertools import product
 
+import darts
 import numpy as np
 import pandas as pd
 import polars as pl
+from darts.dataprocessing.transformers import Scaler, MissingValuesFiller
 from loguru import logger
 from overrides import overrides
 from pandas import DataFrame
@@ -20,7 +22,7 @@ from src.energy_forecast.plots import plot_missing_dates_per_building, plot_clus
 from src.energy_forecast.utils.cluster import hierarchical_clustering_on_meta_data
 from src.energy_forecast.utils.data_processing import remove_neg_diff_vals, filter_connection_errors_by_id, \
     filter_outliers_by_id, filter_flat_lines_by_id, split_series_by_id_list, interpolate_values_by_id, \
-    remove_positive_jumps, split_series_by_id
+    remove_positive_jumps, split_series_by_id, remove_null_series_by_id
 from src.energy_forecast.utils.time_series import sensors_to_supervised, series_to_supervised
 from src.energy_forecast.utils.util import get_missing_dates
 
@@ -152,7 +154,7 @@ class Dataset:
             df = df.join(df_meta.rename({"id": "meta_id"}), on="meta_id", how="left")
             logger.info(f"Data length after joining with meta data: {len(df)}")
             df = (df.join(df_weather.with_columns(pl.col("datetime").dt.cast_time_unit("ns")), on=["datetime", "plz"],
-                        how="left")
+                          how="left")
                   .with_columns(
                 # set 0 values in heated area to null
                 pl.when(pl.col("heated_area") == 0).then(None).otherwise(pl.col("heated_area")).name.keep(),
@@ -265,6 +267,7 @@ class TrainingDataset(Dataset):
         self.scaler_y = None
         self.scaler_X = None
         self.cont_features = None
+        self.static_features = None
         self.scale = False  # whether scalers are fit / needed
         self.X_test_scaled = None
         self.y_test_scaled = None
@@ -404,11 +407,15 @@ class TrainingDataset(Dataset):
             if len(cont_features) > 0:  # only if there are other continuous features other than diff
                 self.scaler_X = scaler_X.fit(self.X_train[cont_features])
                 self.cont_features = cont_features
+                self.static_features = list(set(self.config["features"]) - set(["diff"] + self.cont_features))
             # target variable
             self.scaler_y = scaler_y.fit(self.y_train["diff"].to_numpy().reshape(len(self.y_train), 1))
             self.scale = True
         else:  # already fitted
             pass
+
+    def handle_missing_features(self):
+        self.df = self.df.drop_nulls(subset=self.config["features"])  # remove null values for used features
 
     def preprocess(self) -> tuple[pl.DataFrame, dict]:
         """
@@ -420,7 +427,7 @@ class TrainingDataset(Dataset):
         if self.config["energy"] != "all":
             self.df = self.df.filter(pl.col("primary_energy") == self.config["energy"])
         self.one_hot_encode()
-        self.df = self.df.drop_nulls(subset=self.config["features"])  # remove null values for used features
+        self.handle_missing_features()
         logger.info(f"Training Features: {self.config['features']}")
         self.remove_corrupt_buildings()
         self.encode_cyclic_features()
@@ -466,9 +473,65 @@ class TimeSeriesDataset(TrainingDataset):
         super().__init__(config)
 
     @overrides
-    def preprocess(self) -> tuple[pl.DataFrame, dict]:
-        super().preprocess()  # TODO
+    def handle_missing_features(self):
+        """
+        If we have missing features for a TimeSeriesDataset, we cant just drop them, as it would create holes in
+        the time series. Therefore, linear interpolate them
+        """
+        self.df = remove_null_series_by_id(self.df, self.config["features"])
 
+    @overrides
+    def preprocess(self) -> tuple[pl.DataFrame, dict]:
+        super().preprocess()
+        return self.df, self.config
+
+    @overrides
+    def get_from_idxs(self, data_split: str, scale: bool = False) -> tuple[
+        list[darts.TimeSeries], list[darts.TimeSeries]]:
+        df = super().get_from_idxs(data_split, False)
+        df = df.select(["datetime", "id"] + self.config["features"])
+
+        # create list of darts Series objects
+        target_series = darts.TimeSeries.from_group_dataframe(df.to_pandas(),
+                                                              group_cols="id",
+                                                              time_col="datetime",
+                                                              value_cols=["diff"],
+                                                              static_cols=self.static_features,
+                                                              freq="D",
+                                                              fill_missing_dates=True
+                                                              )
+
+        covariate_list = darts.TimeSeries.from_group_dataframe(df.to_pandas(),
+                                                               group_cols="id",
+                                                               time_col="datetime",
+                                                               value_cols=self.cont_features,
+                                                               freq="D",
+                                                               fill_missing_dates=True
+                                                               )
+
+        # scaling
+        if scale:
+            scaler_y = Scaler(self.scaler_y, global_fit=True)  # TODO: multiple features scaling
+            scaler_X = Scaler(self.scaler_X, global_fit=True)
+
+            if data_split == "train":
+                target_series = scaler_y.fit_transform(target_series)
+                covariate_list = scaler_X.fit_transform(covariate_list)
+            else:
+                target_series = scaler_y.transform(target_series)
+                covariate_list = scaler_X.transform(covariate_list)
+            self.scaler_y = scaler_y
+            self.scaler_X = scaler_X
+
+        # fill missing values using darts  # TODO maybe throw away rather than fill?
+        transformer = MissingValuesFiller()
+        target_series = transformer.transform(target_series)
+        covariate_list = transformer.transform(covariate_list)
+
+        assert sum(
+            [np.isnan(t.values()).sum() for t in target_series]) == 0  # there should be no nans in the train series
+
+        return target_series, covariate_list
 
 if __name__ == '__main__':
     # DATA LOADING
@@ -486,7 +549,7 @@ if __name__ == '__main__':
     logger.info("Finish data loading")
 
     ds = InterpolatedDataset()
-    # ds.create_and_clean(plot=False)
+    ds.create_and_clean(plot=False)
     ds.create_clean_and_add_feat()
 
     ds = Dataset()

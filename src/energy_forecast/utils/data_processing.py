@@ -195,3 +195,18 @@ def split_series_by_id_list(df: pl.DataFrame, min_gap_size: int, plot: bool = Fa
 def split_series_by_id(df: pl.DataFrame, min_gap_size: int, plot: bool = False) -> pl.DataFrame:
     interpolated_df = df.group_by("id").map_groups(lambda group: split_series(group, min_gap_size, plot))
     return interpolated_df
+
+
+def remove_null_series(df: pl.DataFrame, features: list[str]) -> bool:
+    df_bool = df[features].with_columns(pl.all().is_null())
+    for col_name in features:
+        if df_bool[col_name].all():
+            return True
+    return False
+
+
+def remove_null_series_by_id(df: pl.DataFrame, features: list[str]) -> pl.DataFrame:
+    idxs_to_remove = df[["id"] + features].group_by("id").agg(pl.all().is_null().all()).with_columns(
+        any=pl.any_horizontal(features)).filter(pl.col("any"))["id"].to_list()  # all ids where at least one column only contains nulls
+    filtered_df = df.filter(~(pl.col("id").is_in(idxs_to_remove)))
+    return filtered_df

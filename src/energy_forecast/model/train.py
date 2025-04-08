@@ -9,15 +9,16 @@ from tensorflow.keras import layers
 from tqdm import tqdm
 import os
 
+from src.energy_forecast.model.darts_models import DartsTransformer, DartsRNN, DartsBlockRNN
 from src.energy_forecast.utils.train_test_val_split import get_train_test_val_split
 
 try:
     from src.energy_forecast.plots import plot_means, plot_std
     from src.energy_forecast.config import REFERENCES_DIR, FEATURE_SETS, PROCESSED_DATA_DIR, REPORTS_DIR, N_CLUSTER
-    from src.energy_forecast.dataset import Dataset, TrainingDataset, TrainDataset90
+    from src.energy_forecast.dataset import Dataset, TrainingDataset, TrainDataset90, TimeSeriesDataset
     from src.energy_forecast.model.models import Model, FCNModel, DTModel, LinearRegressorModel, RegressionModel, \
     NNModel, \
-    RNN1Model, FCN2Model, FCN3Model, Baseline, DartsModel, RNN3Model, DartsTransformer
+    RNN1Model, FCN2Model, FCN3Model, Baseline, RNN3Model
 except ModuleNotFoundError:
     import sys
     import os
@@ -50,11 +51,13 @@ def get_model(config: dict) -> Model:
     elif config["model"] == "RNN1":
         return RNN1Model(config)
     elif config["model"] == "RNN2":
-        return DartsModel(config)
+        return DartsRNN(config)
     elif config["model"] == "RNN3":
         return RNN3Model(config)
     elif config["model"] == "transformer":
         return DartsTransformer(config)
+    elif config["model"] == "block_rnn":
+        return DartsBlockRNN(config)
     else:
         raise Exception(f"Unknown model {config['model']}")
 
@@ -73,9 +76,15 @@ def get_data(config: dict) -> TrainingDataset:
         if config["missing_data"] == 90:
             ds = TrainDataset90(config)
         else:
-            ds = TrainingDataset(config)
+            if config ["model"] == "RNN2":  # TODO: more time series models
+                ds = TimeSeriesDataset(config)
+            else:
+                ds = TrainingDataset(config)
     except KeyError:
-        ds = TrainingDataset(config)
+        if config["model"] == "RNN2":  # TODO: more time series models
+            ds = TimeSeriesDataset(config)
+        else:
+            ds = TrainingDataset(config)
     interpolate = config["interpolate"]
     ds.load_feat_data(bool(interpolate))  # all data
     ds.preprocess()  # preprocess data for training
@@ -145,13 +154,13 @@ if __name__ == '__main__':
               "energy": "all",
               "res": "daily",
               "interpolate": 1,
-              "model": "RNN2",
+              "model": "block_rnn",
               "train_len": 32,
               "n_in": 14,
               "n_out": 1,
               "n_future": 7,
               "scaler": "standard",
-              "feature_code": 12,
+              "feature_code": 5,
               "train_test_split_method": "time",
               "epochs": 1,
               "optimizer": "adam",
@@ -162,7 +171,7 @@ if __name__ == '__main__':
               "neurons": 70,
               "lr_scheduler": "none",
               "weight_initializer": "glorot",
-              "activation": "relu"}
+              "activation": "ReLU"}
     # config = None
     if config is None:
         # Read in configs from .jsonl file

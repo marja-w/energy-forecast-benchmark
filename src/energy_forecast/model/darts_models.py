@@ -22,8 +22,9 @@ from darts.dataprocessing.transformers import BaseDataTransformer, Scaler, Missi
 from darts.models import RNNModel as DartsRNNModel, TransformerModel, BlockRNNModel
 
 from src.energy_forecast.config import MODELS_DIR
-from src.energy_forecast.dataset import TrainingDataset
+from src.energy_forecast.dataset import TrainingDataset, TimeSeriesDataset
 from src.energy_forecast.model.models import RNNModel
+from src.energy_forecast.plots import plot_per_step_metrics
 from src.energy_forecast.utils.data_processing import remove_null_series_by_id
 
 
@@ -34,74 +35,19 @@ class DartsModel(RNNModel):
         """ Implement the model architecture here"""
         super().__init__(config)
 
-    @overrides
-    def train_ds(self, ds: TrainingDataset) -> Run:
+    @overrides(check_signature=False)
+    def train_ds(self, ds: TimeSeriesDataset) -> Run:
         config, run = self.init_wandb(ds.X_train)
         self.set_model(ds.X_train)  # because of logging, needs to be done after init_wandb
-        train_df = ds.get_train_df(False).select(["datetime", "id"] + self.config["features"])
-        val_df = ds.get_val_df(False).select(["datetime", "id"] + self.config["features"])
-        static_features = list(set(self.config["features"]) - set(["diff"] + ds.cont_features))
-        scaler_y = Scaler(ds.scaler_y, global_fit=True)  # TODO: multiple features scaling
-        scaler_X = Scaler(ds.scaler_X, global_fit=True)
+        train_list, train_covs = ds.get_train_series(ds.scale)
+        val_list, val_covs = ds.get_val_series(ds.scale)
 
-        # create list of darts Series objects
-        train_list = darts.TimeSeries.from_group_dataframe(train_df.to_pandas(),
-                                                           group_cols="id",
-                                                           time_col="datetime",
-                                                           value_cols=["diff"],
-                                                           static_cols=static_features,
-                                                           freq="D",
-                                                           fill_missing_dates=True
-                                                           )
-
-        train_covariates_list = darts.TimeSeries.from_group_dataframe(train_df.to_pandas(),
-                                                                      group_cols="id",
-                                                                      time_col="datetime",
-                                                                      value_cols=ds.cont_features,
-                                                                      freq="D",
-                                                                      fill_missing_dates=True
-                                                                      )
-
-        val_list = darts.TimeSeries.from_group_dataframe(val_df.to_pandas(),
-                                                         group_cols="id",
-                                                         time_col="datetime",
-                                                         value_cols=["diff"],
-                                                         static_cols=static_features,
-                                                         freq="D",
-                                                         fill_missing_dates=True
-                                                         )
-
-        val_covariates_list = darts.TimeSeries.from_group_dataframe(val_df.to_pandas(),
-                                                                    group_cols="id",
-                                                                    time_col="datetime",
-                                                                    value_cols=ds.cont_features,
-                                                                    freq="D",
-                                                                    fill_missing_dates=True
-                                                                    )
-
-        # scaling
-        train_list_scaled = scaler_y.fit_transform(train_list)
-        val_list_scaled = scaler_y.transform(val_list)
-        train_covariates_scaled = scaler_X.fit_transform(train_covariates_list)
-        val_covariates_scaled = scaler_X.transform(val_covariates_list)
-        ds.scaler_y = scaler_y
-        ds.scaler_X = scaler_X
-
-        # fill missing values using darts  # TODO maybe throw away rather than fill?
-        transformer = MissingValuesFiller()
-        train_list_filled = transformer.transform(train_list_scaled)
-        val_list_filled = transformer.transform(val_list_scaled)
-        train_covs_filled = transformer.transform(train_covariates_scaled)
-        val_covs_filled = transformer.transform(val_covariates_scaled)
-        assert sum(
-            [np.isnan(t.values()).sum() for t in train_list_filled]) == 0  # there should be no nans in the train series
-
-        self.model.fit(series=train_list_filled,
-                       past_covariates=train_covs_filled,
-                       val_series=val_list_filled,
-                       val_past_covariates=val_covs_filled,
+        self.model.fit(series=train_list,
+                       past_covariates=train_covs,
+                       val_series=val_list,
+                       val_past_covariates=val_covs,
                        verbose=True
-                       )  # TODO: val series
+                       )
         return run
 
     @overrides(check_signature=False)
@@ -109,31 +55,16 @@ class DartsModel(RNNModel):
         return self.model.predict(self.config["n_out"], X)
 
     @overrides(check_signature=False)
-    def evaluate_ds(self, ds: TrainingDataset, run: Run, log: bool = False) -> tuple:
-        test_df = ds.get_test_df(scale=False).select(
-            ["datetime", "id"] + self.config["features"])  # data will be scaled in evaluate by backtest function
+    def evaluate_ds(self, ds: TimeSeriesDataset, run: Run, log: bool = False) -> tuple:
+        test_list, test_covs = ds.get_test_series(ds.scale)
 
-        test_df = remove_null_series_by_id(test_df, self.config[
-            "features"])  # again, remove series if there is only nans for a feature after cropping
-
-        # create list of darts Series objects
-        test_list = darts.TimeSeries.from_group_dataframe(test_df.to_pandas(),
-                                                          group_cols="id",
-                                                          time_col="datetime",
-                                                          value_cols=self.config["features"],
-                                                          freq="D",
-                                                          fill_missing_dates=True
-                                                          )
         # compute metrics
-        metrics = self.evaluate(test_list, ds, run)
-        return self.log_eval_results(metrics, len(test_df), run, log=log)
+        metrics = self.evaluate(test_list, test_covs, ds, run)
+        return self.log_eval_results(metrics, len(test_list), run, log=log)
 
     @overrides(check_signature=False)
-    def evaluate(self, n_series: list[darts.TimeSeries], ds: TrainingDataset, run: Run, log: bool = False) -> tuple:
-        # fill missing values using darts  # TODO maybe throw away rather than fill?
-        transformer = MissingValuesFiller()
-        n_series = transformer.transform(n_series)
-
+    def evaluate(self, n_series: list[darts.TimeSeries], n_covs: list[darts.TimeSeries], ds: TrainingDataset, run: Run,
+                 log: bool = False) -> tuple:
         # historical_forecasts = self.model.historical_forecasts(n_series,
         #     last_points_only=False,
         #     retrain=False,
@@ -141,18 +72,37 @@ class DartsModel(RNNModel):
         # )
 
         metrics = self.model.backtest(series=n_series,
+                                      past_covariates=n_covs,
                                       # historical_forecasts=historical_forecasts,
                                       forecast_horizon=self.config["n_out"],
                                       retrain=False,
-                                      data_transformers={"series": ds.scaler_y},
+                                      data_transformers={"series": ds.scaler_y, "past_covariates": ds.scaler_X},
                                       last_points_only=False,  # retrieve all predicted values
                                       metric=[darts.metrics.metrics.rmse,
                                               darts.metrics.metrics.mse,
                                               darts.metrics.metrics.mae,
                                               darts.metrics.metrics.mase],
-                                      reduction=np.mean  # put None to get individual test scores
+                                      reduction=np.mean,  # put None to get individual test scores
+                                      verbose=True
                                       )
+
+        per_step_metrics = self.model.backtest(series=n_series,
+                                               past_covariates=n_covs,
+                                               # historical_forecasts=historical_forecasts,
+                                               forecast_horizon=self.config["n_out"],
+                                               retrain=False,
+                                               data_transformers={"series": ds.scaler_y,
+                                                                  "past_covariates": ds.scaler_X},
+                                               last_points_only=False,  # retrieve all predicted values
+                                               metric=[darts.metrics.metrics.ae,
+                                                       darts.metrics.metrics.sle],
+                                               reduction=np.mean,  # put None to get individual test scores
+                                               verbose=True
+                                               )
         metrics = np.vstack(metrics).mean(axis=0)  # average each metric over all series
+        per_step_metrics = np.vstack(per_step_metrics).reshape(len(n_series), self.config["n_out"], 2).mean(
+            axis=0)  # mean over all series to get error per step
+        plot_per_step_metrics(per_step_metrics)
         rmse = metrics[0]
         # max_v = np.vstack([s.max(axis=0).values() for s in n_series]).max()
         # min_v = np.vstack([s.min(axis=0).values() for s in n_series]).min()

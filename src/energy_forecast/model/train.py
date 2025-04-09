@@ -11,14 +11,15 @@ import os
 
 from src.energy_forecast.model.darts_models import DartsTransformer, DartsRNN, DartsBlockRNN
 from src.energy_forecast.utils.train_test_val_split import get_train_test_val_split
+from src.energy_forecast.utils.util import store_df_wandb
 
 try:
     from src.energy_forecast.plots import plot_means, plot_std
     from src.energy_forecast.config import REFERENCES_DIR, FEATURE_SETS, PROCESSED_DATA_DIR, REPORTS_DIR, N_CLUSTER
     from src.energy_forecast.dataset import Dataset, TrainingDataset, TrainDataset90, TimeSeriesDataset
     from src.energy_forecast.model.models import Model, FCNModel, DTModel, LinearRegressorModel, RegressionModel, \
-    NNModel, \
-    RNN1Model, FCN2Model, FCN3Model, Baseline, RNN3Model
+        NNModel, \
+        RNN1Model, FCN2Model, FCN3Model, Baseline, RNN3Model
 except ModuleNotFoundError:
     import sys
     import os
@@ -76,12 +77,12 @@ def get_data(config: dict) -> TrainingDataset:
         if config["missing_data"] == 90:
             ds = TrainDataset90(config)
         else:
-            if config ["model"] == "RNN2":  # TODO: more time series models
+            if config["model"] == "RNN2":  # TODO: more time series models
                 ds = TimeSeriesDataset(config)
             else:
                 ds = TrainingDataset(config)
     except KeyError:
-        if config["model"] == "RNN2":  # TODO: more time series models
+        if config["model"] in ["RNN2", "block_rnn"]:  # TODO: more time series models
             ds = TimeSeriesDataset(config)
         else:
             ds = TrainingDataset(config)
@@ -101,13 +102,10 @@ def per_cluster_evaluation(baseline: Baseline, ds: TrainingDataset, m: Model,
     eval_dict_m = m.evaluate_per_cluster(ds.X_test, ds.y_test, wandb_run, clusters)
     eval_dict_b = baseline.evaluate_per_cluster(ds, wandb_run, clusters)
     eval_df = pl.concat([pl.DataFrame(eval_dict_m), pl.DataFrame(eval_dict_b)], how="horizontal")
-    eval_df.write_csv(REPORTS_DIR / "results_cluster_eval.csv")
+    file_name = "results_cluster_eval.csv"
+    eval_df.write_csv(REPORTS_DIR / file_name)
     # save to wandb run
-    # copy to wandb run dir to fix symlink issue
-    os.makedirs(os.path.join(wandb.run.dir, "reports"))
-    wandb_run_dir_eval = os.path.join(wandb.run.dir, os.path.join("reports", "results_cluster_eval.txt"))
-    eval_df.to_pandas().to_csv(wandb_run_dir_eval, header=True, index=None, sep="\t", mode="a")
-    wandb.save(wandb_run_dir_eval)
+    store_df_wandb(eval_df, "results_cluster_eval.txt")
 
 
 def train(config: dict):
@@ -157,18 +155,18 @@ if __name__ == '__main__':
               "model": "block_rnn",
               "train_len": 32,
               "n_in": 14,
-              "n_out": 1,
+              "n_out": 7,
               "n_future": 7,
               "scaler": "standard",
-              "feature_code": 5,
+              "feature_code": 12,
               "train_test_split_method": "time",
-              "epochs": 1,
+              "epochs": 30,
               "optimizer": "adam",
               "loss": "mean_squared_error",
               "metrics": ["mae"],
               "batch_size": 64,
               "dropout": 0.1,
-              "neurons": 70,
+              "neurons": 20,
               "lr_scheduler": "none",
               "weight_initializer": "glorot",
               "activation": "ReLU"}

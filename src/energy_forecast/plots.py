@@ -10,7 +10,7 @@ from matplotlib import pyplot as plt
 import seaborn as sns
 
 from src.energy_forecast.config import PROCESSED_DATA_DIR, FIGURES_DIR
-from src.energy_forecast.utils.util import find_time_spans, get_missing_dates
+from src.energy_forecast.utils.util import find_time_spans, get_missing_dates, store_plot_wandb
 
 
 def plot_means(X_train, y_train, X_val, y_val, X_test, y_test):
@@ -119,6 +119,7 @@ def plot_missing_dates_per_building(df: pl.DataFrame):
     for (b_id, b_df) in df.group_by(["id"]):
         plot_missing_dates(b_df, sensor_id=b_id[0])
 
+
 def plot_interpolated_series(series: darts.TimeSeries, b_id: str, data_source: str):
     # logger.info(f"Plotting interpolated series to {FIGURES_DIR / 'interpolated_data'}")
     fig, ax = plt.subplots()
@@ -126,6 +127,7 @@ def plot_interpolated_series(series: darts.TimeSeries, b_id: str, data_source: s
     ax.set_title(data_source + " " + b_id)
     plt.savefig(FIGURES_DIR / "interpolated_data" / f"{b_id}.png")
     plt.close()
+
 
 def plot_series(series: darts.TimeSeries, b_id: str, data_source: str, folder: Path):
     # logger.info(f"Plotting interpolated series to {FIGURES_DIR / 'interpolated_data'}")
@@ -135,12 +137,14 @@ def plot_series(series: darts.TimeSeries, b_id: str, data_source: str, folder: P
     plt.savefig(folder / f"{b_id}.png")
     plt.close()
 
+
 def plot_dataframe(df: pl.DataFrame, b_id: str, data_source: str, folder: Path):
     fig, ax = plt.subplots()
     sns.lineplot(data=df, x="datetime", y="diff")
     ax.set_title(data_source + " " + b_id)
     plt.savefig(folder / f"{b_id}.png")
     plt.close()
+
 
 def plot_clusters(df: pl.DataFrame, labels: np.ndarray):
     fig, ax = plt.subplots()
@@ -153,6 +157,25 @@ def plot_clusters(df: pl.DataFrame, labels: np.ndarray):
     )
     plt.savefig(FIGURES_DIR / "clusters.png")
     logger.success("Cluster plots saved")
+
+
+def plot_per_step_metrics(per_step_metrics: np.ndarray):
+    num_rows = per_step_metrics.shape[0]
+    bar_width = 0.35
+    indices = np.arange(num_rows)
+
+    # Plot the bars for each column in the data
+    plt.bar(indices, per_step_metrics[:, 0], bar_width, label='Absolute Error')
+    plt.bar(indices + bar_width, per_step_metrics[:, 1], bar_width, label='Squared Log Error')
+
+    # Add labels and title
+    plt.xlabel('Time Step')
+    plt.ylabel('Error')
+    plt.title('Per Time Step Metrics')
+    plt.xticks(indices + bar_width / 2, [f'Step {i}' for i in range(num_rows)])
+    plt.legend()
+    plt.savefig(FIGURES_DIR / "per_step_metrics.png")
+    store_plot_wandb(plt, "per_step_metrics.png")
 
 
 if __name__ == "__main__":

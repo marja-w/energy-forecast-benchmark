@@ -71,6 +71,7 @@ def train_test_split_time_based(ds: TrainingDataset, train_per: float) -> tuple[
         ds.val_idxs.extend(val_b_df["index"].to_list())
 
     logger.info(f"Removed {len(discarded_ids)} series because they were too short")
+    logger.info(f"Remaining series: {len(train_dfs)}")
 
     # sort indexes
     ds.train_idxs = sorted(ds.train_idxs)

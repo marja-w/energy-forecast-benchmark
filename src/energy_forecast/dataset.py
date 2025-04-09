@@ -8,6 +8,7 @@ import darts
 import numpy as np
 import pandas as pd
 import polars as pl
+from darts import TimeSeries
 from darts.dataprocessing.transformers import Scaler, MissingValuesFiller
 from loguru import logger
 from overrides import overrides
@@ -485,11 +486,12 @@ class TimeSeriesDataset(TrainingDataset):
         super().preprocess()
         return self.df, self.config
 
-    @overrides
-    def get_from_idxs(self, data_split: str, scale: bool = False) -> tuple[
+    def get_time_series_from_idxs(self, data_split: str, scale: bool = False) -> tuple[
         list[darts.TimeSeries], list[darts.TimeSeries]]:
         df = super().get_from_idxs(data_split, False)
         df = df.select(["datetime", "id"] + self.config["features"])
+        df = remove_null_series_by_id(df, self.config[
+            "features"])  # again, remove series if there is only nans for a feature after cropping
 
         # create list of darts Series objects
         target_series = darts.TimeSeries.from_group_dataframe(df.to_pandas(),
@@ -511,17 +513,17 @@ class TimeSeriesDataset(TrainingDataset):
 
         # scaling
         if scale:
-            scaler_y = Scaler(self.scaler_y, global_fit=True)  # TODO: multiple features scaling
+            scaler_y = Scaler(self.scaler_y, global_fit=True)
             scaler_X = Scaler(self.scaler_X, global_fit=True)
 
             if data_split == "train":
                 target_series = scaler_y.fit_transform(target_series)
                 covariate_list = scaler_X.fit_transform(covariate_list)
+                self.scaler_y = scaler_y
+                self.scaler_X = scaler_X
             else:
-                target_series = scaler_y.transform(target_series)
-                covariate_list = scaler_X.transform(covariate_list)
-            self.scaler_y = scaler_y
-            self.scaler_X = scaler_X
+                target_series = self.scaler_y.transform(target_series)
+                covariate_list = self.scaler_X.transform(covariate_list)
 
         # fill missing values using darts  # TODO maybe throw away rather than fill?
         transformer = MissingValuesFiller()
@@ -532,6 +534,19 @@ class TimeSeriesDataset(TrainingDataset):
             [np.isnan(t.values()).sum() for t in target_series]) == 0  # there should be no nans in the train series
 
         return target_series, covariate_list
+
+    def get_train_series(self, scale: bool = False) -> tuple[list[TimeSeries], list[TimeSeries]]:
+        return self.get_time_series_from_idxs("train", scale)
+
+    def get_test_series(self, scale: bool = False) -> tuple[list[TimeSeries], list[TimeSeries]]:
+        """
+        Get the data of the test split as target and covariate series, one series for each ID
+        """
+        return self.get_time_series_from_idxs("test", scale)
+
+    def get_val_series(self, scale: bool = False) -> tuple[list[TimeSeries], list[TimeSeries]]:
+        return self.get_time_series_from_idxs("val", scale)
+
 
 if __name__ == '__main__':
     # DATA LOADING

@@ -1,9 +1,12 @@
+import os
 from datetime import date, timedelta
+from pathlib import Path
 from typing import Tuple, List
 
 import numpy as np
 import pandas as pd
 import polars as pl
+import wandb
 from keras.utils import timeseries_dataset_from_array
 from loguru import logger
 from numpy import ndarray
@@ -253,3 +256,16 @@ def get_date_range_from_id(df: pl.DataFrame, gas_id: str):
 
 def get_address_from_id(df: pl.DataFrame, gas_id: str):
     return df.filter(pl.col("new_id") == gas_id)["adresse"].unique()[0]
+
+def store_df_wandb(df: pl.DataFrame, file_name: str):
+    # copy to wandb run dir to fix symlink issue
+    os.makedirs(os.path.join(wandb.run.dir, "reports"))
+    wandb_run_dir_eval = os.path.join(wandb.run.dir, os.path.join("reports", file_name))
+    df.to_pandas().to_csv(wandb_run_dir_eval, header=True, index=None, sep="\t", mode="a")
+    wandb.save(wandb_run_dir_eval)
+
+def store_plot_wandb(plt, file_name: str):
+    os.makedirs(os.path.join(wandb.run.dir, "figures"))
+    wandb_run_dir_eval = os.path.join(wandb.run.dir, os.path.join("figures", file_name))
+    plt.savefig(wandb_run_dir_eval)
+    wandb.save(wandb_run_dir_eval)

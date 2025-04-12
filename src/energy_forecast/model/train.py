@@ -9,7 +9,7 @@ from tensorflow.keras import layers
 from tqdm import tqdm
 import os
 
-from src.energy_forecast.model.darts_models import DartsTransformer, DartsRNN, DartsBlockRNN
+from src.energy_forecast.model.darts_models import DartsTransformer, DartsRNN, DartsBlockRNN, DartsLSTM
 from src.energy_forecast.utils.train_test_val_split import get_train_test_val_split
 from src.energy_forecast.utils.util import store_df_wandb
 
@@ -18,8 +18,8 @@ try:
     from src.energy_forecast.config import REFERENCES_DIR, FEATURE_SETS, PROCESSED_DATA_DIR, REPORTS_DIR, N_CLUSTER
     from src.energy_forecast.dataset import Dataset, TrainingDataset, TrainDataset90, TimeSeriesDataset
     from src.energy_forecast.model.models import Model, FCNModel, DTModel, LinearRegressorModel, RegressionModel, \
-        NNModel, \
-        RNN1Model, FCN2Model, FCN3Model, Baseline, RNN3Model
+    NNModel, \
+    RNN1Model, FCN2Model, FCN3Model, Baseline, RNN3Model, TransformerModel
 except ModuleNotFoundError:
     import sys
     import os
@@ -56,9 +56,11 @@ def get_model(config: dict) -> Model:
     elif config["model"] == "RNN3":
         return RNN3Model(config)
     elif config["model"] == "transformer":
-        return DartsTransformer(config)
+        return TransformerModel(config)
     elif config["model"] == "block_rnn":
         return DartsBlockRNN(config)
+    elif config["model"] == "lstm":
+        return DartsLSTM(config)
     else:
         raise Exception(f"Unknown model {config['model']}")
 
@@ -73,16 +75,17 @@ def get_data(config: dict) -> TrainingDataset:
     Returns:
 
     """
+    darts_models = ["RNN2", "block_rnn", "lstm"]  # TODO: more time series models
     try:
         if config["missing_data"] == 90:
             ds = TrainDataset90(config)
         else:
-            if config["model"] == "RNN2":  # TODO: more time series models
+            if config["model"] in darts_models:
                 ds = TimeSeriesDataset(config)
             else:
                 ds = TrainingDataset(config)
     except KeyError:
-        if config["model"] in ["RNN2", "block_rnn"]:  # TODO: more time series models
+        if config["model"] in darts_models:
             ds = TimeSeriesDataset(config)
         else:
             ds = TrainingDataset(config)
@@ -152,24 +155,24 @@ if __name__ == '__main__':
               "energy": "all",
               "res": "daily",
               "interpolate": 1,
-              "model": "block_rnn",
+              "model": "transformer",
               "train_len": 32,
               "n_in": 14,
-              "n_out": 7,
-              "n_future": 7,
+              "n_out": 1,
+              "n_future": 1,
               "scaler": "standard",
               "feature_code": 12,
               "train_test_split_method": "time",
-              "epochs": 30,
+              "epochs": 100,
               "optimizer": "adam",
               "loss": "mean_squared_error",
               "metrics": ["mae"],
-              "batch_size": 64,
+              "batch_size": 32,
               "dropout": 0.1,
-              "neurons": 20,
+              "neurons": 10,
               "lr_scheduler": "none",
               "weight_initializer": "glorot",
-              "activation": "ReLU"}
+              "activation": "ReLU"}  # ReLU, Linear
     # config = None
     if config is None:
         # Read in configs from .jsonl file

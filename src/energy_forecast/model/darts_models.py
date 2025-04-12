@@ -46,7 +46,8 @@ class DartsModel(RNNModel):
                        past_covariates=train_covs,
                        val_series=val_list,
                        val_past_covariates=val_covs,
-                       verbose=True
+                       verbose=True,
+                       dataloader_kwargs={'shuffle': True}
                        )
         return run
 
@@ -63,20 +64,21 @@ class DartsModel(RNNModel):
         return self.log_eval_results(metrics, len(test_list), run, log=log)
 
     @overrides(check_signature=False)
-    def evaluate(self, n_series: list[darts.TimeSeries], n_covs: list[darts.TimeSeries], ds: TrainingDataset, run: Run,
-                 log: bool = False) -> tuple:
+    def evaluate(self, n_series: list[darts.TimeSeries], n_covs: Union[list[darts.TimeSeries], None],
+                 ds: TrainingDataset, run: Run, log: bool = False) -> tuple:
         # historical_forecasts = self.model.historical_forecasts(n_series,
         #     last_points_only=False,
         #     retrain=False,
         #     forecast_horizon=self.config["n_out"]
         # )
-
+        data_transformers = {"series": ds.scaler_y, "past_covariates": ds.scaler_X} if n_covs else {
+            "series": ds.scaler_y}  # dont need scaler_X if we have no covariates
         metrics = self.model.backtest(series=n_series,
                                       past_covariates=n_covs,
                                       # historical_forecasts=historical_forecasts,
                                       forecast_horizon=self.config["n_out"],
                                       retrain=False,
-                                      data_transformers={"series": ds.scaler_y, "past_covariates": ds.scaler_X},
+                                      data_transformers=data_transformers,
                                       last_points_only=False,  # retrieve all predicted values
                                       metric=[darts.metrics.metrics.rmse,
                                               darts.metrics.metrics.mse,
@@ -91,8 +93,7 @@ class DartsModel(RNNModel):
                                                # historical_forecasts=historical_forecasts,
                                                forecast_horizon=self.config["n_out"],
                                                retrain=False,
-                                               data_transformers={"series": ds.scaler_y,
-                                                                  "past_covariates": ds.scaler_X},
+                                               data_transformers=data_transformers,
                                                last_points_only=False,  # retrieve all predicted values
                                                metric=[darts.metrics.metrics.ae,
                                                        darts.metrics.metrics.sle],
@@ -130,11 +131,23 @@ class DartsModel(RNNModel):
 
     @overrides
     def save(self) -> Path:
+        # onnx model
+        model_path_onnx = MODELS_DIR / f"{self.name}_{self.config['n_in']}_{self.config['n_out']}.onnx"
+        self.model.to_onnx(str(model_path_onnx), export_params=True)
+        logger.success(f"Model saved to {model_path_onnx}")
+
+        os.makedirs(os.path.join(wandb.run.dir, "models"))
+        wandb_run_dir_model = os.path.join(wandb.run.dir, os.path.join("models", os.path.basename(model_path_onnx)))
+        self.model.to_onnx(str(wandb_run_dir_model), export_params=True)
+        # shutil.copy(model_path, wandb_run_dir_model)
+        wandb.save(wandb_run_dir_model)
+
+        # pytorch model
         model_path = MODELS_DIR / f"{self.name}.pt"
         self.model.save(str(model_path))
         logger.success(f"Model saved to {model_path}")
+
         # copy to wandb run dir to fix symlink issue
-        os.makedirs(os.path.join(wandb.run.dir, "models"))
         wandb_run_dir_model = os.path.join(wandb.run.dir, os.path.join("models", os.path.basename(model_path)))
         self.model.save(str(wandb_run_dir_model))
         # shutil.copy(model_path, wandb_run_dir_model)
@@ -163,6 +176,7 @@ class DartsRNN(DartsModel):
             training_length=self.config["train_len"],
             pl_trainer_kwargs={"logger": [wandb_logger]}  # wandb logging
         )
+        wandb_logger.watch(self.model)
 
 
 class DartsBlockRNN(DartsModel):
@@ -175,6 +189,31 @@ class DartsBlockRNN(DartsModel):
         wandb_logger = WandbLogger(project=self.config["project"])
         self.model = BlockRNNModel(
             model="RNN",
+            hidden_dim=25,
+            n_rnn_layers=2,
+            hidden_fc_sizes=[self.config["neurons"]],
+            dropout=self.config["dropout"],
+            batch_size=self.config["batch_size"],
+            n_epochs=self.config["epochs"],
+            input_chunk_length=self.config["n_in"],
+            output_chunk_length=self.config["n_out"],  # has linear layer in end
+            output_chunk_shift=0,
+            activation=self.config["activation"],
+            optimizer_kwargs={"lr": 0.001},
+            pl_trainer_kwargs={"logger": [wandb_logger]}  # wandb logging
+        )
+
+
+class DartsLSTM(DartsModel):
+    def __init__(self, config):
+        super().__init__(config)
+        self.name = "lstm"
+
+    @overrides
+    def set_model(self, X_train: np.ndarray):
+        wandb_logger = WandbLogger(project=self.config["project"])
+        self.model = BlockRNNModel(
+            model="LSTM",
             hidden_dim=25,
             n_rnn_layers=1,
             hidden_fc_sizes=[self.config["neurons"]],

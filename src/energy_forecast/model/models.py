@@ -5,6 +5,7 @@ from pathlib import Path
 from statistics import mean
 from typing import Union
 
+import keras_hub
 import numpy as np
 import pandas as pd
 import polars as pl
@@ -23,6 +24,7 @@ from tensorflow import keras
 from tensorflow.keras import layers, optimizers
 from wandb.integration.keras import WandbMetricsLogger
 from wandb.sdk.wandb_run import Run
+import tensorflow_models as tfm
 
 from src.energy_forecast.config import MODELS_DIR, CONTINUOUS_FEATURES
 from src.energy_forecast.dataset import TrainingDataset
@@ -298,6 +300,7 @@ class NNModel(Model):
         else:
             train_callbacks = [self.lr_callback, WandbMetricsLogger()]
 
+        self.model.summary()
         # Train the model
         self.model.fit(X_train,
                        y_train,
@@ -462,7 +465,7 @@ class RNNModel(NNModel):
         # update X_test and y_test for evaluation  # TODO: handle differently
         ds.X_test, ds.y_test = self.create_time_series(ds.get_test_df().select(["id"] + self.config["features"]))
         logger.info(f"Test data shape after time series transform: {ds.X_test.shape}")
-        assert (ds.scaler_y.transform(ds.X_test[0]) == ds.X_test_scaled[0]).all()
+        assert (ds.scaler_y.transform(ds.y_test) == ds.y_test_scaled).all()  # make sure the scaling is done right
         # for inverse transforming in evaluate
         self.scaler_X = ds.scaler_X
         self.scaler_y = ds.scaler_y
@@ -494,6 +497,42 @@ class RNN3Model(RNNModel):
             layers.SimpleRNN(self.config["neurons"], input_shape=(X_train.shape[1], X_train.shape[2])),
             layers.SimpleRNN(self.config["neurons"]),
             layers.Dense(self.config["n_out"], activation="linear")
+        ])
+
+
+class TransformerModel(RNNModel):
+    def __init__(self, config):
+        super().__init__(config)
+        self.name = "transformer"
+
+    @overrides
+    def set_model(self, X_train: np.ndarray):
+        # self.model = tfm.nlp.models.TransformerEncoder(
+        #     num_layers=6,
+        #     num_attention_heads=8,
+        #     intermediate_size=2048,
+        #     activation='relu',
+        #     dropout_rate=self.config['dropout'],
+        #     attention_dropout_rate=0.0,
+        #     use_bias=False,
+        #     norm_first=True,
+        #     norm_epsilon=1e-06,
+        #     intermediate_dropout=0.0,
+        # )
+        encoder = keras_hub.layers.TransformerEncoder(
+            intermediate_dim=64,
+            num_heads=X_train.shape[2],
+            dropout=self.config["dropout"]
+        )
+
+        # Create a simple model containing the encoder.
+        input = keras.Input(shape=(X_train.shape[1], X_train.shape[2]))
+        output_layer = layers.Dense(self.config["n_out"], activation="linear")
+        self.model = keras.Sequential([
+            input,
+            encoder,
+            layers.GlobalAveragePooling1D(data_format="channels_last"),  # reduce output tensor to a vector of features for each data point
+            output_layer
         ])
 
 

@@ -3,6 +3,7 @@ import math
 import os
 from argparse import ArgumentError
 from itertools import product
+from typing import Union
 
 import darts
 import numpy as np
@@ -487,7 +488,14 @@ class TimeSeriesDataset(TrainingDataset):
         return self.df, self.config
 
     def get_time_series_from_idxs(self, data_split: str, scale: bool = False) -> tuple[
-        list[darts.TimeSeries], list[darts.TimeSeries]]:
+        list[darts.TimeSeries], Union[list[darts.TimeSeries], None]]:
+        """
+        Get a list of darts.TimeSeries objects for the train-test-val split data. Return an additional list of time
+        series if there are continuous features other than the heat consumption.
+        :param data_split: train, test, val
+        :param scale: whether to scale the data
+        :return:
+        """
         df = super().get_from_idxs(data_split, False)
         df = df.select(["datetime", "id"] + self.config["features"])
         df = remove_null_series_by_id(df, self.config[
@@ -502,14 +510,16 @@ class TimeSeriesDataset(TrainingDataset):
                                                               freq="D",
                                                               fill_missing_dates=True
                                                               )
-
-        covariate_list = darts.TimeSeries.from_group_dataframe(df.to_pandas(),
-                                                               group_cols="id",
-                                                               time_col="datetime",
-                                                               value_cols=self.cont_features,
-                                                               freq="D",
-                                                               fill_missing_dates=True
-                                                               )
+        if self.cont_features is not None:
+            covariate_list = darts.TimeSeries.from_group_dataframe(df.to_pandas(),
+                                                                   group_cols="id",
+                                                                   time_col="datetime",
+                                                                   value_cols=self.cont_features,
+                                                                   freq="D",
+                                                                   fill_missing_dates=True
+                                                                   )
+        else:
+            covariate_list = None  # otherwise no covariates
 
         # scaling
         if scale:
@@ -518,17 +528,17 @@ class TimeSeriesDataset(TrainingDataset):
 
             if data_split == "train":
                 target_series = scaler_y.fit_transform(target_series)
-                covariate_list = scaler_X.fit_transform(covariate_list)
+                if covariate_list: covariate_list = scaler_X.fit_transform(covariate_list)
                 self.scaler_y = scaler_y
                 self.scaler_X = scaler_X
             else:
                 target_series = self.scaler_y.transform(target_series)
-                covariate_list = self.scaler_X.transform(covariate_list)
+                if covariate_list: covariate_list = self.scaler_X.transform(covariate_list)
 
         # fill missing values using darts  # TODO maybe throw away rather than fill?
         transformer = MissingValuesFiller()
         target_series = transformer.transform(target_series)
-        covariate_list = transformer.transform(covariate_list)
+        if covariate_list: covariate_list = transformer.transform(covariate_list)
 
         assert sum(
             [np.isnan(t.values()).sum() for t in target_series]) == 0  # there should be no nans in the train series

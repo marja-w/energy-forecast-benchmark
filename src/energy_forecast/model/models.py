@@ -24,7 +24,6 @@ from tensorflow import keras
 from tensorflow.keras import layers, optimizers
 from wandb.integration.keras import WandbMetricsLogger
 from wandb.sdk.wandb_run import Run
-import tensorflow_models as tfm
 
 from src.energy_forecast.config import MODELS_DIR, CONTINUOUS_FEATURES
 from src.energy_forecast.dataset import TrainingDataset
@@ -37,9 +36,9 @@ def root_mean_squared_error(y_true, y_pred):
 
 # learning rate schedule
 def step_decay(epoch):
-    initial_lrate = 0.01
-    drop = 0.5
-    epochs_drop = 20.0
+    initial_lrate = 0.1
+    drop = 0.05
+    epochs_drop = 5.0
     lrate = initial_lrate * math.pow(drop, math.floor((1 + epoch) / epochs_drop))
     return lrate
 
@@ -385,7 +384,7 @@ class FCN2Model(NNModel):
             layers.Dense(config["n_out"], activation="linear")  # perform regression
         ])
 
-
+    
 class FCN3Model(NNModel):
     def __init__(self, config):
         super().__init__(config)
@@ -396,6 +395,18 @@ class FCN3Model(NNModel):
             layers.Dense(config["neurons"], activation=self.activation, kernel_initializer=self.initializer),
             layers.Dropout(config['dropout']),
             layers.Dense(config["n_out"], activation="linear")  # perform regression
+        ])
+
+class FCN4Model(NNModel):
+    def __init__(self, config):
+        super().__init__(config)
+        self.name = "FCN4"
+        input_shape = len(config["features"]) - 1
+        self.model = keras.Sequential([
+            keras.Input(shape=(input_shape,)),
+            layers.Dense(64, activation='relu', kernel_initializer="normal"),
+            layers.Dropout(config['dropout']),
+            layers.Dense(config["n_out"], activation="linear", kernel_initializer="normal")  # perform regression
         ])
 
 
@@ -500,7 +511,7 @@ class RNN3Model(RNNModel):
         ])
 
 
-class TransformerModel(RNNModel):
+class TransformerModel2(RNNModel):
     def __init__(self, config):
         super().__init__(config)
         self.name = "transformer"
@@ -535,6 +546,49 @@ class TransformerModel(RNNModel):
             output_layer
         ])
 
+class TransformerModel(RNNModel):
+    def __init__(self, config):
+        super().__init__(config)
+        self.name = "Transformer"
+
+    def transformer_encoder(self, inputs, head_size, num_heads, ff_dim):
+        # Attention and Normalization
+        x = layers.MultiHeadAttention(
+            key_dim=head_size, num_heads=num_heads, dropout=self.config["dropout"]
+        )(inputs, inputs)
+        x = layers.Dropout(self.config["dropout"])(x)
+        x = layers.LayerNormalization(epsilon=1e-6)(x)
+        res = x + inputs
+
+        # Feed Forward Part
+        x = layers.Conv1D(filters=ff_dim, kernel_size=1, activation="relu")(res)
+        x = layers.Dropout(self.config["dropout"])(x)
+        x = layers.Conv1D(filters=inputs.shape[-1], kernel_size=1)(x)
+        x = layers.LayerNormalization(epsilon=1e-6)(x)
+        return x + res
+
+    def set_model(self, X_train: np.ndarray):
+        inputs = keras.Input(shape=(X_train.shape[1], X_train.shape[2]))
+        x = inputs
+
+        # TODO put in config
+        num_transformer_blocks = 4
+        mlp_units = [128]
+        mlp_dropout = 0.1
+        head_size = 256
+        num_heads = 8
+        ff_dim = 4
+
+        for _ in range(num_transformer_blocks):
+            x = self.transformer_encoder(x, head_size, num_heads, ff_dim)
+
+        x = layers.GlobalAveragePooling1D(data_format="channels_last")(x)
+        for dim in mlp_units:
+            x = layers.Dense(dim, activation="relu")(x)
+            x = layers.Dropout(mlp_dropout)(x)
+        outputs = layers.Dense(self.config["n_out"], activation="linear")(x)
+        self.model = keras.Model(inputs=inputs, outputs=outputs)
+        self.model.summary()
 
 class RegressionModel(Model):
     def __init__(self, config):

@@ -61,6 +61,8 @@ def get_model(config: dict) -> Model:
         return DartsBlockRNN(config)
     elif config["model"] == "lstm":
         return DartsLSTM(config)
+    elif config["model"] == "Transformer":
+        return TransformerModel(config)
     else:
         raise Exception(f"Unknown model {config['model']}")
 
@@ -155,24 +157,24 @@ if __name__ == '__main__':
               "energy": "all",
               "res": "daily",
               "interpolate": 1,
-              "model": "transformer",
+              "model": "Transformer",
               "train_len": 32,
               "n_in": 14,
               "n_out": 1,
-              "n_future": 1,
+              "n_future": 7,
               "scaler": "standard",
               "feature_code": 12,
               "train_test_split_method": "time",
-              "epochs": 100,
+              "epochs": 20,
               "optimizer": "adam",
               "loss": "mean_squared_error",
               "metrics": ["mae"],
-              "batch_size": 32,
+              "batch_size": 64,
               "dropout": 0.1,
-              "neurons": 10,
-              "lr_scheduler": "none",
+              "neurons": 70,
+              "lr_scheduler": "step_decay",
               "weight_initializer": "glorot",
-              "activation": "ReLU"}  # ReLU, Linear
+              "activation": "relu"}  # ReLU, Linear
     # config = None
     if config is None:
         # Read in configs from .jsonl file

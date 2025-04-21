@@ -87,25 +87,25 @@ weather_df
 # 
 # time	The date	Datetime64
 # 
-# tavg	The average air temperature in °C	Float64
-# 
-# tmin	The minimum air temperature in °C	Float64
-# 
-# tmax	The maximum air temperature in °C	Float64
-# 
-# prcp	The daily precipitation total in mm	Float64
-# 
-# snow	The snow depth in mm	Float64
-# 
-# wdir	The average wind direction in degrees (°)	Float64
-# 
-# wspd	The average wind speed in km/h	Float64
-# 
-# wpgt	The peak wind gust in km/h	Float64
-# 
-# pres	The average sea-level air pressure in hPa	Float64
-# 
-# tsun	The daily sunshine total in minutes (m)	Float64
+    # tavg	The average air temperature in °C	Float64
+    #
+    # tmin	The minimum air temperature in °C	Float64
+    #
+    # tmax	The maximum air temperature in °C	Float64
+    #
+    # prcp	The daily precipitation total in mm	Float64
+    #
+    # snow	The snow depth in mm	Float64
+    #
+    # wdir	The average wind direction in degrees (°)	Float64
+    #
+    # wspd	The average wind speed in km/h	Float64
+    #
+    # wpgt	The peak wind gust in km/h	Float64
+    #
+    # pres	The average sea-level air pressure in hPa	Float64
+    #
+    # tsun	The daily sunshine total in minutes (m)	Float64
 # 
 # %% md
 # Humidity is missing from Daily-data, we can retrieve hourly data and merge to daily data

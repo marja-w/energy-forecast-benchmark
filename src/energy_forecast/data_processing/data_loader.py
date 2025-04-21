@@ -6,7 +6,7 @@ from pathlib import Path
 import polars as pl
 from loguru import logger
 
-from src.energy_forecast.config import RAW_DATA_DIR, DATA_DIR, REFERENCES_DIR, META_DIR
+from src.energy_forecast.config import RAW_DATA_DIR, DATA_DIR, REFERENCES_DIR, META_DIR, INTERIM_DATA_DIR
 from src.energy_forecast.utils.util import sum_columns, replace_title_values, remove_leading_zeros, get_id_from_address
 
 
@@ -117,7 +117,7 @@ class DataLoader(object):  #
             self.df_raw.write_csv(output_path)
             logger.success(f"Raw data saved to {output_path}")
         else:
-            output_path = RAW_DATA_DIR / f"{self.name}_{self.res}.csv"
+            output_path = INTERIM_DATA_DIR / f"{self.name}_{self.res}.csv"
             self.df_t.write_csv(output_path)
             logger.success(f"Transformed data ({self.res}) saved to {output_path}")
 

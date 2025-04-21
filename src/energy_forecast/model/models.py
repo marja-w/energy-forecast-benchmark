@@ -36,9 +36,9 @@ def root_mean_squared_error(y_true, y_pred):
 
 # learning rate schedule
 def step_decay(epoch):
-    initial_lrate = 0.1
-    drop = 0.05
-    epochs_drop = 5.0
+    initial_lrate = 0.01
+    drop = 0.5
+    epochs_drop = 20.0
     lrate = initial_lrate * math.pow(drop, math.floor((1 + epoch) / epochs_drop))
     return lrate
 
@@ -310,6 +310,9 @@ class NNModel(Model):
         logger.success("Model training complete.")
         return run
 
+    def evaluate_ds(self, ds: TrainingDataset, run: Run) -> tuple:
+        return self.evaluate((ds.X_test, ds.y_test), run)
+
     @overrides(check_signature=False)
     def evaluate(self, ds: Union[TrainingDataset, tuple[DataFrame, DataFrame]], run: Run, log: bool = True) -> tuple:
         """
@@ -319,15 +322,13 @@ class NNModel(Model):
         :param log: whether to log metrics to wandb
         """
         if type(ds) == TrainingDataset:
-            X_test = ds.X_test
             y_test = ds.y_test
+            if ds.scale:  # scaling happened in dataset
+                X_test_scaled, y_test_scaled = ds.X_test_scaled, ds.y_test_scaled
         else:
             X_test, y_test = ds
-        # scale and encode input data if neccessary
-        if ds.scale:  # scaling happened in dataset
-            X_test_scaled, y_test_scaled = ds.X_test_scaled, ds.y_test_scaled
-        else:
             X_test_scaled, y_test_scaled = self.scale_input_data(X_test, y_test)
+
         # get predictions
         y_hat_scaled = self.predict(X_test_scaled)
         if self.scaler_y is not None:  # scaler_X might be None, if only diff as feature

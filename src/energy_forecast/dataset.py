@@ -428,11 +428,11 @@ class TrainingDataset(Dataset):
         # select energy type
         if self.config["energy"] != "all":
             self.df = self.df.filter(pl.col("primary_energy") == self.config["energy"])
-        self.one_hot_encode()
         self.handle_missing_features()
-        logger.info(f"Training Features: {self.config['features']}")
+        self.one_hot_encode()  # one hot encode after removing features
         self.remove_corrupt_buildings()
         self.encode_cyclic_features()
+        logger.info(f"Training Features: {self.config['features']}")
         return self.df, self.config
 
     def compute_clusters(self) -> dict:

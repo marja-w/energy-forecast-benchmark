@@ -157,25 +157,25 @@ if __name__ == '__main__':
               "energy": "all",
               "res": "daily",
               "interpolate": 1,
-              "model": "Transformer",
+              "model": "FCN3",
               "train_len": 32,
-              "n_in": 14,
+              "n_in": 1,
               "n_out": 1,
               "n_future": 7,
               "scaler": "standard",
-              "feature_code": 12,
+              "feature_code": 10,
               "train_test_split_method": "time",
-              "epochs": 20,
+              "epochs": 1,
               "optimizer": "adam",
               "loss": "mean_squared_error",
               "metrics": ["mae"],
-              "batch_size": 64,
+              "batch_size": 32,
               "dropout": 0.1,
               "neurons": 70,
-              "lr_scheduler": "step_decay",
+              "lr_scheduler": "none",
               "weight_initializer": "glorot",
               "activation": "relu"}  # ReLU, Linear
-    # config = None
+    config = None
     if config is None:
         # Read in configs from .jsonl file
         configs = list()

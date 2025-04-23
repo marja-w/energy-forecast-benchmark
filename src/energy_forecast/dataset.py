@@ -19,7 +19,9 @@ from sklearn.model_selection import GroupShuffleSplit
 from sklearn.preprocessing import LabelEncoder, OneHotEncoder, MinMaxScaler, StandardScaler
 
 from src.energy_forecast.config import DATA_DIR, PROCESSED_DATA_DIR, CATEGORICAL_FEATURES, FEATURES, \
-    FEATURES_DIR, META_DIR, INTERIM_DATA_DIR, N_CLUSTER, REPORTS_DIR, CONTINUOUS_FEATURES_CYCLIC, CONTINUOUS_FEATURES
+    FEATURES_DIR, META_DIR, INTERIM_DATA_DIR, N_CLUSTER, REPORTS_DIR, CONTINUOUS_FEATURES_CYCLIC, CONTINUOUS_FEATURES, \
+    RAW_DATA_DIR
+from src.energy_forecast.data_processing.data_loader import DHDataLoader
 from src.energy_forecast.plots import plot_missing_dates_per_building, plot_clusters
 from src.energy_forecast.utils.cluster import hierarchical_clustering_on_meta_data
 from src.energy_forecast.utils.data_processing import remove_neg_diff_vals, filter_connection_errors_by_id, \
@@ -109,7 +111,7 @@ class Dataset:
 
         # META DATA
         df_meta_l = pl.read_csv(META_DIR / "legacy_meta.csv").with_columns(pl.col("plz").str.strip_chars())
-        df_meta_dh = pl.read_csv(META_DIR / "dh_meta.csv").rename({"eco_u_id": "id"})
+        df_meta_dh = pl.read_csv(META_DIR / "dh_meta.csv")
         df_lod = pl.read_csv(META_DIR / "dh_meta_lod.csv").rename(
             {"adresse": "address"})  # dh data with lod building data
         df_meta_dh = df_meta_dh.join(df_lod, on=["address"]).drop(
@@ -154,7 +156,6 @@ class Dataset:
             # create new id, needed if data series was split, but belongs to same building
             df = df.with_columns(pl.col("id").str.replace("(-\d)?-\d$", "").alias("meta_id"))
             df = df.join(df_meta.rename({"id": "meta_id"}), on="meta_id", how="left")
-            logger.info(f"Data length after joining with meta data: {len(df)}")
             df = (df.join(df_weather.with_columns(pl.col("datetime").dt.cast_time_unit("ns")), on=["datetime", "plz"],
                           how="left")
                   .with_columns(
@@ -171,7 +172,6 @@ class Dataset:
                         ).then(None).otherwise(pl.col("anzahlwhg")).name.keep()
             ).with_columns(pl.col("typ").map_batches(enc.fit_transform))  # make typ column categorical
                   )
-            logger.info(f"Data length after joining with weather data: {len(df)}")
             # get the daily consumption average for each building
             df_daily_avg = df.select(["meta_id", "datetime", "diff"]).group_by(["meta_id"]).agg(
                 pl.col("diff").sum().alias("sum"),
@@ -179,7 +179,6 @@ class Dataset:
             ).with_columns(
                 (pl.col("sum") / pl.col("count")).alias("daily_avg")).select("meta_id", "daily_avg")
             df = df.join(df_daily_avg, on="meta_id", how="left")
-            logger.info(f"Data length after joining with daily average data: {len(df)}")
             df = add_holidays(df)  # TODO: add holidays for more data
 
             # add cyclic encoded weekdays
@@ -574,12 +573,12 @@ if __name__ == '__main__':
     logger.info("Finish data loading")
 
     ds = InterpolatedDataset()
-    ds.create_and_clean(plot=False)
+    # ds.create_and_clean(plot=False)
     ds.create_clean_and_add_feat()
-
+    #
     ds = Dataset()
-    ds.create_and_clean()
-    # ds.create_clean_and_add_feat()
+    # ds.create_and_clean()
+    ds.create_clean_and_add_feat()
 
     # ds.load_feat_data()
     # df_train, df_test = ds.get_train_and_test(0.8)

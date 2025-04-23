@@ -3,7 +3,7 @@ import os
 from itertools import product
 from pathlib import Path
 from statistics import mean
-from typing import Union
+from typing import Union, Optional, List, Dict, Any, Tuple
 
 import keras_hub
 import numpy as np
@@ -44,17 +44,17 @@ def step_decay(epoch):
 
 
 class Model:
-    def __init__(self, config):
+    """Base class for all models with common functionality"""
+    def __init__(self, config: Dict[str, Any]):
         self.model = None
         self.config = config
         self.name = ""
-        pass
 
     def get_model(self):
         return self.model
 
-    def init_wandb(self, X_train: DataFrame, X_val: Union[DataFrame, None] = None) -> tuple[dict, Run]:
-        # Setup wandb training
+    def init_wandb(self, X_train: DataFrame, X_val: Optional[DataFrame] = None) -> Tuple[Dict[str, Any], Run]:
+        """Initialize wandb run and logging"""
         config = self.config
         config["train_data_length"] = len(X_train)
         if X_val is not None:
@@ -69,44 +69,77 @@ class Model:
 
     def train(self, X_train: DataFrame, y_train: DataFrame, X_val: DataFrame, y_val: DataFrame) -> Run:
         """
-        Train the model.
-        :return: wandb.Run object.
+        Trains a model using the training dataset and evaluates its performance on the validation dataset. This
+        method is designed as an abstract method, requiring subclasses to implement custom training logic. The
+        input dataset includes both features and labels for training and validation.
+
+        :param X_train: Training dataset features.
+        :type X_train: pandas.DataFrame
+        :param y_train: Training dataset labels.
+        :type y_train: pandas.DataFrame
+        :param X_val: Validation dataset features.
+        :type X_val: pandas.DataFrame
+        :param y_val: Validation dataset labels.
+        :type y_val: pandas.DataFrame
+        :return: The run object associated with the training execution.
+        :rtype: Run
         """
-        pass
+        raise NotImplementedError("Subclasses must implement this method")
 
     def train_ds(self, ds: TrainingDataset) -> Run:
+        """Train using a dataset object"""
         return self.train(ds.X_train, ds.y_train, ds.X_val, ds.y_val)
 
     def predict(self, X: DataFrame) -> np.ndarray:
+        """Make predictions with the model"""
         return self.model.predict(X)
 
-    def evaluate_ds(self, ds: TrainingDataset, run: Run) -> tuple:
+    def evaluate_ds(self, ds: TrainingDataset, run: Run) -> Tuple[float, float, float, float]:
+        """Evaluate using a dataset object"""
         return self.evaluate(ds.X_test, ds.y_test, run)
 
-    def evaluate(self, X_test: DataFrame, y_test: DataFrame, run: Run) -> tuple:
-        """
-        Evaluate predictions results of model. Log metrics to wandb.run.
-        :param X_test: Input data features
-        :param y_test: Input data labels
-        :param run: wandb run object
-        :return: metrics, MSE, MAE, NRMSE
-        """
+    def evaluate(self, X_test: DataFrame, y_test: DataFrame, run: Run) -> Tuple[float, float, float, float]:
+        """Evaluate model performance and log metrics"""
         y_hat = self.predict(X_test)
         evaluator = RegressionMetric(y_test.to_numpy(), y_hat)
         return self.log_eval_results(evaluator, run, len(y_test))
 
-    def evaluate_per_cluster(self, X_test: DataFrame, y_test: DataFrame, run: Run, clusters: dict) -> dict:
-        """
-        Evaluate the Model per cluster. Clusters are defined in clusters as mapping to indexes.
-        """
-        pass
+    def evaluate_per_cluster(self, X_test: DataFrame, y_test: DataFrame, run: Run, clusters: Dict[str, List[int]]) -> Dict[str, Any]:
+        """Evaluate model per cluster"""
+        raise NotImplementedError("Subclasses must implement this method if they support cluster evaluation")
 
-    def log_eval_results(self, evaluator, run, len_y_test: int, log: bool = True) -> tuple:
-        # logging
+    def log_eval_results(self, evaluator, run, len_y_test: int, log: bool = True) -> Tuple[float, float, float, float]:
+        """
+        Logs evaluation results and computes average metrics if the model supports
+        multiple outputs. It calculates metrics such as Mean Squared Error (MSE),
+        Mean Absolute Error (MAE), Normalized Root Mean Squared Error (NRMSE),
+        and Root Mean Squared Error (RMSE). Additionally, the function logs these
+        metrics to a run manager and summarizes metrics when dealing with multiple
+        outputs.
+
+        :param evaluator: Object capable of computing evaluation metrics. Should
+            provide methods mean_squared_error, mean_absolute_error,
+            normalized_root_mean_square_error, and root_mean_squared_error to
+            retrieve corresponding metrics.
+        :param run: Object responsible for logging data and metrics during
+            execution.
+        :param len_y_test: The length of the test dataset on which evaluation is
+            performed.
+        :type len_y_test: int
+        :param log: Boolean flag indicating whether computed metrics should be
+            logged using the provided run object.
+        :type log: bool
+        :return: Tuple containing computed metrics in the following order:
+            test_mse (float), test_mae (float), test_nrmse (float), test_rmse (float).
+        :rtype: Tuple[float, float, float, float]
+        """
+        # Get metrics
         test_mse = evaluator.mean_squared_error()
         test_mae = evaluator.mean_absolute_error()
         test_nrmse = evaluator.normalized_root_mean_square_error()
         test_rmse = evaluator.root_mean_squared_error()
+        
+        # Handle multiple outputs
         if self.config["n_out"] > 1:
             if log:
                 run.log(data={"test_nrmse_ind": test_nrmse, "test_mse_ind": test_mse, "test_mae_ind": test_mae})
@@ -118,6 +151,8 @@ class Model:
             test_rmse = mean(test_rmse)
             test_mse = mean(test_mse)
             test_mae = mean(test_mae)
+            
+        # Log metrics
         if log:
             run.log(data={"test_data_length": len_y_test,
                           "test_mse": test_mse,
@@ -129,22 +164,21 @@ class Model:
             logger.info(f"MAE Loss on test data: {test_mae}")
             logger.info(f"RMSE on test data: {test_rmse}")
             logger.info(f"NRMSE on test data: {test_nrmse}")
+            
         return test_mse, test_mae, test_nrmse, test_rmse
 
     def save(self) -> Path:
-        """
-        Save model to disk as .keras file
-        :return: path to saved model
-        """
+        """Save model to disk and to wandb"""
         model_path = MODELS_DIR / f"{self.name}.keras"
         self.model.save(model_path)
         logger.success(f"Model saved to {model_path}")
-        # copy to wandb run dir to fix symlink issue
-        os.makedirs(os.path.join(wandb.run.dir, "models"))
+        
+        # Save to wandb
+        os.makedirs(os.path.join(wandb.run.dir, "models"), exist_ok=True)
         wandb_run_dir_model = os.path.join(wandb.run.dir, os.path.join("models", os.path.basename(model_path)))
         self.model.save(wandb_run_dir_model)
-        # shutil.copy(model_path, wandb_run_dir_model)
         wandb.save(wandb_run_dir_model)
+        
         return model_path
 
 

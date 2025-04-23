@@ -40,7 +40,7 @@ data_df = pl.read_csv(dataset_daily_csv_).with_columns(pl.col("datetime").str.to
 data_df = data_df.with_columns(
     pl.coalesce(data_df.join(pl.read_csv(META_DIR / "kinergy_meta.csv"), on="id", how="left")["plz"],
                 data_df.join(pl.read_csv(META_DIR / "legacy_meta.csv"), on="id", how="left")["plz"],
-                data_df.join(pl.read_csv(META_DIR / "dh_meta.csv").rename({"eco_u_id": "id", "postal_code": "plz"}),
+                data_df.join(pl.read_csv(META_DIR / "dh_meta.csv").rename({"postal_code": "plz"}),
                              on="id", how="left")["plz"],
                 ).str.strip_chars())
 # %%
@@ -51,19 +51,14 @@ city_df
 # %% md
 # Add coordinates to every city
 # %%
-if not os.path.exists(city_df_path):
-    rows = list()
-    for plz in city_df["plz"].unique():
-        data = pgeocode.Nominatim("de").query_postal_code(str(plz))
-        rows.append({"plz": plz, "lat": data["latitude"], "lon": data["longitude"], "state": data["state_code"]})
+rows = list()
+for plz in city_df["plz"].unique():
+    data = pgeocode.Nominatim("de").query_postal_code(str(plz))
+    rows.append({"plz": plz, "lat": data["latitude"], "lon": data["longitude"], "state": data["state_code"]})
 
-    info_df = pl.DataFrame(rows)
-    city_df = city_df.join(info_df, on="plz", how="left")
-    city_df.write_csv(city_df_path)
-else:
-    city_df = pl.read_csv(city_df_path, schema_overrides={"plz": pl.String}).with_columns(
-        pl.col("min_date").str.to_datetime(),
-        pl.col("max_date").str.to_datetime())
+info_df = pl.DataFrame(rows)
+city_df = city_df.join(info_df, on="plz", how="left")
+city_df.write_csv(city_df_path)
 # %%
 # %%
 weather_dfs = list()

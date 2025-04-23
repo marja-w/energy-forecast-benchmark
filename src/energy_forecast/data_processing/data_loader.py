@@ -34,6 +34,14 @@ def update_df_with_corrections(df: pl.DataFrame, correction_csv_path: Path) -> p
         # Specify encoding if necessary, e.g., encoding="utf8"
     )
 
+    # Read update files
+    update_dir = RAW_DATA_DIR / "district_heating/update"
+    if update_dir.exists():
+        update_files = [f for f in update_dir.glob("*.csv")]
+        if update_files:
+            df_updates = pl.read_csv(update_files)
+            df = pl.concat([df, df_updates])
+
     # Step 2a: Drop entries where qmbehfl is '?'
     correction = correction.filter(pl.col('qmbehfl') != '?')
 
@@ -242,7 +250,7 @@ class LegacyDataLoader(DataLoader):
     def write_meta_data(self):
         # extract metadata
         df_meta = self.df_raw.group_by(self.meta_cols).agg()
-        meta_data_csv = RAW_DATA_DIR / f"{self.name}_meta.csv"
+        meta_data_csv = META_DIR / f"{self.name}_meta.csv"
 
         # add missing qmbehfl and anzlwhg values from correction file
         correction_csv_path = REFERENCES_DIR / "liegenschaften_missing_qm_wohnung.csv"
@@ -329,7 +337,7 @@ class KinergyDataLoader(DataLoader):
             item.update({"id": key})
             data_points.append(item)
         df_meta = pl.DataFrame(data_points).drop(["meter_ids"])
-        df_meta.write_csv(RAW_DATA_DIR / f"{self.name}_meta.csv")
+        df_meta.write_csv(META_DIR / f"{self.name}_meta.csv")
 
 
 class DHDataLoader(DataLoader):
@@ -373,6 +381,8 @@ class DHDataLoader(DataLoader):
                                       pl.col("data_provider_id") == data_provider_id,
                                       pl.col("sensor_id") == sensor_id
                                       ).sort(pl.col("time"))
+                df_sensor = df_sensor.with_columns(
+                    pl.lit(filename).alias("id"))  # filename is eco_u_id.data_provider_id
                 # print(f"Adding {len(df_sensor)} for {eco_u_id}")
                 sensors.append(df_sensor)
                 # store_csv_path = dh_data_folder / f"{filename}.csv"
@@ -386,6 +396,24 @@ class DHDataLoader(DataLoader):
 
         # merge filtered sensors to one dataframe
         df = pl.concat(sensors)
+
+        # add new data from update folder
+        update_dir = RAW_DATA_DIR / "district_heating_data" / "update"
+        if update_dir.exists():
+            update_files = [f for f in update_dir.glob("*.csv")]
+            if update_files:
+                df_updates = list()
+                for update_file in update_files:
+                    df_update = pl.read_csv(update_file)
+                    if len(df_update) < 10:
+                        continue
+                    df_updates.append(df_update)
+                df_updates = pl.concat(df_updates)
+                # recreate ids from id column
+                df_updates = df_updates.with_columns(pl.col("id").str.split_exact(".", 1).struct.rename_fields(["eco_u_id", "data_provider_id"]).alias("ids")).unnest("ids")
+                df_updates = df_updates.with_columns(pl.lit("none").alias("sensor_id"))  # placeholder for sensor id
+                df_updates = df_updates.rename({"datetime": "time"}).select(["time", "value", "sensor_id", "eco_u_id", "data_provider_id", "id"])
+                df = pl.concat([df, df_updates])
 
         # filter data for main counter of the buildings, where the value is the largest of the building
         self.main_counter = df.group_by(
@@ -408,7 +436,7 @@ class DHDataLoader(DataLoader):
         corr_sensors = ["Kielort 14", "Moorbekstraße 17", "Kielort 21", "Kielortring 14", "Kielortring 22",
                         "Kielortring 16",
                         "Ulzburger Straße 459 A", "Ulzburger Straße 461", "Kielort 22", "Kielort 19", "Kielortring 51",
-                        "Kielort 16", "Friedrichsgaber Weg 453"]
+                        "Kielort 16", "Friedrichsgaber Weg 453", "Moorbekstraße 17"]
         corr_sensors_ids = [get_id_from_address(meta_data, x) for x in corr_sensors]
         df = df.filter(~pl.col("eco_u_id").is_in(corr_sensors_ids))
 
@@ -423,26 +451,28 @@ class DHDataLoader(DataLoader):
             time_delta = "1h"
         else:
             raise ValueError(f"Unknown res type: {res}")
-        df = self.df_raw.with_columns(pl.col("time").str.to_datetime("%Y-%m-%dT%H:%M:%S%.fZ").alias("datetime"))
+        df = self.df_raw.with_columns(
+            pl.col("time")
+            .str.to_datetime("%Y-%m-%dT%H:%M:%S%.fZ", strict=False)
+            .fill_null(pl.col("time").str.to_datetime("%Y-%m-%dT%H:%M:%S.%f", strict=False)
+                       ).alias("datetime")
+        )
         df = df.group_by_dynamic(index_column="datetime", every=time_delta,
-                                 group_by=["sensor_id", "eco_u_id", "data_provider_id"]
+                                 group_by=["id", "sensor_id", "eco_u_id", "data_provider_id"]
                                  ).agg(pl.col("value").max())
 
-        df = df.rename({"eco_u_id": "id"}).select(["id", "datetime", "value", "sensor_id"]
-                                                  ).unique(subset=["id", "datetime"]
-                                                           ).sort(["id", "datetime"])
+        df = df.select(["id", "datetime", "value", "sensor_id"]
+                       ).unique(subset=["id", "datetime"]
+                                ).sort(["id", "datetime"])
         # compute diff column
         df = df.with_columns(pl.col("value").diff().over(pl.col("id")).alias("diff")).drop_nulls(subset=["diff"])
-
-        # remove erroneous logger
-        df = df.filter(~(pl.col("id") == "d00d6502-a08d-45df-99e3-7d8cd55200d1"))  # Moorbekstraße 17
 
         logger.info(f"Data length after transforming: {len(df)}")
         self.df_t = df
 
     def write_meta_data(self):
         logger.info("Writing meta data file")
-        eco_u_data_file = DATA_DIR / "district_heating_data" / "eco_u_ids.json"
+        eco_u_data_file = RAW_DATA_DIR / "district_heating_data" / "eco_u_ids.json"
         with open(eco_u_data_file, "r", encoding="UTF-8") as f:
             meta = json.loads(f.read())
         meta_data = list()
@@ -458,10 +488,11 @@ class DHDataLoader(DataLoader):
             if address in ["Kielortring 51"]:
                 type = "Sozialbau"
             meta_data.append(
-                {"eco_u_id": eco_u_id, "data_provider_id": data_provider_id, "address": address, "city": city,
+                {"id": key, "eco_u_id": eco_u_id, "data_provider_id": data_provider_id, "address": address, "city": city,
                  "postal_code": postal_code, "country": country, "typ": type})
         df_meta = pl.DataFrame(meta_data).filter(pl.struct("eco_u_id", "data_provider_id").is_in(self.main_counter))
         df_meta = df_meta.with_columns(pl.lit("district heating").alias("primary_energy"),
                                        pl.lit("kwh").alias("unit_code"))
-        logger.success(f"Writing meta data file to {RAW_DATA_DIR / f'{self.name}_meta.csv'}")
-        df_meta.write_csv(RAW_DATA_DIR / f"{self.name}_meta.csv")
+        meta_csv_ = META_DIR / f'{self.name}_meta.csv'
+        logger.success(f"Writing meta data file to {meta_csv_}")
+        df_meta.write_csv(meta_csv_)

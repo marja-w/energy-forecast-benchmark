@@ -154,18 +154,18 @@ if __name__ == '__main__':
     attributes_time = ["weekend", "holiday"]
     attributes_dh = ["ground_surface", "building_height", "storeys_above_ground"]
     config = {"project": "ma-wahl-forecast",
-              "energy": "all",
+              "energy": "district heating",
               "res": "daily",
               "interpolate": 1,
               "model": "FCN3",
               "train_len": 32,
               "n_in": 1,
-              "n_out": 1,
+              "n_out": 14,
               "n_future": 7,
               "scaler": "standard",
               "feature_code": 10,
-              "train_test_split_method": "time",
-              "epochs": 1,
+              "train_test_split_method": "date",
+              "epochs": 40,
               "optimizer": "adam",
               "loss": "mean_squared_error",
               "metrics": ["mae"],
@@ -175,7 +175,7 @@ if __name__ == '__main__':
               "lr_scheduler": "none",
               "weight_initializer": "glorot",
               "activation": "relu"}  # ReLU, Linear
-    config = None
+    # config = None
     if config is None:
         # Read in configs from .jsonl file
         configs = list()

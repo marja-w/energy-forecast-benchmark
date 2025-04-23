@@ -31,7 +31,7 @@ FIGURES_DIR = REPORTS_DIR / "figures"
 REFERENCES_DIR = PROJ_ROOT / "references"
 
 CATEGORICAL_FEATURES = ["typ", "primary_energy"]
-CATEGORICAL_FEATURES_BINARY = ["weekend"] # , "holiday"]
+CATEGORICAL_FEATURES_BINARY = ["weekend", "holiday"]
 CONTINUOUS_FEATURES = ["diff_t-1", 'hum_avg', 'hum_min', 'hum_max', 'tavg', 'tmin', 'tmax', 'prcp', 'snow', 'wdir',
                        'wspd', 'wpgt', 'pres', 'tsun', "daily_avg", "heated_area", "anzahlwhg", "ground_surface",
                        "building_height", "storeys_above_ground"]

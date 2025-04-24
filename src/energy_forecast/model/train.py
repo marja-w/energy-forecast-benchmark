@@ -19,7 +19,7 @@ try:
     from src.energy_forecast.dataset import Dataset, TrainingDataset, TrainDataset90, TimeSeriesDataset
     from src.energy_forecast.model.models import Model, FCNModel, DTModel, LinearRegressorModel, RegressionModel, \
     NNModel, \
-    RNN1Model, FCN2Model, FCN3Model, Baseline, RNN3Model, TransformerModel
+    RNN1Model, FCN2Model, FCN3Model, Baseline, RNN3Model, TransformerModel, LSTMModel
 except ModuleNotFoundError:
     import sys
     import os
@@ -55,14 +55,10 @@ def get_model(config: dict) -> Model:
         return DartsRNN(config)
     elif config["model"] == "RNN3":
         return RNN3Model(config)
-    elif config["model"] == "transformer":
-        return TransformerModel(config)
-    elif config["model"] == "block_rnn":
-        return DartsBlockRNN(config)
-    elif config["model"] == "lstm":
-        return DartsLSTM(config)
     elif config["model"] == "Transformer":
         return TransformerModel(config)
+    elif config["model"] == "lstm":
+        return LSTMModel(config)
     else:
         raise Exception(f"Unknown model {config['model']}")
 
@@ -77,7 +73,7 @@ def get_data(config: dict) -> TrainingDataset:
     Returns:
 
     """
-    darts_models = ["RNN2", "block_rnn", "lstm"]  # TODO: more time series models
+    darts_models = ["RNN2", "block_rnn"]  # TODO: more time series models
     try:
         if config["missing_data"] == 90:
             ds = TrainDataset90(config)
@@ -154,17 +150,17 @@ if __name__ == '__main__':
     attributes_time = ["weekend", "holiday"]
     attributes_dh = ["ground_surface", "building_height", "storeys_above_ground"]
     config = {"project": "ma-wahl-forecast",
-              "energy": "district heating",
+              "energy": "all",
               "res": "daily",
               "interpolate": 1,
-              "model": "FCN3",
+              "model": "Transformer",
               "train_len": 32,
-              "n_in": 1,
-              "n_out": 14,
+              "n_in": 7,
+              "n_out": 7,
               "n_future": 7,
               "scaler": "standard",
-              "feature_code": 10,
-              "train_test_split_method": "date",
+              "feature_code": 13,
+              "train_test_split_method": "time",
               "epochs": 40,
               "optimizer": "adam",
               "loss": "mean_squared_error",

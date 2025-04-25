@@ -355,7 +355,7 @@ class NNModel(Model):
         :param ds:
         :param log: whether to log metrics to wandb
         """
-        if type(ds) == TrainingDataset:
+        if isinstance(ds, TrainingDataset):
             y_test = ds.y_test
             if ds.scale:  # scaling happened in dataset
                 X_test_scaled, y_test_scaled = ds.X_test_scaled, ds.y_test_scaled

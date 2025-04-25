@@ -20,7 +20,7 @@ from sklearn.preprocessing import LabelEncoder, OneHotEncoder, MinMaxScaler, Sta
 
 from src.energy_forecast.config import DATA_DIR, PROCESSED_DATA_DIR, CATEGORICAL_FEATURES, FEATURES, \
     FEATURES_DIR, META_DIR, INTERIM_DATA_DIR, N_CLUSTER, REPORTS_DIR, CONTINUOUS_FEATURES_CYCLIC, CONTINUOUS_FEATURES, \
-    RAW_DATA_DIR, FEATURE_SET_8, FEATURE_SET_10
+    RAW_DATA_DIR, FEATURE_SET_8, FEATURE_SET_10, N_LAG
 from src.energy_forecast.data_processing.data_loader import DHDataLoader
 from src.energy_forecast.plots import plot_missing_dates_per_building, plot_clusters
 from src.energy_forecast.utils.cluster import hierarchical_clustering_on_meta_data
@@ -115,7 +115,8 @@ class Dataset:
         df_lod = pl.read_csv(META_DIR / "dh_meta_lod.csv").rename(
             {"adresse": "address"})  # dh data with lod building data
         df_meta_dh = df_meta_dh.join(df_lod, on=["address"]).drop(
-            ["id_right", "postal_code_right", "city", "postal_code"])
+            ["id_right", "typ_right", "primary_energy_right", "postal_code_right", "city", "postal_code"]
+        ).rename({"heated_area": "heated_area_lod"})  # mark heated area feature as generated
         df_meta_k = pl.read_csv(META_DIR / "kinergy_meta.csv", null_values="")
         df_meta = pl.concat(
             [df_meta_l.cast({"plz": pl.Int64}).rename(
@@ -186,10 +187,15 @@ class Dataset:
                                  pl.col("datetime").dt.day().alias("day_of_month"))
             return df
 
+        def create_lag_features(df, n: int):
+            for i in range(1, n+1):  # create diff for past 7 days
+                df = df.with_columns(pl.col("diff").shift(i).over("id").alias(f"diff_t-{i}"))
+            df = df.drop_nulls(subset=[f"diff_t-{i}" for i in range(1, n+1)])
+            return df
+
         logger.info(f"Adding {attributes} to dataset, this might take a while")
         # create diff of past day feature
-        self.df = self.df.with_columns(pl.col("diff").shift(1).over("id").alias("diff_t-1")).drop_nulls(
-            subset=["diff_t-1"])
+        self.df = create_lag_features(self.df, n=N_LAG)
         self.df = add_features(self.df).select(["id", "datetime"] + attributes)
         logger.success("Added features to dataset")
 

@@ -140,12 +140,7 @@ def train(config: dict):
 
 if __name__ == '__main__':
     configs_path = REFERENCES_DIR / "configs.jsonl"
-    attributes = ["diff", "diff_t-1"]
-    attributes_weather = ['hum_avg', 'hum_min', 'hum_max', 'tavg', 'tmin', 'tmax', 'prcp', 'snow', 'wdir',
-                          'wspd', 'wpgt', 'pres', 'tsun']
-    attributes_building = ["daily_avg", "heated_area", "anzahlwhg", "typ"]
-    attributes_time = ["weekend", "holiday"]
-    attributes_dh = ["ground_surface", "building_height", "storeys_above_ground"]
+    feature_codes = [12, 14, 13]
     config = {"project": "ma-wahl-forecast",
               "energy": "all",
               "res": "daily",
@@ -157,7 +152,7 @@ if __name__ == '__main__':
               "n_out": 7,
               "n_future": 7,
               "scaler": "standard",
-              "feature_code": 12,
+              "feature_code": 5,
               "train_test_split_method": "time",
               "epochs": 40,
               "optimizer": "adam",

@@ -30,10 +30,14 @@ FIGURES_DIR = REPORTS_DIR / "figures"
 
 REFERENCES_DIR = PROJ_ROOT / "references"
 
+N_LAG = 7
+LAG_FEATURES = [f"diff_t-{i}" for i in range(1, N_LAG+1)]
+
 CATEGORICAL_FEATURES = ["typ", "primary_energy"]
 CATEGORICAL_FEATURES_BINARY = ["weekend", "holiday"]
-CONTINUOUS_FEATURES = ["diff_t-1", 'hum_avg', 'hum_min', 'hum_max', 'tavg', 'tmin', 'tmax', 'prcp', 'snow', 'wdir',
-                       'wspd', 'wpgt', 'pres', 'tsun', "daily_avg", "heated_area", "anzahlwhg", "ground_surface",
+CONTINUOUS_FEATURES = LAG_FEATURES + ['hum_avg', 'hum_min', 'hum_max', 'tavg', 'tmin', 'tmax', 'prcp', 'snow', 'wdir',
+                       'wspd', 'wpgt', 'pres', 'tsun', "daily_avg", "heated_area", "heated_area_lod", "anzahlwhg",
+                       "ground_surface",
                        "building_height", "storeys_above_ground"]
 CONTINUOUS_FEATURES_CYCLIC = ["weekday", "day_of_month"]
 FEATURES = ["diff"] + CATEGORICAL_FEATURES + CONTINUOUS_FEATURES + CATEGORICAL_FEATURES_BINARY + CONTINUOUS_FEATURES_CYCLIC
@@ -64,10 +68,11 @@ FEATURE_SET_10 = FEATURES_DIFF + FEATURES_WEATHER + FEATURES_TIME + FEATURES_BUI
 FEATURE_SET_11 = FEATURES_DIFF + FEATURES_WEATHER + FEATURES_TIME + FEATURES_DH
 FEATURE_SET_12 = ["diff"]
 FEATURE_SET_13 = ["diff"] + FEATURES_WEATHER + FEATURES_TIME + FEATURES_BUILDING_NO_APPARTMENT
+FEATURE_SET_14 = ["diff"] + FEATURES_WEATHER + FEATURES_TIME
 
 FEATURE_SETS = {1: FEATURE_SET_1, 2: FEATURE_SET_2, 3: FEATURE_SET_3, 4: FEATURE_SET_4, 5: FEATURE_SET_5,
                 6: FEATURE_SET_6, 7: FEATURE_SET_7, 8: FEATURE_SET_8, 9: FEATURE_SET_9, 10: FEATURE_SET_10,
-                11: FEATURE_SET_11, 12: FEATURE_SET_12, 13: FEATURE_SET_13}
+                11: FEATURE_SET_11, 12: FEATURE_SET_12, 13: FEATURE_SET_13, 14: FEATURE_SET_14}
 
 # If tqdm is installed, configure loguru with tqdm.write
 # https://github.com/Delgan/loguru/issues/135

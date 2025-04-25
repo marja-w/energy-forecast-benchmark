@@ -90,7 +90,7 @@ def filter_connection_errors(df: pl.DataFrame, freq: str) -> pl.DataFrame:
     start_n = len(df)
     df = df.with_row_index()
     df = df.with_columns(pl.col("datetime").str.to_datetime())
-    m_dates = get_missing_dates(df, frequency=freq)["missing_dates"].to_list()[0]
+    m_dates = get_missing_dates(df, frequency=freq, store=False)["missing_dates"].to_list()[0]
     delta = timedelta(days=1) if freq == "D" else timedelta(hours=1)
     spans = find_time_spans(m_dates, delta)
 

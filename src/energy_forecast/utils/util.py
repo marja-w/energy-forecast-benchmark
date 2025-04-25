@@ -68,11 +68,12 @@ def sum_columns(df, address, col_1, col_2):
     return df
 
 
-def get_missing_dates(df: pl.DataFrame, frequency: str = "D") -> pl.DataFrame:
+def get_missing_dates(df: pl.DataFrame, frequency: str = "D", store=True) -> pl.DataFrame:
     """
     Get missing dates/hours, depending on frequency parameter
     :param df: DataFrame with datetime column
     :param frequency: "D" or "h"
+    :param store: if True, store missing dates info in csv file
     :return: DataFrame with missing dates as list, length of data versus length of missing dates, and start and end date
             of data series
     """
@@ -100,12 +101,13 @@ def get_missing_dates(df: pl.DataFrame, frequency: str = "D") -> pl.DataFrame:
              "per": ((len(date_list_rec) / (1 + len(date_list))) * 100), "start_date": start_date,
              "end_date": end_date})
     df_missing_dates = pl.DataFrame(missing_dates).sort(pl.col("len"), descending=True)
-    # write to csv
-    missing_dates_csv_ = REPORTS_DIR / "missing_dates.csv"
-    df_missing_dates.select(["id", "len", "n", "per", "start_date", "end_date"]).sort(pl.col("per"),
-                                                                                      descending=True).write_csv(
-        missing_dates_csv_)
-    logger.info(f"Wrote information about missing dates to {missing_dates_csv_}")
+    if store:
+        # write to csv
+        missing_dates_csv_ = REPORTS_DIR / "missing_dates.csv"
+        df_missing_dates.select(["id", "len", "n", "per", "start_date", "end_date"]).sort(pl.col("per"),
+                                                                                          descending=True).write_csv(
+            missing_dates_csv_)
+        logger.info(f"Wrote information about missing dates to {missing_dates_csv_}")
     return df_missing_dates
 
 

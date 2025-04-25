@@ -16,7 +16,8 @@ from src.energy_forecast.utils.util import store_df_wandb
 try:
     from src.energy_forecast.plots import plot_means, plot_std
     from src.energy_forecast.config import REFERENCES_DIR, FEATURE_SETS, PROCESSED_DATA_DIR, REPORTS_DIR, N_CLUSTER
-    from src.energy_forecast.dataset import Dataset, TrainingDataset, TrainDataset90, TimeSeriesDataset
+    from src.energy_forecast.dataset import Dataset, TrainingDataset, TrainDataset90, TimeSeriesDataset, \
+    TrainDatasetBuilding
     from src.energy_forecast.model.models import Model, FCNModel, DTModel, LinearRegressorModel, RegressionModel, \
     NNModel, \
     RNN1Model, FCN2Model, FCN3Model, Baseline, RNN3Model, TransformerModel, LSTMModel
@@ -73,19 +74,15 @@ def get_data(config: dict) -> TrainingDataset:
     Returns:
 
     """
-    darts_models = ["RNN2", "block_rnn"]  # TODO: more time series models
-    try:
-        if config["missing_data"] == 90:
+    match config["dataset"]:
+        case "building":
+            ds = TrainDatasetBuilding(config)
+        case "meta":
+            ds = TrainingDataset(config)
+        case "missing_data_90":
             ds = TrainDataset90(config)
-        else:
-            if config["model"] in darts_models:
-                ds = TimeSeriesDataset(config)
-            else:
-                ds = TrainingDataset(config)
-    except KeyError:
-        if config["model"] in darts_models:
-            ds = TimeSeriesDataset(config)
-        else:
+        case _:
+            logger.warning(f"Unknown dataset {config['dataset']}. Using default dataset TrainingDataset.")
             ds = TrainingDataset(config)
     interpolate = config["interpolate"]
     ds.load_feat_data(bool(interpolate))  # all data
@@ -153,13 +150,14 @@ if __name__ == '__main__':
               "energy": "all",
               "res": "daily",
               "interpolate": 1,
-              "model": "Transformer",
+              "dataset": "building",
+              "model": "RNN1",
               "train_len": 32,
               "n_in": 7,
               "n_out": 7,
               "n_future": 7,
               "scaler": "standard",
-              "feature_code": 13,
+              "feature_code": 12,
               "train_test_split_method": "time",
               "epochs": 40,
               "optimizer": "adam",

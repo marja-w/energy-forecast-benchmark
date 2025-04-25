@@ -20,7 +20,7 @@ from sklearn.preprocessing import LabelEncoder, OneHotEncoder, MinMaxScaler, Sta
 
 from src.energy_forecast.config import DATA_DIR, PROCESSED_DATA_DIR, CATEGORICAL_FEATURES, FEATURES, \
     FEATURES_DIR, META_DIR, INTERIM_DATA_DIR, N_CLUSTER, REPORTS_DIR, CONTINUOUS_FEATURES_CYCLIC, CONTINUOUS_FEATURES, \
-    RAW_DATA_DIR
+    RAW_DATA_DIR, FEATURE_SET_8, FEATURE_SET_10
 from src.energy_forecast.data_processing.data_loader import DHDataLoader
 from src.energy_forecast.plots import plot_missing_dates_per_building, plot_clusters
 from src.energy_forecast.utils.cluster import hierarchical_clustering_on_meta_data
@@ -295,6 +295,8 @@ class TrainingDataset(Dataset):
         self.test_idxs = list()
         self.val_idxs = list()
 
+        self.meta_features = self.config["features"]  # features that need to be not null
+
     def get_from_idxs(self, data_split: str, scale: bool = False) -> pl.DataFrame:
         """
         Given the name of the split (either, "train", "test", or "val), return the corresponding data for training/
@@ -416,7 +418,10 @@ class TrainingDataset(Dataset):
             pass
 
     def handle_missing_features(self):
-        self.df = self.df.drop_nulls(subset=self.config["features"])  # remove null values for used features
+        # check if needed features are all in the dataset
+        if not set(self.meta_features).issubset(set(self.df.columns)):
+            raise ValueError(f"Features {self.config['features']} not in dataset")
+        self.df = self.df.drop_nulls(subset=self.meta_features)  # remove null values for used features
 
     def preprocess(self) -> tuple[pl.DataFrame, dict]:
         """
@@ -467,6 +472,22 @@ class TrainDataset90(TrainingDataset):
         allowed_ids = md_df.filter(pl.col("per") > 90)["id"].to_list()
         self.df = self.df.filter(pl.col("id").is_in(allowed_ids))
         logger.info(f"Data length after filtering: {len(self.df)}")
+
+
+class TrainDatasetMeta(TrainingDataset):
+    """ Dataset for training the model with data that has meta data available """
+
+    def __init__(self, config: dict):
+        super().__init__(config)
+        self.meta_features = FEATURE_SET_8  # diff + weather + time + daily_avg
+
+
+class TrainDatasetBuilding(TrainingDataset):
+    """ Dataset for training the model with data that has meta and building info available """
+
+    def __init__(self, config: dict):
+        super().__init__(config)
+        self.meta_features = FEATURE_SET_10  # diff + weather + time + building (no apartment)
 
 
 class TimeSeriesDataset(TrainingDataset):

@@ -188,9 +188,11 @@ class Dataset:
             return df
 
         def create_lag_features(df, n: int):
-            for i in range(1, n+1):  # create diff for past 7 days
-                df = df.with_columns(pl.col("diff").shift(i).over("id").alias(f"diff_t-{i}"))
-            df = df.drop_nulls(subset=[f"diff_t-{i}" for i in range(1, n+1)])
+            for i in range(1, n+1):  # create diff for past n days
+                df = df.with_columns(pl.col("diff").shift(i).over("id").alias(f"diff(t-{i})"))
+            for i in range(1, n):  # t=0 already in data
+                df = df.with_columns(pl.col("diff").shift(-i).over("id").alias(f"diff(t+{i})"))
+            # df = df.drop_nulls(subset=[f"diff_t-{i}" for i in range(1, n+1)])
             return df
 
         logger.info(f"Adding {attributes} to dataset, this might take a while")
@@ -429,12 +431,26 @@ class TrainingDataset(Dataset):
             raise ValueError(f"Features {self.config['features']} not in dataset")
         self.df = self.df.drop_nulls(subset=self.meta_features)  # remove null values for used features
 
+    def drop_lag_feature_nulls(self):
+        """
+        Drop rows where needed lag features are null. Whether a lag feature is needed is determined by
+        the dataset configuration lag_in, lag_out. If these are not given, use n_in, n_out.
+        """
+        try:
+            n_in, n_out = self.config["lag_in"], self.config["lag_out"]
+            assert n_in >= self.config["n_in"] and n_out >= self.config["n_out"]
+        except KeyError:
+            n_in, n_out = self.config["n_in"], self.config["n_out"]
+        self.df = self.df.drop_nulls([f"diff(t-{i})" for i in range(1, n_in+1)])
+        self.df = self.df.drop_nulls([f"diff(t+{i})" for i in range(1, n_out)])
+
     def preprocess(self) -> tuple[pl.DataFrame, dict]:
         """
         Preprocessing of data for model training.
         :return: preprocessed DataFrame and updated config dictionary
         """
-        self.add_multiple_forecast()
+        # self.add_multiple_forecast()
+        self.drop_lag_feature_nulls()
         # select energy type
         if self.config["energy"] != "all":
             self.df = self.df.filter(pl.col("primary_energy") == self.config["energy"])

@@ -9,7 +9,7 @@ from src.energy_forecast.config import PADDING_VALUE
 
 ## DATA PROCESSING ##
 ## PROCESS DATA FOR LSTM TRAINING ##
-def series_to_supervised(df: pl.DataFrame, n_in: int = 1, n_out: int = 1, dropnan: bool = True) -> pl.DataFrame:
+def series_to_supervised(df: pl.DataFrame, n_in: int, n_out: int, lag_in: int, lag_out: int, dropnan: bool = True) -> pl.DataFrame:
     """
     Convert series to supervised learning
     Args:
@@ -29,11 +29,11 @@ def series_to_supervised(df: pl.DataFrame, n_in: int = 1, n_out: int = 1, dropna
 
     cols, names = list(), list()
     # input sequence (t-n, ... t-1)
-    for i in range(n_in, 0, -1):
+    for i in range(lag_in, 0, -1):
         cols.append(df.shift(i))
         names += [f"{c_names[j]}(t-{i})" for j in range(len(c_names))]
     # forecast sequence (t, t+1, ... t+n)
-    for i in range(0, n_out):
+    for i in range(0, lag_out):
         cols.append(df.shift(-i))
         if i == 0:
             names += [f"{c_names[j]}" for j in range(len(c_names))]
@@ -46,6 +46,13 @@ def series_to_supervised(df: pl.DataFrame, n_in: int = 1, n_out: int = 1, dropna
     if dropnan:
         agg.dropna(inplace=True)
     df = pl.DataFrame(agg)
+    # after dropping nulls for lag values use actual n_in, n_out values for features
+    if n_in < lag_in:
+        for c_name in c_names:
+            df = df.drop([f"{c_name}(t-{i})" for i in range(lag_in, n_in, -1)])
+    if n_out < lag_out:
+        for c_name in c_names:
+            df = df.drop([f"{c_name}(t+{i})" for i in range(n_out, lag_out)])
     df = df.with_columns(pl.lit(b_id).alias("id"))
     # agg["id"] = b_id
     return df

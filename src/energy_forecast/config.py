@@ -31,7 +31,7 @@ FIGURES_DIR = REPORTS_DIR / "figures"
 REFERENCES_DIR = PROJ_ROOT / "references"
 
 N_LAG = 7
-LAG_FEATURES = [f"diff_t-{i}" for i in range(1, N_LAG+1)]
+LAG_FEATURES = [f"diff(t-{i})" for i in range(1, N_LAG+1)] + [f"diff(t+{i})" for i in range(1, N_LAG)]
 
 CATEGORICAL_FEATURES = ["typ", "primary_energy"]
 CATEGORICAL_FEATURES_BINARY = ["weekend", "holiday"]
@@ -43,7 +43,7 @@ CONTINUOUS_FEATURES_CYCLIC = ["weekday", "day_of_month"]
 FEATURES = ["diff"] + CATEGORICAL_FEATURES + CONTINUOUS_FEATURES + CATEGORICAL_FEATURES_BINARY + CONTINUOUS_FEATURES_CYCLIC
 
 ## Feature Configs
-FEATURES_DIFF = ["diff", "diff_t-1"]
+FEATURES_DIFF = ["diff", "diff(t-1)"]
 FEATURES_WEATHER = ['hum_avg', 'hum_min', 'hum_max', 'tavg', 'tmin', 'tmax', 'prcp', 'snow', 'wdir', 'wspd',
                     'wpgt', 'pres', 'tsun']
 FEATURES_WEATHER_NO_SNOW = list(set(FEATURES_WEATHER) - {"snow"})

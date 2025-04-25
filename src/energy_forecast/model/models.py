@@ -460,14 +460,14 @@ class RNNModel(NNModel):
 
     def create_time_series(self, df: pl.DataFrame) -> tuple[np.ndarray, pl.DataFrame]:
         feature_names = list(set(df.columns) - {"id"})
-        test_feature = df["diff"]
-        n_in = self.config["n_in"]
-        n_out = self.config["n_out"]
-        df_pandas = df.to_pandas()
-        # df_p = df_pandas.groupby("id").apply(lambda group: series_to_supervised(group, n_in=n_in, n_out=n_out))
-        df = df.group_by("id").map_groups(lambda group: series_to_supervised(group, n_in, n_out))
+        try:
+            lag_in, lag_out = self.config["lag_in"], self.config["lag_out"]
+            assert lag_in >= self.config["n_in"] and lag_out >= self.config["n_out"]
+        except KeyError:
+            lag_in, lag_out = self.config["n_in"], self.config["n_out"]
+        n_in, n_out = self.config["n_in"], self.config["n_out"]
+        df = df.group_by("id").map_groups(lambda group: series_to_supervised(group, n_in, n_out, lag_in, lag_out))
         df = df.sort("id")
-        # assert df["diff"] == test_feature cant be the same because of removal of first n_in rows
 
         # split into input and outputs
         input_names = [f"{f}(t-{i})" for i, f in product(range(1, n_in + 1), feature_names)]

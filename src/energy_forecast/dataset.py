@@ -597,6 +597,9 @@ if __name__ == '__main__':
     # KinergyDataLoader(RAW_DATA_DIR / "kinergy", res="hourly").write_data_and_meta()
     # DHDataLoader(RAW_DATA_DIR / "district_heating_data", res="hourly").write_data_and_meta()
 
+    # meta data
+
+
     logger.info("Finish data loading")
 
     ds = InterpolatedDataset()

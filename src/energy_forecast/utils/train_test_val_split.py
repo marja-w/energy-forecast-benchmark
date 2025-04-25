@@ -50,7 +50,7 @@ def train_test_split_time_based(ds: TrainingDataset, train_per: float) -> tuple[
         train_b_df = b_df.filter(pl.col("b_idx") <= split_idx).drop(["b_idx"])
         min_len = ds.config["n_in"] + ds.config["n_out"]  # length needed for constructing one pair
         if len(train_b_df) <= min_len:  # if not one example can be produced from train series
-            # logger.info(f"Removing series of length {len(b_df)} for ID {group[0]}")
+            # logger.info(f"Removing series of length {len(b_df)} for ID {group[0]}")  # TODO dont throw away whole sensor
             discarded_ids.append(group[0])
             continue  # if series is too short, discard
 

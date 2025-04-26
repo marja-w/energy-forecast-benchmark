@@ -9,6 +9,7 @@ import darts
 import numpy as np
 import pandas as pd
 import polars as pl
+import sklearn.exceptions
 from darts import TimeSeries
 from darts.dataprocessing.transformers import Scaler, MissingValuesFiller
 from loguru import logger
@@ -187,17 +188,8 @@ class Dataset:
                                  pl.col("datetime").dt.day().alias("day_of_month"))
             return df
 
-        def create_lag_features(df, n: int):
-            for i in range(1, n+1):  # create diff for past n days
-                df = df.with_columns(pl.col("diff").shift(i).over("id").alias(f"diff(t-{i})"))
-            for i in range(1, n):  # t=0 already in data
-                df = df.with_columns(pl.col("diff").shift(-i).over("id").alias(f"diff(t+{i})"))
-            # df = df.drop_nulls(subset=[f"diff_t-{i}" for i in range(1, n+1)])
-            return df
-
         logger.info(f"Adding {attributes} to dataset, this might take a while")
         # create diff of past day feature
-        self.df = create_lag_features(self.df, n=N_LAG)
         self.df = add_features(self.df).select(["id", "datetime"] + attributes)
         logger.success("Added features to dataset")
 
@@ -273,6 +265,7 @@ class TrainingDataset(Dataset):
 
     def __init__(self, config: dict):
         # scaling parameters
+        self.df_scaled = None  # store scaled dataframe
         self.scaler_y = None
         self.scaler_X = None
         self.cont_features = None
@@ -280,6 +273,10 @@ class TrainingDataset(Dataset):
         self.scale = False  # whether scalers are fit / needed
         self.X_test_scaled = None
         self.y_test_scaled = None
+
+        self.discarded_ids = list()  # ids discarded during training test split because of insufficient length
+        self.s_ids = list()  # sensor ids without cut suffix and without discarded ids
+
         try:
             res = config["res"]
         except KeyError:
@@ -323,14 +320,11 @@ class TrainingDataset(Dataset):
             case _:
                 idxs = None
         if idxs is None: raise ValueError("Invalid value for data_split")
-        df = self.df.sort(by=["id", "datetime"]).with_row_index()
-        df = df.filter(pl.col("index").is_in(idxs))
         if scale:
-            df = df.to_pandas()
-            if self.scaler_X is not None:  # if only diff is feature, we dont scale other features
-                df[self.cont_features] = self.scaler_X.transform(df[self.cont_features])
-            df["diff"] = self.scaler_y.transform(df["diff"].to_numpy().reshape(len(df), 1))
-            df = pl.DataFrame(df)
+            df = self.df_scaled.sort(by=["id", "datetime"]).filter(pl.col("index").is_in(idxs))
+        else:
+            df = self.df.sort(by=["id", "datetime"]).with_row_index()
+            df = df.filter(pl.col("index").is_in(idxs))
         return df
 
     def get_train_df(self, scale: bool = False) -> pl.DataFrame:
@@ -397,33 +391,94 @@ class TrainingDataset(Dataset):
         Set continous features used for this training.
         """
         config = self.config
+        if config["scale_mode"] == "all":
+            # set scaler if not set yet
+            if self.scaler_X is None and self.scaler_y is None:
+                if config["scaler"] == "minmax":
+                    scaler_X = MinMaxScaler()
+                    scaler_y = MinMaxScaler()
+                elif config["scaler"] == "standard":
+                    scaler_X = StandardScaler()
+                    scaler_y = StandardScaler()
+                elif config["scaler"] == "none":
+                    self.scaler_X = None
+                    self.scaler_y = None
+                    pass
+                else:
+                    raise NotImplementedError(f"Scaler {config['scaler']} not implemented")
 
-        # set scaler if not set yet
-        if self.scaler_X is None and self.scaler_y is None:
-            if config["scaler"] == "minmax":
-                scaler_X = MinMaxScaler()
-                scaler_y = MinMaxScaler()
-            elif config["scaler"] == "standard":
-                scaler_X = StandardScaler()
-                scaler_y = StandardScaler()
-            elif config["scaler"] == "none":
-                self.scaler_X = None
-                self.scaler_y = None
+                # fit scaler
+                cont_features = list(set(config["features"]) & set(CONTINUOUS_FEATURES))
+                if len(cont_features) > 0:  # only if there are other continuous features other than diff
+                    self.scaler_X = scaler_X.fit(self.X_train[cont_features])
+                    self.cont_features = cont_features
+                    self.static_features = list(set(self.config["features"]) - set(["diff"] + self.cont_features))
+                # target variable
+                self.scaler_y = scaler_y.fit(self.y_train["diff"].to_numpy().reshape(len(self.y_train), 1))
+                self.scale = True
+
+                # transform data
+                df = self.df.to_pandas()
+                if self.config["scale_mode"] == "all":
+                    if self.scaler_X is not None:  # if only diff is feature, we dont scale other features
+                        df[self.cont_features] = self.scaler_X.transform(df[self.cont_features])
+                    df["diff"] = self.scaler_y.transform(df["diff"].to_numpy().reshape(len(df), 1))
+                self.df_scaled = pl.DataFrame(df)
+
+            else:  # already fitted
                 pass
-            else:
-                raise NotImplementedError(f"Scaler {config['scaler']} not implemented")
+        elif config["scale_mode"] == "individual":
+            if self.scaler_X is None and self.scaler_y is None:
+                # we need one scaler for each id in our data
+                s_ids = self.df.with_columns(pl.col("id").str.replace_all("(-\d)*$", "").alias("orig_id"))[
+                    "orig_id"].unique().to_list()
+                s_ids = [x for x in s_ids if x not in self.discarded_ids]
+                self.s_ids = s_ids  # for rescaling later
+                n_ids = len(s_ids)
+                if config["scaler"] == "minmax":
+                    self.scaler_X = [MinMaxScaler() for i in range(n_ids)]
+                    self.scaler_y = [MinMaxScaler() for i in range(n_ids)]
+                elif config["scaler"] == "standard":
+                    self.scaler_X = [StandardScaler() for i in range(n_ids)]
+                    self.scaler_y = [StandardScaler() for i in range(n_ids)]
+                elif config["scaler"] == "none":
+                    self.scaler_X = None
+                    self.scaler_y = None
+                    pass
+                else:
+                    raise NotImplementedError(f"Scaler {config['scaler']} not implemented")
+                # fit scaler
+                cont_features = list(set(config["features"]) & set(CONTINUOUS_FEATURES))
+                if len(cont_features) > 0:  # only if there are other continuous features other than diff
+                    self.cont_features = cont_features
+                    self.static_features = list(set(self.config["features"]) - set(["diff"] + self.cont_features))
+                for n, s_id in enumerate(s_ids):
+                    df_filter = self.get_train_df().filter(pl.col("id").str.starts_with(s_id))
+                    if len(df_filter) > 0:
+                        self.scaler_y[n].fit(df_filter["diff"].to_numpy().reshape(-1, 1))  # target variable
+                        if len(cont_features) > 0:
+                            self.scaler_X[n].fit_transform(df_filter[cont_features])  # feature
+                    else:
+                        continue
+                self.scale = True
 
-            # fit scaler
-            cont_features = list(set(config["features"]) & set(CONTINUOUS_FEATURES))
-            if len(cont_features) > 0:  # only if there are other continuous features other than diff
-                self.scaler_X = scaler_X.fit(self.X_train[cont_features])
-                self.cont_features = cont_features
-                self.static_features = list(set(self.config["features"]) - set(["diff"] + self.cont_features))
-            # target variable
-            self.scaler_y = scaler_y.fit(self.y_train["diff"].to_numpy().reshape(len(self.y_train), 1))
-            self.scale = True
-        else:  # already fitted
-            pass
+                # transform data
+                df = self.df.sort(by=["id", "datetime"]).with_row_index().to_pandas()
+                scaled_dfs = list()
+                for n, s_id in enumerate(self.s_ids):
+                    df_filter = df[df["id"].str.startswith(s_id)]  # disregard suffixes
+                    if len(df_filter) > 0:
+                        if self.scaler_X[n] is not None:  # we have continuous features
+                            try:
+                                df_filter[self.cont_features] = self.scaler_X[n].transform(df_filter[self.cont_features])
+                            except sklearn.exceptions.NotFittedError:
+                                continue
+                        df_filter["diff"] = self.scaler_y[n].transform(df_filter["diff"].to_numpy().reshape(-1, 1))
+                        scaled_dfs.append(pl.DataFrame(df_filter))  # replace values in original df
+                self.df_scaled = pl.concat(scaled_dfs, how="vertical")
+                assert len(self.train_idxs) == len(self.df_scaled.filter(pl.col("index").is_in(self.train_idxs)))
+            else:
+                pass
 
     def handle_missing_features(self):
         # check if needed features are all in the dataset
@@ -441,15 +496,25 @@ class TrainingDataset(Dataset):
             assert n_in >= self.config["n_in"] and n_out >= self.config["n_out"]
         except KeyError:
             n_in, n_out = self.config["n_in"], self.config["n_out"]
-        self.df = self.df.drop_nulls([f"diff(t-{i})" for i in range(1, n_in+1)])
+        self.df = self.df.drop_nulls([f"diff(t-{i})" for i in range(1, n_in + 1)])
         self.df = self.df.drop_nulls([f"diff(t+{i})" for i in range(1, n_out)])
+
+    def create_lag_features(self):
+        """
+        Add lag features to the data.
+        :return: None
+        """
+        for i in range(1, self.config["lag_in"] + 1):  # create diff for past n days
+            self.df = self.df.with_columns(pl.col("diff").shift(i).over("id").alias(f"diff(t-{i})"))
+        for i in range(1, self.config["lag_out"]):  # t=0 already in data
+            self.df = self.df.with_columns(pl.col("diff").shift(-i).over("id").alias(f"diff(t+{i})"))
 
     def preprocess(self) -> tuple[pl.DataFrame, dict]:
         """
         Preprocessing of data for model training.
         :return: preprocessed DataFrame and updated config dictionary
         """
-        # self.add_multiple_forecast()
+        self.create_lag_features()
         self.drop_lag_feature_nulls()
         # select energy type
         if self.config["energy"] != "all":
@@ -615,15 +680,14 @@ if __name__ == '__main__':
 
     # meta data
 
-
     logger.info("Finish data loading")
 
     ds = InterpolatedDataset()
-    # ds.create_and_clean(plot=False)
+    ds.create_and_clean(plot=False)
     ds.create_clean_and_add_feat()
     #
     ds = Dataset()
-    # ds.create_and_clean()
+    ds.create_and_clean()
     ds.create_clean_and_add_feat()
 
     # ds.load_feat_data()

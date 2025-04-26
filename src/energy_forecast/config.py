@@ -35,7 +35,7 @@ LAG_FEATURES = [f"diff(t-{i})" for i in range(1, N_LAG+1)] + [f"diff(t+{i})" for
 
 CATEGORICAL_FEATURES = ["typ", "primary_energy"]
 CATEGORICAL_FEATURES_BINARY = ["weekend", "holiday"]
-CONTINUOUS_FEATURES = LAG_FEATURES + ['hum_avg', 'hum_min', 'hum_max', 'tavg', 'tmin', 'tmax', 'prcp', 'snow', 'wdir',
+CONTINUOUS_FEATURES = ['hum_avg', 'hum_min', 'hum_max', 'tavg', 'tmin', 'tmax', 'prcp', 'snow', 'wdir',
                        'wspd', 'wpgt', 'pres', 'tsun', "daily_avg", "heated_area", "heated_area_lod", "anzahlwhg",
                        "ground_surface",
                        "building_height", "storeys_above_ground"]

@@ -55,18 +55,18 @@ def train_test_split_time_based(ds: TrainingDataset, train_per: float) -> tuple[
         min_len = lag_in + lag_out  # length needed for constructing one pair
         if len(train_b_df) <= min_len:  # if not one example can be produced from train series
             # logger.info(f"Removing series of length {len(b_df)} for ID {group[0]}")  # TODO dont throw away whole sensor
-            discarded_ids.append(group[0])
+            discarded_ids.append(group[0][0])
             continue  # if series is too short, discard
 
         test_b_df = b_df.filter((pl.col("b_idx") > split_idx).and_(pl.col("b_idx") <= split_idx_two)).drop(["b_idx"])
         if len(test_b_df) <= min_len:
             # logger.info(f"Removing series of length {len(b_df)} for ID {group[0]}")
-            discarded_ids.append(group[0])
+            discarded_ids.append(group[0][0])
             continue  # if series is too short, discard
         val_b_df = b_df.filter(pl.col("b_idx") > split_idx_two).drop(["b_idx"])
         if len(val_b_df) <= min_len:
             # logger.info(f"Removing series of length {len(b_df)} for ID {group[0]}")
-            discarded_ids.append(group[0])
+            discarded_ids.append(group[0][0])
             continue
         train_dfs.append(train_b_df)
         test_dfs.append(test_b_df)
@@ -77,6 +77,7 @@ def train_test_split_time_based(ds: TrainingDataset, train_per: float) -> tuple[
         ds.val_idxs.extend(val_b_df["index"].to_list())
 
     logger.info(f"Removed {len(discarded_ids)} series because they were too short")
+    ds.discarded_ids = discarded_ids
     logger.info(f"Remaining series: {len(train_dfs)}")
 
     # sort indexes

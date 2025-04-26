@@ -387,98 +387,129 @@ class TrainingDataset(Dataset):
 
     def fit_scalers(self):
         """
-        Fit the scalers according to the scaler stored in config on the train split.
-        Set continous features used for this training.
+        Fits scalers based on the configuration provided. This method initializes and
+        fits feature and target scalers for transforming training data based on the
+        specified scaling mode. It supports two scaling modes: "all", where a single
+        scaler is used globally across the dataset, and "individual", where separate
+        scalers are used for different subsets of the data. The function also handles
+        transformations for the training data post-fitting.
+
+        Raises an error if an unknown scaling mode is specified. If called when scalers
+        are already fitted, the method exits without re-fitting.
+
+        :raises ValueError: If an unknown scaling mode is specified.
         """
+        if self.scaler_X is not None or self.scaler_y is not None:
+            return  # already fitted
+
         config = self.config
-        if config["scale_mode"] == "all":
-            # set scaler if not set yet
-            if self.scaler_X is None and self.scaler_y is None:
-                if config["scaler"] == "minmax":
-                    scaler_X = MinMaxScaler()
-                    scaler_y = MinMaxScaler()
-                elif config["scaler"] == "standard":
-                    scaler_X = StandardScaler()
-                    scaler_y = StandardScaler()
-                elif config["scaler"] == "none":
-                    self.scaler_X = None
-                    self.scaler_y = None
-                    pass
-                else:
-                    raise NotImplementedError(f"Scaler {config['scaler']} not implemented")
+        scale_mode = config.get("scale_mode", "all")
+        scaler_type = config.get("scaler", "none")
 
-                # fit scaler
-                cont_features = list(set(config["features"]) & set(CONTINUOUS_FEATURES))
-                if len(cont_features) > 0:  # only if there are other continuous features other than diff
-                    self.scaler_X = scaler_X.fit(self.X_train[cont_features])
-                    self.cont_features = cont_features
-                    self.static_features = list(set(self.config["features"]) - set(["diff"] + self.cont_features))
-                # target variable
-                self.scaler_y = scaler_y.fit(self.y_train["diff"].to_numpy().reshape(len(self.y_train), 1))
-                self.scale = True
+        self._set_features()
 
-                # transform data
-                df = self.df.to_pandas()
-                if self.config["scale_mode"] == "all":
-                    if self.scaler_X is not None:  # if only diff is feature, we dont scale other features
-                        df[self.cont_features] = self.scaler_X.transform(df[self.cont_features])
-                    df["diff"] = self.scaler_y.transform(df["diff"].to_numpy().reshape(len(df), 1))
-                self.df_scaled = pl.DataFrame(df)
+        if scale_mode == "all":
+            self.scaler_X, self.scaler_y = self._create_scaler_pair(scaler_type)
 
-            else:  # already fitted
-                pass
-        elif config["scale_mode"] == "individual":
-            if self.scaler_X is None and self.scaler_y is None:
-                # we need one scaler for each id in our data
-                s_ids = self.df.with_columns(pl.col("id").str.replace_all("(-\d)*$", "").alias("orig_id"))[
-                    "orig_id"].unique().to_list()
-                s_ids = [x for x in s_ids if x not in self.discarded_ids]
-                self.s_ids = s_ids  # for rescaling later
-                n_ids = len(s_ids)
-                if config["scaler"] == "minmax":
-                    self.scaler_X = [MinMaxScaler() for i in range(n_ids)]
-                    self.scaler_y = [MinMaxScaler() for i in range(n_ids)]
-                elif config["scaler"] == "standard":
-                    self.scaler_X = [StandardScaler() for i in range(n_ids)]
-                    self.scaler_y = [StandardScaler() for i in range(n_ids)]
-                elif config["scaler"] == "none":
-                    self.scaler_X = None
-                    self.scaler_y = None
-                    pass
-                else:
-                    raise NotImplementedError(f"Scaler {config['scaler']} not implemented")
-                # fit scaler
-                cont_features = list(set(config["features"]) & set(CONTINUOUS_FEATURES))
-                if len(cont_features) > 0:  # only if there are other continuous features other than diff
-                    self.cont_features = cont_features
-                    self.static_features = list(set(self.config["features"]) - set(["diff"] + self.cont_features))
-                for n, s_id in enumerate(s_ids):
-                    df_filter = self.get_train_df().filter(pl.col("id").str.starts_with(s_id))
-                    if len(df_filter) > 0:
-                        self.scaler_y[n].fit(df_filter["diff"].to_numpy().reshape(-1, 1))  # target variable
-                        if len(cont_features) > 0:
-                            self.scaler_X[n].fit_transform(df_filter[cont_features])  # feature
-                    else:
-                        continue
-                self.scale = True
+            if self.scaler_X and self.cont_features:
+                # continuous features are used in training
+                self.scaler_X.fit(self.X_train[self.cont_features])
 
-                # transform data
-                df = self.df.sort(by=["id", "datetime"]).with_row_index().to_pandas()
-                scaled_dfs = list()
-                for n, s_id in enumerate(self.s_ids):
-                    df_filter = df[df["id"].str.startswith(s_id)]  # disregard suffixes
-                    if len(df_filter) > 0:
-                        if self.scaler_X[n] is not None:  # we have continuous features
-                            try:
-                                df_filter[self.cont_features] = self.scaler_X[n].transform(df_filter[self.cont_features])
-                            except sklearn.exceptions.NotFittedError:
-                                continue
-                        df_filter["diff"] = self.scaler_y[n].transform(df_filter["diff"].to_numpy().reshape(-1, 1))
-                        scaled_dfs.append(pl.DataFrame(df_filter))  # replace values in original df
-                self.df_scaled = pl.concat(scaled_dfs, how="vertical")
-                assert len(self.train_idxs) == len(self.df_scaled.filter(pl.col("index").is_in(self.train_idxs)))
-            else:
-                pass
+            self.scaler_y.fit(self.y_train["diff"].to_numpy().reshape(-1, 1))
+            self._transform_all_data()
+
+        elif scale_mode == "individual":
+            self.s_ids = self._get_scaler_ids()
+            n_ids = len(self.s_ids)
+
+            self.scaler_X, self.scaler_y = self._create_scaler_pair(scaler_type, n_ids)
+
+            if self.scaler_X and self.cont_features:
+                self.scaler_X.fit(self.X_train[self.cont_features])
+
+            for n, s_id in enumerate(self.s_ids):
+                df_filter = self.get_train_df().filter(pl.col("id").str.starts_with(s_id))
+                if len(df_filter) > 0:
+                    self.scaler_y[n].fit(df_filter["diff"].to_numpy().reshape(-1, 1))
+            self._transform_individual_data()
+        else:
+            raise ValueError(f"Unknown scale_mode: {scale_mode}")
+        self.scale = True
+
+    def _create_scaler_pair(self, scaler_type, n_ids=None):
+        """
+        Create scaler instances based on the scaler type.
+        If n_ids is provided, create a list of scalers for each id.
+
+        :param scaler_type: Type of scaler ('minmax', 'standard', 'none').
+        :param n_ids: Number of IDs if individual scalers are needed.
+
+        :return: scaler_X and scaler_y
+        """
+        if scaler_type == "none":
+            return None, None
+
+        scaler_cls = MinMaxScaler if scaler_type == "minmax" else StandardScaler
+
+        if n_ids is None:
+            return scaler_cls(), scaler_cls()
+        else:
+            return scaler_cls(), [scaler_cls() for _ in range(n_ids)]
+
+    def _set_features(self):
+        """Set continuous features used for training and static features."""
+        cont_features = list(set(self.config["features"]) & set(CONTINUOUS_FEATURES))
+        self.cont_features = cont_features
+        self.static_features = list(set(self.config["features"]) - set(["diff"] + cont_features))
+
+    def _get_scaler_ids(self):
+        """
+        Retrieve unique original IDs from the dataframe, excluding discarded IDs.
+
+        :returns: List of scaler IDs
+        """
+        s_ids = self.df.with_columns(
+            pl.col("id").str.replace_all("(-\d)*$", "").alias("orig_id")
+        )["orig_id"].unique().to_list()
+        return [x for x in s_ids if x not in self.discarded_ids]
+
+    def _transform_all_data(self):
+        """
+        Transform the entire dataset using fitted scalers for all data.
+        """
+        df = self.df.to_pandas()
+        if self.scaler_X and self.cont_features:
+            df[self.cont_features] = self.scaler_X.transform(df[self.cont_features])
+        if self.scaler_y:
+            df["diff"] = self.scaler_y.transform(df["diff"].to_numpy().reshape(len(df), 1))
+        self.df_scaled = pl.DataFrame(df)
+
+    def _transform_individual_data(self):
+        """
+        Transform the dataset by applying individual scalers for each ID.
+
+        :raises sklearn.exceptions.NotFittedError: If any scaler for target `diff` has not been
+            fitted prior to the transformation.
+        :raises AssertionError: If the length of the training indices `self.train_idxs` does not
+            match the filtered and scaled data.
+        """
+        df = self.df.sort(by=["id", "datetime"]).with_row_index().to_pandas()
+        scaled_dfs = []
+
+        for n, s_id in enumerate(self.s_ids):
+            df_filter = df[df["id"].str.startswith(s_id)]
+            if len(df_filter) > 0:
+                if self.scaler_X and self.cont_features:
+                    df_filter[self.cont_features] = self.scaler_X.transform(df_filter[self.cont_features])
+                try:
+                    df_filter["diff"] = self.scaler_y[n].transform(df_filter["diff"].to_numpy().reshape(-1, 1))
+                except sklearn.exceptions.NotFittedError:
+                    continue
+                scaled_dfs.append(pl.DataFrame(df_filter))
+
+        self.df_scaled = pl.concat(scaled_dfs, how="vertical")
+
+        assert len(self.train_idxs) == len(self.df_scaled.filter(pl.col("index").is_in(self.train_idxs)))
 
     def handle_missing_features(self):
         # check if needed features are all in the dataset

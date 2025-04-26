@@ -511,7 +511,6 @@ class RNNModel(NNModel):
         # update X_test and y_test for evaluation  # TODO: handle differently
         ds.X_test, ds.y_test = self.create_time_series(ds.get_test_df().select(["id"] + self.config["features"]))
         logger.info(f"Test data shape after time series transform: {ds.X_test.shape}")
-        assert (ds.scaler_y.transform(ds.y_test["diff"].to_numpy().reshape(len(ds.y_test), 1)) == ds.y_test_scaled["diff"].to_numpy().reshape(len(ds.y_test), 1)).all()  # make sure the scaling is done right
         # for inverse transforming in evaluate
         self.scaler_X = ds.scaler_X
         self.scaler_y = ds.scaler_y

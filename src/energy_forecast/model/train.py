@@ -1,3 +1,5 @@
+import itertools
+
 import jsonlines
 import pandas as pd
 import polars as pl
@@ -17,10 +19,10 @@ try:
     from src.energy_forecast.plots import plot_means, plot_std
     from src.energy_forecast.config import REFERENCES_DIR, FEATURE_SETS, PROCESSED_DATA_DIR, REPORTS_DIR, N_CLUSTER
     from src.energy_forecast.dataset import Dataset, TrainingDataset, TrainDataset90, TimeSeriesDataset, \
-    TrainDatasetBuilding
+        TrainDatasetBuilding
     from src.energy_forecast.model.models import Model, FCNModel, DTModel, LinearRegressorModel, RegressionModel, \
-    NNModel, \
-    RNN1Model, FCN2Model, FCN3Model, Baseline, RNN3Model, TransformerModel, LSTMModel
+        NNModel, \
+        RNN1Model, FCN2Model, FCN3Model, Baseline, RNN3Model, TransformerModel, LSTMModel
 except ModuleNotFoundError:
     import sys
     import os
@@ -106,19 +108,22 @@ def per_cluster_evaluation(baseline: Baseline, ds: TrainingDataset, m: Model,
     store_df_wandb(eval_df, "results_cluster_eval.txt")
 
 
-def train(config: dict):
+def prepare_dataset(run_config: dict) -> TrainingDataset:
     try:
-        logger.info(f"Features: {config['features']}")
+        logger.info(f"Features: {run_config['features']}")
     except KeyError:
-        config["features"] = get_features(config["feature_code"])
+        run_config["features"] = get_features(run_config["feature_code"])
     # Load the data
-    ds = get_data(config)
-
+    ds = get_data(run_config)
     # train test split
     ds = get_train_test_val_split(ds)
-
     # scaling
     ds.fit_scalers()
+    return ds, run_config
+
+
+def train(config: dict):
+    ds, config = prepare_dataset(config)
 
     # get model and baseline
     m = get_model(config)
@@ -140,13 +145,16 @@ def train(config: dict):
 
 if __name__ == '__main__':
     configs_path = REFERENCES_DIR / "configs.jsonl"
+    models = ["RNN1", "lstm", "Transformer"]
     feature_codes = [12, 14, 13]
+    n_ins = [1, 7]
+    n_outs = [1, 7]
     config = {"project": "ma-wahl-forecast",
               "energy": "all",
               "res": "daily",
               "interpolate": 1,
               "dataset": "building",
-              "model": "lstm",
+              "model": "FCN3",
               "train_len": 32,
               "lag_in": 7,
               "lag_out": 7,
@@ -154,10 +162,10 @@ if __name__ == '__main__':
               "n_out": 7,
               "n_future": 7,
               "scaler": "standard",
-              "scale_mode": "individual",  # all, individual
+              "scale_mode": "all",  # all, individual
               "feature_code": 14,
               "train_test_split_method": "time",
-              "epochs": 1,
+              "epochs": 40,
               "optimizer": "adam",
               "loss": "mean_squared_error",
               "metrics": ["mae"],
@@ -168,6 +176,7 @@ if __name__ == '__main__':
               "weight_initializer": "glorot",
               "activation": "relu"}  # ReLU, Linear
     # config = None
+    all_models = False
     if config is None:
         # Read in configs from .jsonl file
         configs = list()
@@ -178,6 +187,14 @@ if __name__ == '__main__':
         for config_dict in tqdm(configs):  # start one training for each config
             run = train(config_dict)
             run.finish()  # finish run to start new run with next config
+    elif all_models:
+        for model, feature_code, n_in, n_out in itertools.product(models, feature_codes, n_ins, n_outs):
+            config["model"] = model
+            config["feature_code"] = feature_code
+            config["n_in"] = n_in
+            config["n_out"] = n_out
+            run = train(config)
+            run.finish()
     else:
         run = train(config)
         run.finish()

@@ -302,6 +302,10 @@ class TrainingDataset(Dataset):
 
         self.meta_features = self.config["features"]  # features that need to be not null
 
+        # mapping of ids to test X and y tuples
+        self.id_to_test_series = dict()
+        self.id_to_test_series_scaled = dict()
+
     def get_from_idxs(self, data_split: str, scale: bool = False) -> pl.DataFrame:
         """
         Given the name of the split (either, "train", "test", or "val), return the corresponding data for training/
@@ -477,7 +481,7 @@ class TrainingDataset(Dataset):
         """
         Transform the entire dataset using fitted scalers for all data.
         """
-        df = self.df.to_pandas()
+        df = self.df.sort(by=["id", "datetime"]).with_row_index().to_pandas()
         if self.scaler_X and self.cont_features:
             df[self.cont_features] = self.scaler_X.transform(df[self.cont_features])
         if self.scaler_y:

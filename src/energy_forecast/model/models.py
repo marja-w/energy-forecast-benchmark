@@ -11,6 +11,7 @@ import pandas as pd
 import polars as pl
 import statsmodels.api as sm
 import wandb
+import tensorflow as tf
 
 from keras.src.callbacks import LearningRateScheduler
 from loguru import logger
@@ -18,6 +19,7 @@ from networkx.generators import trees
 from overrides import overrides
 from pandas import DataFrame
 from permetrics.regression import RegressionMetric
+from polars import DataFrame
 from sklearn import tree
 from sklearn.preprocessing import MinMaxScaler, StandardScaler
 from tensorflow import keras
@@ -25,8 +27,9 @@ from tensorflow.keras import layers, optimizers
 from wandb.integration.keras import WandbMetricsLogger
 from wandb.sdk.wandb_run import Run
 
-from src.energy_forecast.config import MODELS_DIR, CONTINUOUS_FEATURES
+from src.energy_forecast.config import MODELS_DIR, CONTINUOUS_FEATURES, REPORTS_DIR
 from src.energy_forecast.dataset import TrainingDataset
+from src.energy_forecast.plots import plot_predictions
 from src.energy_forecast.utils.time_series import series_to_supervised
 
 
@@ -45,6 +48,7 @@ def step_decay(epoch):
 
 class Model:
     """Base class for all models with common functionality"""
+
     def __init__(self, config: Dict[str, Any]):
         self.model = None
         self.config = config
@@ -104,7 +108,8 @@ class Model:
         evaluator = RegressionMetric(y_test.to_numpy(), y_hat)
         return self.log_eval_results(evaluator, run, len(y_test))
 
-    def evaluate_per_cluster(self, X_test: DataFrame, y_test: DataFrame, run: Run, clusters: Dict[str, List[int]]) -> Dict[str, Any]:
+    def evaluate_per_cluster(self, X_test: DataFrame, y_test: DataFrame, run: Run, clusters: Dict[str, List[int]]) -> \
+            Dict[str, Any]:
         """Evaluate model per cluster"""
         raise NotImplementedError("Subclasses must implement this method if they support cluster evaluation")
 
@@ -138,7 +143,7 @@ class Model:
         test_mae = evaluator.mean_absolute_error()
         test_nrmse = evaluator.normalized_root_mean_square_error()
         test_rmse = evaluator.root_mean_squared_error()
-        
+
         # Handle multiple outputs
         if self.config["n_out"] > 1:
             if log:
@@ -151,7 +156,7 @@ class Model:
             test_rmse = mean(test_rmse)
             test_mse = mean(test_mse)
             test_mae = mean(test_mae)
-            
+
         # Log metrics
         if log:
             run.log(data={"test_data_length": len_y_test,
@@ -164,7 +169,7 @@ class Model:
             logger.info(f"MAE Loss on test data: {test_mae}")
             logger.info(f"RMSE on test data: {test_rmse}")
             logger.info(f"NRMSE on test data: {test_nrmse}")
-            
+
         return test_mse, test_mae, test_nrmse, test_rmse
 
     def save(self) -> Path:
@@ -172,14 +177,19 @@ class Model:
         model_path = MODELS_DIR / f"{self.name}.keras"
         self.model.save(model_path)
         logger.success(f"Model saved to {model_path}")
-        
+
         # Save to wandb
         os.makedirs(os.path.join(wandb.run.dir, "models"), exist_ok=True)
         wandb_run_dir_model = os.path.join(wandb.run.dir, os.path.join("models", os.path.basename(model_path)))
         self.model.save(wandb_run_dir_model)
         wandb.save(wandb_run_dir_model)
-        
+
         return model_path
+
+    def load_model_from_file(self, file_path: str):
+        self.model = tf.keras.models.load_model(file_path)
+        self.model.summary()
+        logger.info(f"Successfully loaded {self.name} model from {file_path}")
 
 
 class Baseline(Model):
@@ -260,6 +270,9 @@ class NNModel(Model):
         self.scaler_X = None  # scaler of the input data
         self.scaler_y = None  # scaler of target variable
         self.cont_features = list()  # continuous features
+
+        self.target_names = ["diff"] + [f"diff(t+{i})" for i in range(1, self.config["n_out"])]
+        self.scaled = False  # whether we have already scaled data
 
     def scale_input_data(self, X: DataFrame, y: DataFrame) -> tuple[DataFrame, DataFrame]:
         """
@@ -376,6 +389,11 @@ class NNModel(Model):
         else:
             y_hat = y_hat_scaled
         evaluator = RegressionMetric(y_test.to_numpy(), y_hat)
+        test_mape = mean_absolute_percentage_error(y_test.to_numpy(), y_hat)
+        if self.config["n_out"] > 1:
+            if log: run.log({"test_mape_ind": test_mape})
+            test_mape = mean(test_mape)
+        if log: run.log({"test_mape": test_mape})
         return self.log_eval_results(evaluator, run, len(y_test), log)
 
     def evaluate_per_cluster(self, X_test: DataFrame, y_test: DataFrame, run: Run, clusters: dict) -> dict:
@@ -419,7 +437,7 @@ class FCN2Model(NNModel):
             layers.Dense(config["n_out"], activation="linear")  # perform regression
         ])
 
-    
+
 class FCN3Model(NNModel):
     def __init__(self, config):
         super().__init__(config)
@@ -431,6 +449,7 @@ class FCN3Model(NNModel):
             layers.Dropout(config['dropout']),
             layers.Dense(config["n_out"], activation="linear")  # perform regression
         ])
+
 
 class FCN4Model(NNModel):
     def __init__(self, config):
@@ -458,8 +477,8 @@ class RNNModel(NNModel):
         """
         pass
 
-    def create_time_series(self, df: pl.DataFrame) -> tuple[np.ndarray, pl.DataFrame]:
-        feature_names = list(set(df.columns) - {"id"})
+    def create_time_series(self, df: pl.DataFrame) -> tuple[DataFrame, DataFrame, dict[Any, Any]]:
+        feature_names = list(set(df.columns) - {"id", "datetime"})
         try:
             lag_in, lag_out = self.config["lag_in"], self.config["lag_out"]
             assert lag_in >= self.config["n_in"] and lag_out >= self.config["n_out"]
@@ -474,10 +493,18 @@ class RNNModel(NNModel):
         future_cov_names = [f"{f}(t+{i})" if i != 0 else f"{f}(t)" for i, f in
                             product(range(n_in), list(set(feature_names) - {"diff"}))]
         X, y = df[input_names], df[self.target_names]
-
-        # reshape input to be 3D [samples, timesteps, features] numpy array
         X = X.to_numpy().reshape((X.shape[0], n_in, len(feature_names)))
-        return X, y
+
+        # per id
+        id_to_data = dict()
+        for b_id in df["id"].unique().to_list():
+            b_df = df.filter(pl.col("id") == b_id)
+            b_X, b_y = b_df[input_names], b_df[self.target_names]
+
+            # reshape input to be 3D [samples, timesteps, features] numpy array
+            b_X = b_X.to_numpy().reshape((b_X.shape[0], n_in, len(feature_names)))
+            id_to_data[b_id] = (b_X, b_y)
+        return X, y, id_to_data
 
     @overrides
     def scale_input_data(self, X: DataFrame, y: DataFrame) -> tuple[DataFrame, DataFrame]:
@@ -496,25 +523,80 @@ class RNNModel(NNModel):
         self.scaled = True  # either way, scaling is done
 
         # create time series data from training and validation data
-        X_train, y_train = self.create_time_series(train)
+        X_train, y_train, _ = self.create_time_series(train)
         logger.info(f"Training data shape after time series transform: X {X_train.shape}, y {y_train.shape}")
-        X_val, y_val = self.create_time_series(val)
+        X_val, y_val, _ = self.create_time_series(val)
         logger.info(f"Validation data shape after time series transform: X {X_val.shape}, y {y_val.shape}")
 
         self.set_model(X_train)  # need to set model before training
 
         return super().train(X_train, y_train, X_val, y_val)
 
-    def evaluate_ds(self, ds: TrainingDataset, run: Run) -> tuple:
-        test = ds.get_test_df(ds.scale).select(["id"] + self.config["features"])
-        ds.X_test_scaled, ds.y_test_scaled = self.create_time_series(test)
+    def evaluate_ds(self, ds: TrainingDataset, run: Run, log: bool = True, plot: bool = False) -> tuple:
+        test = ds.get_test_df(ds.scale).select(["id", "datetime"] + self.config["features"])
+        ds.X_test_scaled, ds.y_test_scaled, ds.id_to_test_series_scaled = self.create_time_series(test)
         # update X_test and y_test for evaluation  # TODO: handle differently
-        ds.X_test, ds.y_test = self.create_time_series(ds.get_test_df().select(["id"] + self.config["features"]))
+        ds.X_test, ds.y_test, ds.id_to_test_series = self.create_time_series(
+            ds.get_test_df().select(["id"] + self.config["features"]))
         logger.info(f"Test data shape after time series transform: {ds.X_test.shape}")
         # for inverse transforming in evaluate
         self.scaler_X = ds.scaler_X
         self.scaler_y = ds.scaler_y
-        super().evaluate(ds, run)
+        self.evaluate(ds, run, log=log, plot=plot)
+
+    def evaluate(self, ds: Union[TrainingDataset, tuple[DataFrame, DataFrame]], run: Run, log: bool = True,
+                 plot: bool = False) -> tuple:
+        id_to_series = ds.id_to_test_series
+        id_to_series_scaled = ds.id_to_test_series_scaled
+
+        # calculate metrics for each id
+        id_to_metrics = list()
+        for b_id, (X_scaled, y_scaled) in id_to_series_scaled.items():
+            y_hat_scaled = self.predict(X_scaled)
+            if ds.scale:
+                y_hat = ds.scaler_y.inverse_transform(
+                    y_hat_scaled.reshape(len(y_hat_scaled), self.config["n_out"]))  # TODO: scaler from scaler_y list
+            else:
+                y_hat = y_hat_scaled
+
+            y = id_to_series[b_id][1].to_numpy()
+            evaluator = RegressionMetric(y, y_hat)
+            # Get metrics
+            test_mse = evaluator.mean_squared_error()
+            test_mae = evaluator.mean_absolute_error()
+            test_nrmse = evaluator.normalized_root_mean_square_error()
+            test_rmse = evaluator.root_mean_squared_error()
+            test_mape = mean_absolute_percentage_error(y, y_hat)
+
+            if self.config["n_out"] > 1:
+                test_mape = mean(test_mape)
+                test_nrmse = mean(test_nrmse)
+                test_rmse = mean(test_rmse)
+                test_mse = mean(test_mse)
+                test_mae = mean(test_mae)
+
+            b_metrics = {"id": b_id, "mape": test_mape, "mse": test_mse, "mae": test_mae, "nrmse": test_nrmse,
+                         "rmse": test_rmse}
+            id_to_metrics.append(b_metrics)
+            if log: run.log(data={"test_mse_b": test_mse,
+                                  "test_mae_b": test_mae,
+                                  "test_rmse_b": test_rmse,
+                                  "test_nrmse_b": test_nrmse,
+                                  "test_mape_b": test_mape,
+                                  })
+            if plot: plot_predictions(ds, b_id, y_hat, self.config["lag_in"], self.config["n_out"], run, self.name)
+
+        metrics_df = pl.DataFrame(id_to_metrics)
+        metrics_df.write_csv(REPORTS_DIR / "metrics" / f"{self.name}_{self.config['n_out']}_{run.id}.csv")
+
+        super().evaluate(ds, run, log=log)
+
+
+def mean_absolute_percentage_error(y_true: np.array, y_pred: np.array) -> float:
+    # To avoid division by zero, replace zeros in y_true with a very small number.
+    y_true_safe = np.where(y_true == 0, np.finfo(float).eps, y_true)
+    mape = np.mean(np.abs((y_true - y_pred) / y_true_safe), axis=0) * 100
+    return mape
 
 
 class RNN1Model(RNNModel):
@@ -543,6 +625,7 @@ class RNN3Model(RNNModel):
             layers.SimpleRNN(self.config["neurons"]),
             layers.Dense(self.config["n_out"], activation="linear")
         ])
+
 
 class LSTMModel(RNNModel):
     def __init__(self, config):
@@ -589,9 +672,11 @@ class TransformerModel2(RNNModel):
         self.model = keras.Sequential([
             input,
             encoder,
-            layers.GlobalAveragePooling1D(data_format="channels_last"),  # reduce output tensor to a vector of features for each data point
+            layers.GlobalAveragePooling1D(data_format="channels_last"),
+            # reduce output tensor to a vector of features for each data point
             output_layer
         ])
+
 
 class TransformerModel(RNNModel):
     def __init__(self, config):
@@ -636,6 +721,7 @@ class TransformerModel(RNNModel):
         outputs = layers.Dense(self.config["n_out"], activation="linear")(x)
         self.model = keras.Model(inputs=inputs, outputs=outputs)
         self.model.summary()
+
 
 class RegressionModel(Model):
     def __init__(self, config):

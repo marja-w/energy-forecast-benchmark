@@ -469,8 +469,12 @@ class NNModel(Model):
         :param log: whether to log metrics to wandb
         """
         X_test_scaled, y_test_scaled = ds.X_test_scaled, ds.y_test_scaled
-        _, y_test, ds.id_to_test_series = self.create_time_series_data_and_id_map(
+        if ds.scale:
+            _, y_test, ds.id_to_test_series = self.create_time_series_data_and_id_map(
             ds.get_test_df(scale=False).select(["id"] + self.config["features"]))
+        else:
+            y_test = y_test_scaled
+            ds.id_to_test_series = ds.id_to_test_series_scaled
 
         self.calculate_metrics_per_id(ds, run, log, plot)
 

@@ -43,7 +43,7 @@ CONTINUOUS_FEATURES_CYCLIC = ["weekday", "day_of_month"]
 FEATURES = ["diff"] + CATEGORICAL_FEATURES + CONTINUOUS_FEATURES + CATEGORICAL_FEATURES_BINARY + CONTINUOUS_FEATURES_CYCLIC
 
 ## Feature Configs
-FEATURES_DIFF = ["diff", "diff(t-1)"]
+FEATURES_DIFF = ["diff"]
 FEATURES_WEATHER = ['hum_avg', 'hum_min', 'hum_max', 'tavg', 'tmin', 'tmax', 'prcp', 'snow', 'wdir', 'wspd',
                     'wpgt', 'pres', 'tsun']
 FEATURES_WEATHER_NO_SNOW = list(set(FEATURES_WEATHER) - {"snow"})

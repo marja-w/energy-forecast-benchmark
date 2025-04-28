@@ -145,7 +145,7 @@ if __name__ == '__main__':
               "energy": "all",
               "res": "daily",
               "interpolate": 1,
-              "dataset": "meta",  # building, meta, missing_data_90
+              "dataset": "building",  # building, meta, missing_data_90
               "model": "RNN1",
               "train_len": 32,
               "lag_in": 7,
@@ -157,7 +157,7 @@ if __name__ == '__main__':
               "scale_mode": "all",  # all, individual
               "feature_code": 14,
               "train_test_split_method": "time",
-              "epochs": 40,
+              "epochs": 1,
               "optimizer": "adam",
               "loss": "mean_squared_error",
               "metrics": ["mae"],

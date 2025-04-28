@@ -34,6 +34,7 @@ def train_test_split_time_based(ds: TrainingDataset, train_per: float) -> tuple[
     df = ds.df
     df = df.sort([pl.col("id"), pl.col("datetime")])
     df = df.with_row_index()
+    ds.df = df
 
     # Group by building index and split
     train_dfs = []

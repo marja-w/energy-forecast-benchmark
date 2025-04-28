@@ -6,8 +6,8 @@ import wandb
 from typing_extensions import LiteralString
 from wandb.apis.importers.internals.internal import ROOT_DIR
 
-from src.energy_forecast.config import MODELS_DIR, PROJ_ROOT
-from src.energy_forecast.model.train import prepare_dataset, get_model, get_features
+from src.energy_forecast.config import MODELS_DIR, PROJ_ROOT, FEATURE_SETS
+from src.energy_forecast.model.train import prepare_dataset, get_model
 
 
 def download_from_wandb(run_id: str) -> LiteralString | str | bytes:
@@ -30,11 +30,11 @@ def download_from_wandb(run_id: str) -> LiteralString | str | bytes:
 
 
 if __name__ == '__main__':
-    run, path_to_model_file = download_from_wandb(run_id="p76sfrox")
+    run, path_to_model_file = download_from_wandb(run_id="c19tm14i")
 
     # get dataset
     config = run.config
-    config["features"] = get_features(config["feature_code"])
+    config["features"] = FEATURE_SETS[config["feature_code"]]
     ds, config = prepare_dataset(config)
 
     # load model

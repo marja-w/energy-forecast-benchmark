@@ -326,8 +326,7 @@ class TrainingDataset(Dataset):
         if scale:
             df = self.df_scaled.sort(by=["id", "datetime"]).filter(pl.col("index").is_in(idxs))
         else:
-            df = self.df.sort(by=["id", "datetime"]).with_row_index()
-            df = df.filter(pl.col("index").is_in(idxs))
+            df = self.df.filter(pl.col("index").is_in(idxs))
         return df
 
     def get_train_df(self, scale: bool = False) -> pl.DataFrame:
@@ -404,6 +403,9 @@ class TrainingDataset(Dataset):
         """
         if self.scaler_X is not None or self.scaler_y is not None:
             return  # already fitted
+
+        if self.config["scaler"] == "none":
+            return
 
         config = self.config
         scale_mode = config.get("scale_mode", "all")

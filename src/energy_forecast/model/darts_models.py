@@ -161,7 +161,7 @@ class DartsRNN(DartsModel):
         self.name = "RNN2"
 
     @overrides
-    def set_model(self, X_train: np.ndarray):
+    def set_model(self, input_shape: tuple):
         wandb_logger = WandbLogger(project=self.config["project"])
         self.model = DartsRNNModel(
             model="RNN",
@@ -185,7 +185,7 @@ class DartsBlockRNN(DartsModel):
         self.name = "block_rnn"
 
     @overrides
-    def set_model(self, X_train: np.ndarray):
+    def set_model(self, input_shape: tuple):
         wandb_logger = WandbLogger(project=self.config["project"])
         self.model = BlockRNNModel(
             model="RNN",
@@ -210,7 +210,7 @@ class DartsLSTM(DartsModel):
         self.name = "lstm"
 
     @overrides
-    def set_model(self, X_train: np.ndarray):
+    def set_model(self, input_shape: tuple):
         wandb_logger = WandbLogger(project=self.config["project"])
         self.model = BlockRNNModel(
             model="LSTM",
@@ -252,7 +252,6 @@ class DartsTransformer(DartsModel):
             force_reset=True,  # reset model if already exists
         )
 
-    @overrides(check_signature=False)
     def create_time_series(self, df: pl.DataFrame) -> list[TimeSeries]:
         df = df.with_columns(pl.col("datetime").dt.cast_time_unit("ns").dt.replace_time_zone(None)).to_pandas()
         series = darts.TimeSeries.from_group_dataframe(df,

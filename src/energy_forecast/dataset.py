@@ -3,7 +3,7 @@ import math
 import os
 from argparse import ArgumentError
 from itertools import product
-from typing import Union
+from typing import Union, Tuple
 
 import darts
 import numpy as np
@@ -192,14 +192,6 @@ class Dataset:
         # create diff of past day feature
         self.df = add_features(self.df).select(["id", "datetime"] + attributes)
         logger.success("Added features to dataset")
-
-    def get_train_and_test(self, train_per: float):
-        gss = GroupShuffleSplit(n_splits=1, test_size=1 - train_per, random_state=42)
-        df = self.df.with_row_index()
-        for train_idx, test_idx in gss.split(df, groups=df["id"]):
-            train_data = df.filter(pl.col("index").is_in(train_idx))
-            test_data = df.filter(pl.col("index").is_in(test_idx))
-        return train_data, test_data
 
     def save(self, output_file_path: str):
         logger.info(f"Saving {self.res} dataset to {output_file_path}")

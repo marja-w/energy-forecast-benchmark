@@ -28,13 +28,9 @@ def download_from_wandb(run_id: str) -> LiteralString | str | bytes:
     print(f"Download complete. Files are saved in: {MODELS_DIR}")
     return run, path_to_file
 
-def save_predictions_to_wandb(run: wandb.run):
-    pass
-
-
 
 if __name__ == '__main__':
-    run, path_to_model_file = download_from_wandb(run_id="9p074zal")
+    run, path_to_model_file = download_from_wandb(run_id="ebtnrbv7")
 
     # get dataset
     config = run.config
@@ -45,13 +41,5 @@ if __name__ == '__main__':
     m = get_model(config)
     m.load_model_from_file(path_to_model_file)
 
-
     # evaluate and plot predictions
     m.evaluate_ds(ds, run, log=False, plot=True)
-    # save_predictions_to_wandb(run, m)
-
-
-
-
-
-

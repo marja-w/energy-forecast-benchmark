@@ -92,10 +92,6 @@ def get_data(config: dict) -> TrainingDataset:
     return ds
 
 
-def get_features(code: int):
-    return FEATURE_SETS[code]
-
-
 def per_cluster_evaluation(baseline: Baseline, ds: TrainingDataset, m: Model,
                            wandb_run: wandb.sdk.wandb_run.Run) -> None:
     clusters = ds.compute_clusters()
@@ -108,26 +104,22 @@ def per_cluster_evaluation(baseline: Baseline, ds: TrainingDataset, m: Model,
     store_df_wandb(eval_df, "results_cluster_eval.txt")
 
 
-def prepare_dataset(run_config: dict) -> TrainingDataset:
-    try:
-        logger.info(f"Features: {run_config['features']}")
-    except KeyError:
-        run_config["features"] = get_features(run_config["feature_code"])
+def prepare_dataset(run_config: dict) -> tuple[TrainingDataset, dict]:
     # Load the data
     ds = get_data(run_config)
     # train test split
     ds = get_train_test_val_split(ds)
     # scaling
     ds.fit_scalers()
-    return ds, run_config
+    return ds, ds.config
 
 
-def train(config: dict):
-    ds, config = prepare_dataset(config)
+def train(run_config: dict):
+    ds, run_config = prepare_dataset(run_config)
 
     # get model and baseline
-    m = get_model(config)
-    baseline = Baseline(config)
+    m = get_model(run_config)
+    baseline = Baseline(run_config)
 
     # train
     run = m.train_ds(ds)
@@ -153,7 +145,7 @@ if __name__ == '__main__':
               "energy": "all",
               "res": "daily",
               "interpolate": 1,
-              "dataset": "building",
+              "dataset": "meta",  # building, meta, missing_data_90
               "model": "RNN1",
               "train_len": 32,
               "lag_in": 7,
@@ -161,11 +153,11 @@ if __name__ == '__main__':
               "n_in": 7,
               "n_out": 7,
               "n_future": 7,
-              "scaler": "standard",
+              "scaler": "none",
               "scale_mode": "all",  # all, individual
-              "feature_code": 13,
+              "feature_code": 14,
               "train_test_split_method": "time",
-              "epochs": 1,
+              "epochs": 40,
               "optimizer": "adam",
               "loss": "mean_squared_error",
               "metrics": ["mae"],
@@ -185,16 +177,16 @@ if __name__ == '__main__':
                 configs.append(config_dict)
 
         for config_dict in tqdm(configs):  # start one training for each config
-            run = train(config_dict)
-            run.finish()  # finish run to start new run with next config
+            wandb_run = train(config_dict)
+            wandb_run.finish()  # finish run to start new run with next config
     elif all_models:
         for model, feature_code, n_in, n_out in itertools.product(models, feature_codes, n_ins, n_outs):
             config["model"] = model
             config["feature_code"] = feature_code
             config["n_in"] = n_in
             config["n_out"] = n_out
-            run = train(config)
-            run.finish()
+            wandb_run = train(config)
+            wandb_run.finish()
     else:
-        run = train(config)
-        run.finish()
+        wandb_run = train(config)
+        wandb_run.finish()

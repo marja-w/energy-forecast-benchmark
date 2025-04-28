@@ -21,7 +21,7 @@ from sklearn.preprocessing import LabelEncoder, OneHotEncoder, MinMaxScaler, Sta
 
 from src.energy_forecast.config import DATA_DIR, PROCESSED_DATA_DIR, CATEGORICAL_FEATURES, FEATURES, \
     FEATURES_DIR, META_DIR, INTERIM_DATA_DIR, N_CLUSTER, REPORTS_DIR, CONTINUOUS_FEATURES_CYCLIC, CONTINUOUS_FEATURES, \
-    RAW_DATA_DIR, FEATURE_SET_8, FEATURE_SET_10, N_LAG
+    RAW_DATA_DIR, FEATURE_SET_8, FEATURE_SET_10, N_LAG, FEATURE_SETS
 from src.energy_forecast.data_processing.data_loader import DHDataLoader
 from src.energy_forecast.plots import plot_missing_dates_per_building, plot_clusters
 from src.energy_forecast.utils.cluster import hierarchical_clustering_on_meta_data
@@ -189,12 +189,11 @@ class Dataset:
             return df
 
         logger.info(f"Adding {attributes} to dataset, this might take a while")
-        # create diff of past day feature
         self.df = add_features(self.df).select(["id", "datetime"] + attributes)
         logger.success("Added features to dataset")
 
     def save(self, output_file_path: str):
-        logger.info(f"Saving {self.res} dataset to {output_file_path}")
+        logger.info(f"Saving {self.res} dataset of length {len(self.df)} to {output_file_path}")
         self.df.write_csv(output_file_path)
 
     def load_feat_data(self, interpolate: bool = False):
@@ -274,6 +273,10 @@ class TrainingDataset(Dataset):
         except KeyError:
             res = "daily"
         super().__init__(res)
+        try:
+            logger.info(f"Features: {config['features']}")
+        except KeyError:
+            config["features"] = FEATURE_SETS[config["feature_code"]]
         self.config = config
         self.corrupt_building_ids = [
             ""
@@ -297,6 +300,10 @@ class TrainingDataset(Dataset):
         # mapping of ids to test X and y tuples
         self.id_to_test_series = dict()
         self.id_to_test_series_scaled = dict()
+
+        self.name = (f"{self.config['dataset']}_{'interpolate' if self.config['interpolate'] else 'no_interpolate'}"
+                     f"_{self.res}_lag_{self.config['lag_in']}_{self.config['lag_out']}")
+        self.file_path = f"{PROCESSED_DATA_DIR}/null.csv"  # should not exist to trigger create and clean function
 
     def get_from_idxs(self, data_split: str, scale: bool = False) -> pl.DataFrame:
         """
@@ -335,6 +342,18 @@ class TrainingDataset(Dataset):
     def get_val_df(self, scale: bool = False) -> pl.DataFrame:
         return self.get_from_idxs("val", scale)
 
+    @overrides
+    def create(self):
+        super().load_feat_data(self.config["interpolate"])
+
+    @overrides
+    def clean(self, plot: bool = False) -> None:
+        pass  # already cleaned
+
+    @overrides
+    def add_features(self) -> None:
+        self.preprocess()  # updates df and config with training features
+
     def one_hot_encode(self):
         """
         One hot encode categorical features. Updates config with new feature names.
@@ -352,18 +371,6 @@ class TrainingDataset(Dataset):
             self.df = pl.DataFrame(df)
             config["features"] = list(set(config["features"]) - set(cat_features)) + list(cat_features_names)
         self.config = config
-
-    def add_multiple_forecast(self) -> None:
-        """
-        Add heat consumption of next n days/hours to data, if "n_out" greater than 1.
-        """
-        n = self.config["n_out"]
-        if n > 1:
-            df = self.df
-            for i in range(1, n):
-                df = df.with_columns(pl.col("diff").shift(-i).alias(f"diff(t+{i})"))
-            df = df.drop_nulls(["diff"] + [f"diff(t+{i})" for i in range(1, n)])
-            self.df = df
 
     def remove_corrupt_buildings(self):
         self.df = self.df.filter(~pl.col("id").is_in(self.corrupt_building_ids))
@@ -709,13 +716,13 @@ if __name__ == '__main__':
 
     logger.info("Finish data loading")
 
-    ds = InterpolatedDataset()
-    ds.create_and_clean(plot=False)
-    ds.create_clean_and_add_feat()
-    #
-    ds = Dataset()
-    ds.create_and_clean()
-    ds.create_clean_and_add_feat()
+    # ds = InterpolatedDataset()
+    # ds.create_and_clean(plot=False)
+    # ds.create_clean_and_add_feat()
+    # #
+    # ds = Dataset()
+    # ds.create_and_clean()
+    # ds.create_clean_and_add_feat()
 
     # ds.load_feat_data()
     # df_train, df_test = ds.get_train_and_test(0.8)
@@ -723,3 +730,23 @@ if __name__ == '__main__':
 
     # ds_hourly = Dataset(res="hourly")
     # ds_hourly.create_and_clean()
+
+    # freeze dataset for certain config
+    freeze_config = {"project": "ma-wahl-forecast",
+                     "energy": "all",
+                     "res": "daily",
+                     "interpolate": 1,
+                     "dataset": "building",  # building, meta, missing_data_90
+                     "model": "RNN1",
+                     "lag_in": 7,
+                     "lag_out": 7,
+                     "n_in": 7,
+                     "n_out": 7,
+                     "n_future": 7,
+                     "scaler": "none",
+                     "scale_mode": "all",  # all, individual
+                     "feature_code": 13,
+                     "train_test_split_method": "time"}  # ReLU, Linear
+
+    ds = TrainDatasetBuilding(freeze_config)
+    ds.create_clean_and_add_feat()

@@ -457,7 +457,7 @@ class NNModel(Model):
                                   })
             if plot: plot_predictions(ds, b_id, y_hat, self.config["lag_in"], self.config["n_out"], run, self.name)
         metrics_df = pl.DataFrame(id_to_metrics)
-        metrics_df.write_csv(REPORTS_DIR / "metrics" / f"{self.name}_{self.config['n_out']}_{run.id}.csv")
+        metrics_df.write_csv(REPORTS_DIR / "metrics" / f"{self.name}_{self.config['n_out']}_{run.id}.csv")  # TODO: log to wandb
 
     @overrides(check_signature=False)
     def evaluate(self, ds: Union[TrainingDataset, tuple[DataFrame, DataFrame]], run: Run, log: bool = True,
@@ -469,7 +469,8 @@ class NNModel(Model):
         :param log: whether to log metrics to wandb
         """
         X_test_scaled, y_test_scaled = ds.X_test_scaled, ds.y_test_scaled
-        _, y_test, ds.id_to_test_series = self.create_time_series_data_and_id_map(ds.get_test_df(scale=False).select(["id"] + self.config["features"]))
+        _, y_test, ds.id_to_test_series = self.create_time_series_data_and_id_map(
+            ds.get_test_df(scale=False).select(["id"] + self.config["features"]))
 
         self.calculate_metrics_per_id(ds, run, log, plot)
 

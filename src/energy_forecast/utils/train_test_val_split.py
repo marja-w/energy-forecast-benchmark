@@ -86,6 +86,9 @@ def train_test_split_time_based(ds: TrainingDataset, train_per: float) -> tuple[
     ds.test_idxs = sorted(ds.test_idxs)
     ds.val_idxs = sorted(ds.val_idxs)
 
+    assert len(set(ds.df.filter(~(pl.col("id").is_in(ds.discarded_ids)))["index"].to_list()).symmetric_difference(
+        set((ds.train_idxs + ds.test_idxs + ds.val_idxs)))) == 0  # check that all indexes that are used are present
+
     # Concatenate results
     train_df = pl.concat(train_dfs).drop("index")
     val_df = pl.concat(val_dfs).drop("index")

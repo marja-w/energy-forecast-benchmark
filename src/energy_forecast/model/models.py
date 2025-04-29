@@ -349,7 +349,7 @@ class NNModel(Model):
         # drop all columns containing target variables
         return df.drop(self.target_names)
 
-    def split_in_train_target(self, df):
+    def split_in_feature_target(self, df):
         if self.config["n_future"] > 0:
             X = df[self.input_names + self.future_cov_names]
             X = self.handle_future_covs(X)
@@ -360,12 +360,12 @@ class NNModel(Model):
 
     def create_time_series_data(self, df: DataFrame) -> tuple[Any, pl.DataFrame]:
         df = self.transform_series_to_supervised(df)
-        X, y = self.split_in_train_target(df)
+        X, y = self.split_in_feature_target(df)
         return X, y
 
     def create_time_series_data_and_id_map(self, df: pl.DataFrame) -> tuple[Any, pl.DataFrame, dict]:
         df = self.transform_series_to_supervised(df)
-        X, y = self.split_in_train_target(df)
+        X, y = self.split_in_feature_target(df)
         id_to_data = self.create_id_to_data(df)
         return X, y, id_to_data
 
@@ -374,7 +374,7 @@ class NNModel(Model):
         id_to_data = dict()
         for b_id in df["id"].unique().to_list():
             b_df = df.filter(pl.col("id") == b_id)
-            b_X, b_y = b_df[self.input_names], b_df[self.target_names]
+            b_X, b_y = self.split_in_feature_target(b_df)
             id_to_data[b_id] = (b_X, b_y)
         return id_to_data
 

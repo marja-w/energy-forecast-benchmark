@@ -208,8 +208,7 @@ def plot_predictions(ds, b_id, y_hat, lag_in, n_out, run: Optional[wandb.sdk.wan
         return plt  # store plot to wandb.Table
     else:
         # Save the plot as a PNG file
-        unique_id = datetime.timestamp(datetime.now())
-        plot_dir = REPORTS_DIR / "predictions" / f"{model_name}_{n_out}_{unique_id}"
+        plot_dir = REPORTS_DIR / "predictions" / f"{model_name}_{lag_in}_{n_out}"
         os.makedirs(plot_dir, exist_ok=True)
         plot_save_path = plot_dir / f"{b_id}.png"
         plt.savefig(plot_save_path, format='png', bbox_inches='tight')

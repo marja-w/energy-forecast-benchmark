@@ -198,6 +198,7 @@ def replace_title_values(df, titles_replace: List[Tuple[str, str]]):
             pl.when(pl.col("Title") == title_to_be_replaced).then(pl.lit(new_title)).otherwise("Title").alias("Title"))
     return df
 
+
 ## OLD COMPANY PROJECT METHODS ##
 
 def create_diff(df: pl.DataFrame):
@@ -259,12 +260,14 @@ def get_date_range_from_id(df: pl.DataFrame, gas_id: str):
 def get_address_from_id(df: pl.DataFrame, gas_id: str):
     return df.filter(pl.col("new_id") == gas_id)["adresse"].unique()[0]
 
+
 def store_df_wandb(df: pl.DataFrame, file_name: str):
     # copy to wandb run dir to fix symlink issue
     os.makedirs(os.path.join(wandb.run.dir, "reports"))
     wandb_run_dir_eval = os.path.join(wandb.run.dir, os.path.join("reports", file_name))
     df.to_pandas().to_csv(wandb_run_dir_eval, header=True, index=None, sep="\t", mode="a")
     wandb.save(wandb_run_dir_eval)
+
 
 def store_plot_wandb(plt, file_name: str):
     os.makedirs(os.path.join(wandb.run.dir, "figures"))

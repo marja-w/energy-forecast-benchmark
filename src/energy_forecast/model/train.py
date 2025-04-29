@@ -122,7 +122,7 @@ def train(run_config: dict):
     baseline = Baseline(run_config)
 
     # train
-    run = m.train_ds(ds)
+    run = m.train_ds(ds, log=run_config["log"])
 
     # Evaluate the models
     m.evaluate_ds(ds, run, log=True, plot=True)
@@ -142,22 +142,23 @@ if __name__ == '__main__':
     n_ins = [1, 7]
     n_outs = [1, 7]
     config = {"project": "ma-wahl-forecast",
+              "log": True, # whether to log to wandb
               "energy": "all",
               "res": "daily",
               "interpolate": 1,
               "dataset": "meta",  # building, meta, missing_data_90
-              "model": "FCN3",
+              "model": "RNN1",
               "train_len": 32,
               "lag_in": 7,
               "lag_out": 7,
-              "n_in": 1,
+              "n_in": 7,
               "n_out": 7,
               "n_future": 7,
               "scaler": "none",
               "scale_mode": "all",  # all, individual
               "feature_code": 14,
               "train_test_split_method": "time",
-              "epochs": 40,
+              "epochs": 100,
               "optimizer": "adam",
               "loss": "mean_squared_error",
               "metrics": ["mae"],

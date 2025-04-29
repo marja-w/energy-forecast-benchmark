@@ -1,10 +1,12 @@
 from datetime import timedelta, datetime
 from pathlib import Path
+from typing import Optional
 
 import darts
 import numpy as np
 import pandas as pd
 import polars as pl
+import wandb
 from loguru import logger
 from matplotlib import pyplot as plt
 import seaborn as sns
@@ -178,7 +180,8 @@ def plot_per_step_metrics(per_step_metrics: np.ndarray):
     plt.savefig(FIGURES_DIR / "per_step_metrics.png")
     store_plot_wandb(plt, "per_step_metrics.png")
 
-def plot_predictions(ds, b_id, y_hat, lag_in, n_out, run, model_name):
+
+def plot_predictions(ds, b_id, y_hat, lag_in, n_out, run: Optional[wandb.sdk.wandb_run.Run], model_name):
     test_df = ds.get_test_df().filter(pl.col("id") == b_id)
     train_df = ds.get_train_df().filter(pl.col("id") == b_id)
 
@@ -193,7 +196,7 @@ def plot_predictions(ds, b_id, y_hat, lag_in, n_out, run, model_name):
     plt.plot(test_df["datetime"], test_df["diff"], label='Test')
     test_dates = test_df[lag_in:]["datetime"]
     for row_id, row in enumerate(y_hat):
-        plt.plot(test_dates[row_id:row_id+n_out], row, linewidth=2, color='red')
+        plt.plot(test_dates[row_id:row_id + n_out], row, linewidth=2, color='red')
 
     plt.xlabel('Time (Day)')
     plt.ylabel('Value')
@@ -201,13 +204,17 @@ def plot_predictions(ds, b_id, y_hat, lag_in, n_out, run, model_name):
     plt.legend()
     plt.grid(True)
 
-    # Save the plot as a PNG file
-    plot_dir = REPORTS_DIR / "predictions" / f"{model_name}_{n_out}_{run.id}"
-    os.makedirs(plot_dir, exist_ok=True)
-    plot_save_path = plot_dir / f"{b_id}.png"
-    plt.savefig(plot_save_path, format='png', bbox_inches='tight')
-    logger.info(f"Plotted predictions for ID {b_id}")
-    plt.close()
+    if run:
+        return plt  # store plot to wandb.Table
+    else:
+        # Save the plot as a PNG file
+        unique_id = datetime.timestamp(datetime.now())
+        plot_dir = REPORTS_DIR / "predictions" / f"{model_name}_{n_out}_{unique_id}"
+        os.makedirs(plot_dir, exist_ok=True)
+        plot_save_path = plot_dir / f"{b_id}.png"
+        plt.savefig(plot_save_path, format='png', bbox_inches='tight')
+        logger.info(f"Plotted predictions for ID {b_id}")
+        plt.close()
 
 
 if __name__ == "__main__":

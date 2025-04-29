@@ -1,3 +1,4 @@
+import datetime
 import math
 import os
 from itertools import product
@@ -71,12 +72,14 @@ class Model:
         logger.info(f"Training {self.name} on {X_train.shape}")
         return config, run
 
-    def train(self, X_train: DataFrame, y_train: DataFrame, X_val: DataFrame, y_val: DataFrame) -> Run:
+    def train(self, X_train: DataFrame, y_train: DataFrame, X_val: DataFrame, y_val: DataFrame,
+              log: bool = False) -> Optional[Run]:
         """
         Trains a model using the training dataset and evaluates its performance on the validation dataset. This
         method is designed as an abstract method, requiring subclasses to implement custom training logic. The
         input dataset includes both features and labels for training and validation.
 
+        :param log: whether to log to wandb
         :param X_train: Training dataset features.
         :type X_train: pandas.DataFrame
         :param y_train: Training dataset labels.
@@ -90,9 +93,9 @@ class Model:
         """
         raise NotImplementedError("Subclasses must implement this method")
 
-    def train_ds(self, ds: TrainingDataset) -> Run:
+    def train_ds(self, ds: TrainingDataset, log: bool = False) -> Optional[Run]:
         """Train using a dataset object"""
-        return self.train(ds.X_train, ds.y_train, ds.X_val, ds.y_val)
+        return self.train(ds.X_train, ds.y_train, ds.X_val, ds.y_val, log)
 
     def predict(self, X: DataFrame) -> np.ndarray:
         """Make predictions with the model"""
@@ -113,7 +116,8 @@ class Model:
         """Evaluate model per cluster"""
         raise NotImplementedError("Subclasses must implement this method if they support cluster evaluation")
 
-    def log_eval_results(self, evaluator, run, len_y_test: int, log: bool = True) -> Tuple[float, float, float, float]:
+    def log_eval_results(self, evaluator, run: Optional[Run], len_y_test: int, log: bool = True) -> Tuple[
+        float, float, float, float]:
         """
         Logs evaluation results and computes average metrics if the model supports
         multiple outputs. It calculates metrics such as Mean Squared Error (MSE),
@@ -147,7 +151,7 @@ class Model:
         # Handle multiple outputs
         if self.config["n_out"] > 1:
             if log:
-                run.log(data={"test_nrmse_ind": test_nrmse, "test_mse_ind": test_mse, "test_mae_ind": test_mae})
+                if run: run.log(data={"test_nrmse_ind": test_nrmse, "test_mse_ind": test_mse, "test_mae_ind": test_mae})
                 logger.info(f"MSE Loss on test data per index: {test_mse}")
                 logger.info(f"MAE Loss on test data per index: {test_mae}")
                 logger.info(f"RMSE Loss on test data per index: {test_rmse}")
@@ -159,12 +163,13 @@ class Model:
 
         # Log metrics
         if log:
-            run.log(data={"test_data_length": len_y_test,
-                          "test_mse": test_mse,
-                          "test_mae": test_mae,
-                          "test_rmse": test_rmse,
-                          "test_nrmse": test_nrmse
-                          })
+            if run:
+                run.log(data={"test_data_length": len_y_test,
+                              "test_mse": test_mse,
+                              "test_mae": test_mae,
+                              "test_rmse": test_rmse,
+                              "test_nrmse": test_nrmse
+                              })
             logger.info(f"MSE Loss on test data: {test_mse}")
             logger.info(f"MAE Loss on test data: {test_mae}")
             logger.info(f"RMSE on test data: {test_rmse}")
@@ -269,7 +274,8 @@ class NNModel(Model):
         self.activation = config["activation"]
 
         self.input_names = [f"{f}(t-{i})" for i, f in
-                            product(range(1, self.config["n_in"] + 1), self.config["features"])] + list(set(self.config["features"]) - {"diff"})
+                            product(range(1, self.config["n_in"] + 1), self.config["features"])] + list(
+            set(self.config["features"]) - {"diff"})
         self.future_cov_names = [f"{f}(t+{i})" if i != 0 else f"{f}(t)" for i, f in
                                  product(range(self.config["n_in"]), list(set(self.config["features"]) - {"diff"}))]
         self.target_names = ["diff"] + [f"diff(t+{i})" for i in range(1, self.config["n_out"])]
@@ -367,7 +373,7 @@ class NNModel(Model):
         raise NotImplementedError("Every subclass needs to implement this method.")
 
     @overrides
-    def train_ds(self, ds: TrainingDataset) -> Run:
+    def train_ds(self, ds: TrainingDataset, log: bool = False) -> Run:
         # get data split either scaled or not
         train = ds.get_train_df(ds.scale).select(["id"] + self.config["features"])
         val = ds.get_val_df(ds.scale).select(["id"] + self.config["features"])
@@ -380,12 +386,16 @@ class NNModel(Model):
 
         self.set_model(X_train.shape)
 
-        return self.train(X_train, y_train, X_val, y_val)
+        return self.train(X_train, y_train, X_val, y_val, log)
 
     @overrides
     def train(self, X_train: Union[np.ndarray, DataFrame], y_train: DataFrame, X_val: Union[np.ndarray, DataFrame],
-              y_val: DataFrame) -> Run:
-        config, run = self.init_wandb(X_train, X_val)
+              y_val: DataFrame, log: bool = False) -> Optional[Run]:
+        if log:
+            config, run = self.init_wandb(X_train, X_val)
+        else:
+            run = None
+            config = self.config
         # early_stop = EarlyStopping(monitor='val_loss', patience=2)
         # Compile the model
         try:
@@ -396,10 +406,11 @@ class NNModel(Model):
                            loss=config["loss"],
                            metrics=["mae"])
 
-        if self.lr_callback is None:
-            train_callbacks = [WandbMetricsLogger()]
-        else:
-            train_callbacks = [self.lr_callback, WandbMetricsLogger()]
+        train_callbacks = []
+        if self.lr_callback is not None:
+            train_callbacks.append(self.lr_callback)
+        if log:
+            train_callbacks.append(WandbMetricsLogger())
 
         self.model.summary()
         # Train the model
@@ -412,16 +423,18 @@ class NNModel(Model):
         logger.success("Model training complete.")
         return run
 
-    def evaluate_ds(self, ds: TrainingDataset, run: Run, log: bool = True, plot: bool = False) -> tuple:
+    def evaluate_ds(self, ds: TrainingDataset, run: Optional[Run], log: bool = True, plot: bool = False) -> tuple:
         # get data split either scaled or not
         test = ds.get_test_df(ds.scale).select(["id", "datetime"] + self.config["features"])
         ds.X_test_scaled, ds.y_test_scaled, ds.id_to_test_series_scaled = self.create_time_series_data_and_id_map(test)
         return self.evaluate(ds, run, log=log, plot=plot)
 
-    def calculate_metrics_per_id(self, ds: TrainingDataset, run: wandb.run, log: bool = True, plot: bool = False):
+    def calculate_metrics_per_id(self, ds: TrainingDataset, run: Optional[Run], log: bool = True, plot: bool = False):
         # calculate metrics for each id
         id_to_test_series = ds.id_to_test_series
         id_to_metrics = list()
+        if run:
+            wandb_table = wandb.Table(columns=["id", "predictions", "mape", "mse", "mae", "nrmse", "rmse"])
         for b_id, (X_scaled, y_scaled) in ds.id_to_test_series_scaled.items():
             y_hat_scaled = self.predict(X_scaled)
             if ds.scale:
@@ -446,21 +459,24 @@ class NNModel(Model):
                 test_mse = mean(test_mse)
                 test_mae = mean(test_mae)
 
-            b_metrics = {"id": b_id, "mape": test_mape, "mse": test_mse, "mae": test_mae, "nrmse": test_nrmse,
-                         "rmse": test_rmse}
-            id_to_metrics.append(b_metrics)
-            if log: run.log(data={"test_mse_b": test_mse,
-                                  "test_mae_b": test_mae,
-                                  "test_rmse_b": test_rmse,
-                                  "test_nrmse_b": test_nrmse,
-                                  "test_mape_b": test_mape,
-                                  })
-            if plot: plot_predictions(ds, b_id, y_hat, self.config["lag_in"], self.config["n_out"], run, self.name)
+            if plot:
+                plt = plot_predictions(ds, b_id, y_hat, self.config["lag_in"], self.config["n_out"], run, self.name)
+                if run:
+                    wandb_table.add_data(b_id, wandb.Image(plt), test_mape, test_mse, test_mae, test_nrmse, test_rmse)
+                    plt.close()
+            if not run:
+                b_metrics = {"id": b_id, "mape": test_mape, "mse": test_mse, "mae": test_mae, "nrmse": test_nrmse,
+                             "rmse": test_rmse}
+                id_to_metrics.append(b_metrics)
         metrics_df = pl.DataFrame(id_to_metrics)
-        metrics_df.write_csv(REPORTS_DIR / "metrics" / f"{self.name}_{self.config['n_out']}_{run.id}.csv")  # TODO: log to wandb
+        if run:
+            run.log({"building_metrics": wandb_table})
+        else:
+            metrics_df.write_csv(
+                REPORTS_DIR / "metrics" / f"{self.name}_{self.config['n_out']}_{datetime.datetime.timestamp(datetime.datetime.now())}.csv")  # TODO: log to wandb
 
     @overrides(check_signature=False)
-    def evaluate(self, ds: Union[TrainingDataset, tuple[DataFrame, DataFrame]], run: Run, log: bool = True,
+    def evaluate(self, ds: Union[TrainingDataset, tuple[DataFrame, DataFrame]], run: Optional[Run], log: bool = True,
                  plot: bool = False) -> tuple:
         """
         Evaluate the NNModel on the test data. Log metrics to wandb.
@@ -471,7 +487,7 @@ class NNModel(Model):
         X_test_scaled, y_test_scaled = ds.X_test_scaled, ds.y_test_scaled
         if ds.scale:
             _, y_test, ds.id_to_test_series = self.create_time_series_data_and_id_map(
-            ds.get_test_df(scale=False).select(["id"] + self.config["features"]))
+                ds.get_test_df(scale=False).select(["id"] + self.config["features"]))
         else:
             y_test = y_test_scaled
             ds.id_to_test_series = ds.id_to_test_series_scaled
@@ -497,7 +513,7 @@ class NNModel(Model):
         if self.config["n_out"] > 1:
             if log: run.log({"test_mape_ind": test_mape})
             test_mape = mean(test_mape)
-        if log: run.log({"test_mape": test_mape})
+        if run: run.log({"test_mape": test_mape})
         return self.log_eval_results(evaluator, run, len(y_test), log)
 
     def evaluate_per_cluster(self, X_test: DataFrame, y_test: DataFrame, run: Run, clusters: dict) -> dict:
@@ -577,6 +593,11 @@ class RNNModel(NNModel):
         super().__init__(config)
         self.target_names = ["diff"] + [f"diff(t+{i})" for i in range(1, self.config["n_out"])]
         self.scaled = False  # whether we have already scaled data
+
+        self.input_names = list(
+            set(self.config["features"]) - {"diff"}) + [f"{f}(t-{i})" for i, f in
+                                                        product(range(1, self.config["n_in"] + 1),
+                                                                self.config["features"])]  # TODO use diff but mask diff=t
 
     @overrides
     def create_id_to_data(self, df) -> dict:
@@ -749,7 +770,7 @@ class RegressionModel(Model):
         super().__init__(config)
 
     @overrides
-    def train_ds(self, ds: TrainingDataset) -> Run:
+    def train_ds(self, ds: TrainingDataset, log: bool = True) -> Optional[Run]:
         config, run = self.init_wandb(ds.X_train, None)
         self.fit(ds.X_train, ds.y_train)
         return run

@@ -28,7 +28,7 @@ from tensorflow.keras import layers, optimizers
 from wandb.integration.keras import WandbMetricsLogger
 from wandb.sdk.wandb_run import Run
 
-from src.energy_forecast.config import MODELS_DIR, CONTINUOUS_FEATURES, REPORTS_DIR
+from src.energy_forecast.config import MODELS_DIR, CONTINUOUS_FEATURES, REPORTS_DIR, MASKING_VALUE
 from src.energy_forecast.dataset import TrainingDataset
 from src.energy_forecast.plots import plot_predictions
 from src.energy_forecast.utils.time_series import series_to_supervised
@@ -274,10 +274,10 @@ class NNModel(Model):
         self.activation = config["activation"]
 
         self.input_names = [f"{f}(t-{i})" for i, f in
-                            product(range(1, self.config["n_in"] + 1), self.config["features"])] + list(
-            set(self.config["features"]) - {"diff"})
-        self.future_cov_names = [f"{f}(t+{i})" if i != 0 else f"{f}(t)" for i, f in
-                                 product(range(self.config["n_in"]), list(set(self.config["features"]) - {"diff"}))]
+                            product(range(self.config["n_in"], 0, -1), self.config["features"])]
+        self.future_cov_names = [f"{f}(t+{i})" if i != 0 else f"{f}" for i, f in
+                                 product(range(self.config["n_future"]),
+                                         self.config["features"])]  # TODO use diff but mask diff=t
         self.target_names = ["diff"] + [f"diff(t+{i})" for i in range(1, self.config["n_out"])]
         self.scaled = False  # whether we have already scaled data
 
@@ -345,14 +345,27 @@ class NNModel(Model):
         df = df.sort(["id"])
         return df
 
+    def handle_future_covs(self, df: pl.DataFrame) -> pl.DataFrame:
+        # drop all columns containing target variables
+        return df.drop(self.target_names)
+
+    def split_in_train_target(self, df):
+        if self.config["n_future"] > 0:
+            X = df[self.input_names + self.future_cov_names]
+            X = self.handle_future_covs(X)
+            y = df[self.target_names]
+        else:
+            X, y = df[self.input_names], df[self.target_names]
+        return X, y
+
     def create_time_series_data(self, df: DataFrame) -> tuple[Any, pl.DataFrame]:
-        df = self.transform_series_to_supervised(df)  # TODO: handle static covariates
-        X, y = df[self.input_names], df[self.target_names]
+        df = self.transform_series_to_supervised(df)
+        X, y = self.split_in_train_target(df)
         return X, y
 
     def create_time_series_data_and_id_map(self, df: pl.DataFrame) -> tuple[Any, pl.DataFrame, dict]:
         df = self.transform_series_to_supervised(df)
-        X, y = df[self.input_names], df[self.target_names]
+        X, y = self.split_in_train_target(df)
         id_to_data = self.create_id_to_data(df)
         return X, y, id_to_data
 
@@ -423,18 +436,12 @@ class NNModel(Model):
         logger.success("Model training complete.")
         return run
 
-    def evaluate_ds(self, ds: TrainingDataset, run: Optional[Run], log: bool = True, plot: bool = False) -> tuple:
-        # get data split either scaled or not
-        test = ds.get_test_df(ds.scale).select(["id", "datetime"] + self.config["features"])
-        ds.X_test_scaled, ds.y_test_scaled, ds.id_to_test_series_scaled = self.create_time_series_data_and_id_map(test)
-        return self.evaluate(ds, run, log=log, plot=plot)
-
     def calculate_metrics_per_id(self, ds: TrainingDataset, run: Optional[Run], log: bool = True, plot: bool = False):
         # calculate metrics for each id
         id_to_test_series = ds.id_to_test_series
         id_to_metrics = list()
         if run:
-            wandb_table = wandb.Table(columns=["id", "predictions", "mape", "mse", "mae", "nrmse", "rmse"])
+            wandb_table = wandb.Table(columns=["id", "predictions", "mape", "mse", "mae", "nrmse", "rmse", "avg_diff"])
         for b_id, (X_scaled, y_scaled) in ds.id_to_test_series_scaled.items():
             y_hat_scaled = self.predict(X_scaled)
             if ds.scale:
@@ -448,8 +455,8 @@ class NNModel(Model):
             # Get metrics
             test_mse = evaluator.mean_squared_error()
             test_mae = evaluator.mean_absolute_error()
-            test_nrmse = evaluator.normalized_root_mean_square_error()
             test_rmse = evaluator.root_mean_squared_error()
+            test_nrmse = test_rmse / len(y)
             test_mape = mean_absolute_percentage_error(y, y_hat)
 
             if self.config["n_out"] > 1:
@@ -462,11 +469,11 @@ class NNModel(Model):
             if plot:
                 plt = plot_predictions(ds, b_id, y_hat, self.config["lag_in"], self.config["n_out"], run, self.name)
                 if run:
-                    wandb_table.add_data(b_id, wandb.Image(plt), test_mape, test_mse, test_mae, test_nrmse, test_rmse)
+                    wandb_table.add_data(b_id, wandb.Image(plt), test_mape, test_mse, test_mae, test_nrmse, test_rmse, np.mean(y))
                     plt.close()
             if not run:
                 b_metrics = {"id": b_id, "mape": test_mape, "mse": test_mse, "mae": test_mae, "nrmse": test_nrmse,
-                             "rmse": test_rmse}
+                             "rmse": test_rmse, "avg_diff": np.mean(y)}
                 id_to_metrics.append(b_metrics)
         metrics_df = pl.DataFrame(id_to_metrics)
         if run:
@@ -476,14 +483,16 @@ class NNModel(Model):
                 REPORTS_DIR / "metrics" / f"{self.name}_{self.config['n_out']}_{datetime.datetime.timestamp(datetime.datetime.now())}.csv")  # TODO: log to wandb
 
     @overrides(check_signature=False)
-    def evaluate(self, ds: Union[TrainingDataset, tuple[DataFrame, DataFrame]], run: Optional[Run], log: bool = True,
-                 plot: bool = False) -> tuple:
+    def evaluate(self, ds: TrainingDataset, run: Optional[Run], log: bool = True, plot: bool = False) -> tuple:
         """
         Evaluate the NNModel on the test data. Log metrics to wandb.
         :param run:
         :param ds:
         :param log: whether to log metrics to wandb
         """
+        # get data split either scaled or not
+        test = ds.get_test_df(ds.scale).select(["id", "datetime"] + self.config["features"])
+        ds.X_test_scaled, ds.y_test_scaled, ds.id_to_test_series_scaled = self.create_time_series_data_and_id_map(test)
         X_test_scaled, y_test_scaled = ds.X_test_scaled, ds.y_test_scaled
         if ds.scale:
             _, y_test, ds.id_to_test_series = self.create_time_series_data_and_id_map(
@@ -594,11 +603,6 @@ class RNNModel(NNModel):
         self.target_names = ["diff"] + [f"diff(t+{i})" for i in range(1, self.config["n_out"])]
         self.scaled = False  # whether we have already scaled data
 
-        self.input_names = list(
-            set(self.config["features"]) - {"diff"}) + [f"{f}(t-{i})" for i, f in
-                                                        product(range(1, self.config["n_in"] + 1),
-                                                                self.config["features"])]  # TODO use diff but mask diff=t
-
     @overrides
     def create_id_to_data(self, df) -> dict:
         # per id
@@ -613,25 +617,25 @@ class RNNModel(NNModel):
         return id_to_data
 
     @overrides
+    def handle_future_covs(self, df: pl.DataFrame) -> pl.DataFrame:
+        # mask target variable columns, since we can not drop them
+        df = df.to_pandas()
+        df[self.target_names] = MASKING_VALUE
+        return pl.DataFrame(df)
+
+    @overrides
     def create_time_series_data(self, df: pl.DataFrame) -> tuple[Any, DataFrame]:
         X, y = super().create_time_series_data(df)
-        X = X.to_numpy().reshape((X.shape[0], self.config["n_in"], len(self.config["features"])))
+        X = X.to_numpy().reshape(
+            (X.shape[0], self.config["n_in"] + self.config["n_future"], len(self.config["features"])))
         return X, y
 
     @overrides
     def create_time_series_data_and_id_map(self, df: pl.DataFrame) -> tuple[Any, pl.DataFrame, dict]:
         X, y, id_to_data = super().create_time_series_data_and_id_map(df)
-        X = X.to_numpy().reshape((X.shape[0], self.config["n_in"], len(self.config["features"])))
+        X = X.to_numpy().reshape(
+            (X.shape[0], self.config["n_in"] + self.config["n_future"], len(self.config["features"])))
         return X, y, id_to_data
-
-    @overrides
-    def scale_input_data(self, X: DataFrame, y: DataFrame) -> tuple[DataFrame, DataFrame]:
-        """ Override method so it doesnt scale in super().train() """
-        if not self.scaled:
-            self.scaled = True
-            return super().scale_input_data(X, y)
-        else:
-            return X, y
 
 
 def mean_absolute_percentage_error(y_true: np.array, y_pred: np.array) -> float:
@@ -648,8 +652,11 @@ class RNN1Model(RNNModel):
 
     @overrides
     def set_model(self, input_shape: tuple):
+        input_shape = (input_shape[1], input_shape[2])
         self.model = keras.Sequential([
-            layers.SimpleRNN(self.config["neurons"], input_shape=(input_shape[1], input_shape[2])),
+            keras.Input(shape=input_shape),
+            layers.Masking(mask_value=MASKING_VALUE),
+            layers.SimpleRNN(self.config["neurons"]),
             layers.Dropout(self.config['dropout']),
             layers.Dense(self.config["n_out"], activation="linear")
         ])

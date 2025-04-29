@@ -28,7 +28,7 @@ from src.energy_forecast.utils.cluster import hierarchical_clustering_on_meta_da
 from src.energy_forecast.utils.data_processing import remove_neg_diff_vals, filter_connection_errors_by_id, \
     filter_outliers_by_id, filter_flat_lines_by_id, split_series_by_id_list, interpolate_values_by_id, \
     remove_positive_jumps, split_series_by_id, remove_null_series_by_id
-from src.energy_forecast.utils.time_series import sensors_to_supervised, series_to_supervised
+from src.energy_forecast.utils.time_series import series_to_supervised
 from src.energy_forecast.utils.util import get_missing_dates
 
 

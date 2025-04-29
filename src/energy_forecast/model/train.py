@@ -125,7 +125,7 @@ def train(run_config: dict):
     run = m.train_ds(ds, log=run_config["log"])
 
     # Evaluate the models
-    m.evaluate_ds(ds, run, log=True, plot=True)
+    m.evaluate(ds, run, log=True, plot=True)
     baseline.evaluate(ds, run)
 
     # per_cluster_evaluation(baseline, ds, m, run)
@@ -153,12 +153,12 @@ if __name__ == '__main__':
               "lag_out": 7,
               "n_in": 7,
               "n_out": 7,
-              "n_future": 7,
+              "n_future": 0,
               "scaler": "none",
               "scale_mode": "all",  # all, individual
               "feature_code": 14,
               "train_test_split_method": "time",
-              "epochs": 100,
+              "epochs": 1,
               "optimizer": "adam",
               "loss": "mean_squared_error",
               "metrics": ["mae"],

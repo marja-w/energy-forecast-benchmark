@@ -8,7 +8,7 @@ load_dotenv()
 
 # other variables
 N_CLUSTER = 3  # number of clusters for clustering
-PADDING_VALUE = -99  # value for padding target variables of a time series when creating training data
+MASKING_VALUE = -99  # value for padding target variables of a time series when creating training data
 
 # Paths
 PROJ_ROOT = Path(__file__).resolve().parents[2]  # energy-forecast-wahl/src/energy_forecast

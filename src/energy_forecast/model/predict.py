@@ -30,7 +30,7 @@ def download_from_wandb(run_id: str) -> LiteralString | str | bytes:
 
 
 if __name__ == '__main__':
-    run, path_to_model_file = download_from_wandb(run_id="c19tm14i")
+    run, path_to_model_file = download_from_wandb(run_id="8ggm6ii5")
 
     # get dataset
     config = run.config

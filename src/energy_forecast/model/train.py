@@ -125,7 +125,7 @@ def train(run_config: dict):
     run = m.train_ds(ds)
 
     # Evaluate the models
-    m.evaluate_ds(ds, run)
+    m.evaluate_ds(ds, run, log=True, plot=True)
     baseline.evaluate(ds, run)
 
     # per_cluster_evaluation(baseline, ds, m, run)
@@ -145,19 +145,19 @@ if __name__ == '__main__':
               "energy": "all",
               "res": "daily",
               "interpolate": 1,
-              "dataset": "building",  # building, meta, missing_data_90
-              "model": "RNN1",
+              "dataset": "meta",  # building, meta, missing_data_90
+              "model": "FCN3",
               "train_len": 32,
               "lag_in": 7,
               "lag_out": 7,
-              "n_in": 7,
+              "n_in": 1,
               "n_out": 7,
               "n_future": 7,
               "scaler": "none",
               "scale_mode": "all",  # all, individual
               "feature_code": 14,
               "train_test_split_method": "time",
-              "epochs": 1,
+              "epochs": 40,
               "optimizer": "adam",
               "loss": "mean_squared_error",
               "metrics": ["mae"],

@@ -269,7 +269,7 @@ class NNModel(Model):
         self.activation = config["activation"]
 
         self.input_names = [f"{f}(t-{i})" for i, f in
-                            product(range(1, self.config["n_in"] + 1), self.config["features"])]
+                            product(range(1, self.config["n_in"] + 1), self.config["features"])] + list(set(self.config["features"]) - {"diff"})
         self.future_cov_names = [f"{f}(t+{i})" if i != 0 else f"{f}(t)" for i, f in
                                  product(range(self.config["n_in"]), list(set(self.config["features"]) - {"diff"}))]
         self.target_names = ["diff"] + [f"diff(t+{i})" for i in range(1, self.config["n_out"])]

@@ -31,7 +31,7 @@ FIGURES_DIR = REPORTS_DIR / "figures"
 REFERENCES_DIR = PROJ_ROOT / "references"
 
 N_LAG = 7
-LAG_FEATURES = [f"diff(t-{i})" for i in range(1, N_LAG+1)] + [f"diff(t+{i})" for i in range(1, N_LAG)]
+LAG_FEATURES = [f"diff(t-{i})" for i in range(1, N_LAG + 1)] + [f"diff(t+{i})" for i in range(1, N_LAG)]
 
 CATEGORICAL_FEATURES = ["typ", "primary_energy"]
 CATEGORICAL_FEATURES_BINARY = ["weekend", "holiday"]
@@ -41,6 +41,10 @@ CONTINUOUS_FEATURES = ['hum_avg', 'hum_min', 'hum_max', 'tavg', 'tmin', 'tmax', 
                        "building_height", "storeys_above_ground"]
 CONTINUOUS_FEATURES_CYCLIC = ["weekday", "day_of_month"]
 FEATURES = ["diff"] + CATEGORICAL_FEATURES + CONTINUOUS_FEATURES + CATEGORICAL_FEATURES_BINARY + CONTINUOUS_FEATURES_CYCLIC
+
+STATIC_COVARIATES = ["daily_avg", "heated_area", "anzahlwhg", "typ", "primary_energy", "building_height", "storeys_above_ground"]
+DYNAMIC_COVARIATES = ["hum_avg", "hum_min", "hum_max", "tavg", "tmin", "tmax", "prcp", "snow", "wdir", "wspd", "wpgt",
+                      "pres", "tsun"]
 
 ## Feature Configs
 FEATURES_DIFF = ["diff"]

@@ -4,7 +4,7 @@ import re
 
 import polars as pl
 
-from src.energy_forecast.config import PADDING_VALUE
+from src.energy_forecast.config import PADDING_VALUE, STATIC_COVARIATES
 
 
 ## DATA PROCESSING ##
@@ -23,8 +23,10 @@ def series_to_supervised(df: pl.DataFrame, n_in: int, n_out: int, lag_in: int, l
     """
     b_id = df["id"].mode().item()
     df = df.drop("id").to_pandas()
-    # b_id = df["id"][0]
-    # df = df.drop(columns=["id"])
+    # if static_covs_extra:
+    #     static_covariates_ = ["datetime"] + list(set(df.columns).intersection(STATIC_COVARIATES))
+    #     df_static = df[static_covariates_]  # save for later
+    #     df = df.drop(static_covariates_)  # remove for time series creation  # TODO
     c_names = list(df.columns)
 
     cols, names = list(), list()

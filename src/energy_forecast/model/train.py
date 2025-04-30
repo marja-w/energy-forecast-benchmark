@@ -105,6 +105,16 @@ def per_cluster_evaluation(baseline: Baseline, ds: TrainingDataset, m: Model,
 
 
 def prepare_dataset(run_config: dict) -> tuple[TrainingDataset, dict]:
+    """
+    Prepare the dataset for training or evaluation. Loads data from disk according to run_config.
+    Splits data into train, val, and test sets, using the specified method in run_config. Fits scalers to the train set
+    and stores the transformed data in the TrainingDataset.
+    :param run_config: needs to specifiy "dataset" (building, meta, missing_data_90), "n_out"
+    (number of forecast steps), "interpolate" (whether to use interpolated data), "energy" (which energy type to use),
+    "train_test_split_method" (how to split the data), "scaler" (which scaler to use), "scale_mode" (whether to scale on
+    all target variables or on individual series)
+    :return: the training dataset and the run_config dictionary with updated values for "features"
+    """
     # Load the data
     ds = get_data(run_config)
     # train test split
@@ -142,29 +152,29 @@ if __name__ == '__main__':
     n_ins = [1, 7]
     n_outs = [1, 7]
     config = {"project": "ma-wahl-forecast",
-              "log": True, # whether to log to wandb
+              "log": True,  # whether to log to wandb
               "energy": "all",
               "res": "daily",
               "interpolate": 1,
               "dataset": "meta",  # building, meta, missing_data_90
-              "model": "FCN3",
+              "model": "lstm",
               "train_len": 32,
               "lag_in": 7,
               "lag_out": 7,
               "n_in": 7,
               "n_out": 7,
               "n_future": 7,
-              "scaler": "none",
+              "scaler": "standard",
               "scale_mode": "all",  # all, individual
-              "feature_code": 14,
+              "feature_code": 12,
               "train_test_split_method": "time",
-              "epochs": 40,
+              "epochs": 200,
               "optimizer": "adam",
               "loss": "mean_squared_error",
               "metrics": ["mae"],
               "batch_size": 32,
               "dropout": 0.1,
-              "neurons": 70,
+              "neurons": 100,
               "lr_scheduler": "none",
               "weight_initializer": "glorot",
               "activation": "relu"}  # ReLU, Linear

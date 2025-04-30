@@ -273,6 +273,7 @@ class TrainingDataset(Dataset):
         except KeyError:
             res = "daily"
         super().__init__(res)
+        # set the features according to feature code
         try:
             logger.info(f"Features: {config['features']}")
         except KeyError:
@@ -427,7 +428,7 @@ class TrainingDataset(Dataset):
             self.s_ids = self._get_scaler_ids()
             n_ids = len(self.s_ids)
 
-            self.scaler_X, self.scaler_y = self._create_scaler_pair(scaler_type, n_ids)
+            self.scaler_X, self.scaler_y = self._create_scaler_pair(n_ids)
 
             if self.scaler_X and self.cont_features:
                 self.scaler_X.fit(self.X_train[self.cont_features])
@@ -441,16 +442,16 @@ class TrainingDataset(Dataset):
             raise ValueError(f"Unknown scale_mode: {scale_mode}")
         self.scale = True
 
-    def _create_scaler_pair(self, scaler_type, n_ids=None):
+    def _create_scaler_pair(self, n_ids=None):
         """
         Create scaler instances based on the scaler type.
         If n_ids is provided, create a list of scalers for each id.
 
-        :param scaler_type: Type of scaler ('minmax', 'standard', 'none').
         :param n_ids: Number of IDs if individual scalers are needed.
 
         :return: scaler_X and scaler_y
         """
+        scaler_type = self.config.get("scaler", "none")
         if scaler_type == "none":
             return None, None
 

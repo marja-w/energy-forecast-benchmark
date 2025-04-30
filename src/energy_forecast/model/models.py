@@ -684,7 +684,9 @@ class LSTMModel(RNNModel):
     @overrides
     def set_model(self, input_shape: tuple):
         self.model = keras.Sequential([
-            layers.LSTM(self.config["neurons"], input_shape=(input_shape[1], input_shape[2])),
+            keras.Input(shape=(input_shape[1], input_shape[2])),
+            layers.Masking(mask_value=MASKING_VALUE),
+            layers.LSTM(self.config["neurons"]),
             layers.Dropout(self.config['dropout']),
             layers.Dense(self.config["n_out"], activation="linear")
         ])

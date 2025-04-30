@@ -135,7 +135,7 @@ def train(run_config: dict):
     run = m.train_ds(ds, log=run_config["log"])
 
     # Evaluate the models
-    m.evaluate(ds, run, log=run_config["log"], plot=True)
+    m.evaluate(ds, run, log=run_config["log"], plot=True if run else False)
     baseline.evaluate(ds, run)
 
     # per_cluster_evaluation(baseline, ds, m, run)
@@ -156,19 +156,19 @@ if __name__ == '__main__':
               "energy": "all",
               "res": "daily",
               "interpolate": 1,
-              "dataset": "meta",  # building, meta, missing_data_90
-              "model": "lstm",
+              "dataset": "building",  # building, meta, missing_data_90
+              "model": "FCN3",
               "train_len": 32,
               "lag_in": 7,
               "lag_out": 7,
-              "n_in": 7,
+              "n_in": 2,
               "n_out": 7,
-              "n_future": 7,
+              "n_future": 1,
               "scaler": "standard",
-              "scale_mode": "all",  # all, individual
-              "feature_code": 12,
+              "scale_mode": "individual",  # all, individual
+              "feature_code": 14,
               "train_test_split_method": "time",
-              "epochs": 200,
+              "epochs": 40,
               "optimizer": "adam",
               "loss": "mean_squared_error",
               "metrics": ["mae"],
@@ -200,4 +200,4 @@ if __name__ == '__main__':
             wandb_run.finish()
     else:
         wandb_run = train(config)
-        wandb_run.finish()
+        if wandb_run: wandb_run.finish()

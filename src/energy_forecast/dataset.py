@@ -1,6 +1,7 @@
 import datetime
 import math
 import os
+import re
 from argparse import ArgumentError
 from itertools import product
 from typing import Union, Tuple
@@ -278,6 +279,7 @@ class TrainingDataset(Dataset):
             logger.info(f"Features: {config['features']}")
         except KeyError:
             config["features"] = FEATURE_SETS[config["feature_code"]]
+        config["features"].sort()  # sort alphabetically
         self.config = config
         self.corrupt_building_ids = [
             ""
@@ -325,7 +327,7 @@ class TrainingDataset(Dataset):
                 idxs = None
         if idxs is None: raise ValueError("Invalid value for data_split")
         if scale:
-            df = self.df_scaled.sort(by=["id", "datetime"]).filter(pl.col("index").is_in(idxs))
+            df = self.df_scaled.filter(pl.col("index").is_in(idxs))
         else:
             df = self.df.filter(pl.col("index").is_in(idxs))
         return df
@@ -410,44 +412,42 @@ class TrainingDataset(Dataset):
 
         config = self.config
         scale_mode = config.get("scale_mode", "all")
-        scaler_type = config.get("scaler", "none")
 
         self._set_features()
 
         if scale_mode == "all":
-            self.scaler_X, self.scaler_y = self._create_scaler_pair(scaler_type)
-
+            self.scaler_X, self.scaler_y = self._create_scaler_pair()
             if self.scaler_X and self.cont_features:
                 # continuous features are used in training
                 self.scaler_X.fit(self.X_train[self.cont_features])
-
             self.scaler_y.fit(self.y_train["diff"].to_numpy().reshape(-1, 1))
             self._transform_all_data()
 
         elif scale_mode == "individual":
             self.s_ids = self._get_scaler_ids()
-            n_ids = len(self.s_ids)
-
-            self.scaler_X, self.scaler_y = self._create_scaler_pair(n_ids)
-
+            self.scaler_X, self.scaler_y = self._create_scaler_pair()
             if self.scaler_X and self.cont_features:
+                # continuous features are used in training
                 self.scaler_X.fit(self.X_train[self.cont_features])
-
-            for n, s_id in enumerate(self.s_ids):
-                df_filter = self.get_train_df().filter(pl.col("id").str.starts_with(s_id))
+            train_df = self.get_train_df()
+            for s_id in self.s_ids:
+                df_filter = train_df.filter(pl.col("id").str.starts_with(s_id))
                 if len(df_filter) > 0:
-                    self.scaler_y[n].fit(df_filter["diff"].to_numpy().reshape(-1, 1))
+                    self.scaler_y[s_id].fit(df_filter["diff"].to_numpy().reshape(-1, 1))
+                else:
+                    # the id is not used
+                    del self.scaler_y[s_id]
+                    self.discarded_ids.append(s_id)
             self._transform_individual_data()
         else:
             raise ValueError(f"Unknown scale_mode: {scale_mode}")
+
         self.scale = True
 
-    def _create_scaler_pair(self, n_ids=None):
+    def _create_scaler_pair(self):
         """
         Create scaler instances based on the scaler type.
         If n_ids is provided, create a list of scalers for each id.
-
-        :param n_ids: Number of IDs if individual scalers are needed.
 
         :return: scaler_X and scaler_y
         """
@@ -457,10 +457,10 @@ class TrainingDataset(Dataset):
 
         scaler_cls = MinMaxScaler if scaler_type == "minmax" else StandardScaler
 
-        if n_ids is None:
+        if self.s_ids is None:
             return scaler_cls(), scaler_cls()
         else:
-            return scaler_cls(), [scaler_cls() for _ in range(n_ids)]
+            return scaler_cls(), {s_id: scaler_cls() for s_id in self.s_ids}
 
     def _set_features(self):
         """Set continuous features used for training and static features."""
@@ -483,11 +483,14 @@ class TrainingDataset(Dataset):
         """
         Transform the entire dataset using fitted scalers for all data.
         """
-        df = self.df.sort(by=["id", "datetime"]).with_row_index().to_pandas()
+        df = self.df.to_pandas()
         if self.scaler_X and self.cont_features:
             df[self.cont_features] = self.scaler_X.transform(df[self.cont_features])
         if self.scaler_y:
             df["diff"] = self.scaler_y.transform(df["diff"].to_numpy().reshape(len(df), 1))
+        assert len(df) == len(self.df)
+        assert (df["index"].sort_values() == self.df[
+            "index"].to_pandas().sort_values()).all()  # both dataframes should have same datapoints
         self.df_scaled = pl.DataFrame(df)
 
     def _transform_individual_data(self):
@@ -499,23 +502,23 @@ class TrainingDataset(Dataset):
         :raises AssertionError: If the length of the training indices `self.train_idxs` does not
             match the filtered and scaled data.
         """
-        df = self.df.sort(by=["id", "datetime"]).with_row_index().to_pandas()
+        df = self.df.to_pandas()
         scaled_dfs = []
 
-        for n, s_id in enumerate(self.s_ids):
-            df_filter = df[df["id"].str.startswith(s_id)]
+        for s_id, scaler in self.scaler_y.items():
+            df_filter = df[df["id"].str.startswith(s_id)].copy()
             if len(df_filter) > 0:
                 if self.scaler_X and self.cont_features:
                     df_filter[self.cont_features] = self.scaler_X.transform(df_filter[self.cont_features])
-                try:
-                    df_filter["diff"] = self.scaler_y[n].transform(df_filter["diff"].to_numpy().reshape(-1, 1))
-                except sklearn.exceptions.NotFittedError:
-                    continue
+                df_filter["diff"] = scaler.transform(df_filter["diff"].to_numpy().reshape(-1, 1))
                 scaled_dfs.append(pl.DataFrame(df_filter))
 
         self.df_scaled = pl.concat(scaled_dfs, how="vertical")
 
-        assert len(self.train_idxs) == len(self.df_scaled.filter(pl.col("index").is_in(self.train_idxs)))
+        # make sure that all needed datapoints are present in scaled dataframe
+        assert len(set(self.df_scaled["index"].to_list()).intersection(set(self.train_idxs))) == len(self.train_idxs)
+        assert len(set(self.df_scaled["index"].to_list()).intersection(set(self.test_idxs))) == len(self.test_idxs)
+        assert len(set(self.df_scaled["index"].to_list()).intersection(set(self.val_idxs))) == len(self.val_idxs)
 
     def handle_missing_features(self):
         # check if needed features are all in the dataset
@@ -583,6 +586,23 @@ class TrainingDataset(Dataset):
         for label in df_test["label"].unique():
             cluster_map[label] = df_test.filter(pl.col("label") == label)["test_idx"].to_list()
         return cluster_map
+
+    def _rescale_predictions(self, df: pl.DataFrame) -> pl.DataFrame:
+        b_id = df["id"].first()
+        index_column = df["index"]
+        df = df.drop(["id", "index"])
+        scaler_key = re.sub(r'(-\d+)*$', '', b_id)  # get base id without suffixes
+        rescaled_df = self.scaler_y[scaler_key].inverse_transform(df.to_numpy().reshape(-1, self.config["n_out"]))
+        return pl.DataFrame(rescaled_df).with_columns(pl.lit(b_id).alias("id")).insert_column(0, index_column)
+
+    def rescale_predictions(self, y_hat_scaled: np.ndarray, id_column: pl.Series) -> np.ndarray:
+        if self.config["scale_mode"] == "all":
+            return self.scaler_y.inverse_transform(y_hat_scaled.reshape(len(y_hat_scaled), self.config["n_out"]))
+        else:  # TODO
+            df = pl.DataFrame(y_hat_scaled).insert_column(0, id_column).with_row_index()
+            rescaled_df = df.group_by("id").map_groups(lambda group: self._rescale_predictions(group))
+            y_hat = rescaled_df.sort(by=["index"]).drop(["id", "index"]).to_numpy()
+            return y_hat
 
 
 class TrainDataset90(TrainingDataset):

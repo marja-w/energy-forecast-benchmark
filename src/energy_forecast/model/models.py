@@ -1,6 +1,7 @@
 import datetime
 import math
 import os
+import re
 from itertools import product
 from pathlib import Path
 from statistics import mean
@@ -184,10 +185,11 @@ class Model:
         logger.success(f"Model saved to {model_path}")
 
         # Save to wandb
-        os.makedirs(os.path.join(wandb.run.dir, "models"), exist_ok=True)
-        wandb_run_dir_model = os.path.join(wandb.run.dir, os.path.join("models", os.path.basename(model_path)))
-        self.model.save(wandb_run_dir_model)
-        wandb.save(wandb_run_dir_model)
+        if wandb.run:
+            os.makedirs(os.path.join(wandb.run.dir, "models"), exist_ok=True)
+            wandb_run_dir_model = os.path.join(wandb.run.dir, os.path.join("models", os.path.basename(model_path)))
+            self.model.save(wandb_run_dir_model)
+            wandb.save(wandb_run_dir_model)
 
         return model_path
 
@@ -203,7 +205,7 @@ class Baseline(Model):
         self.name = "baseline"
 
     @overrides(check_signature=False)
-    def evaluate(self, ds: TrainingDataset, run: Run, cluster_idxs=None, log: bool = True) -> tuple:
+    def evaluate(self, ds: TrainingDataset, run: Optional[Run], cluster_idxs=None, log: bool = True) -> tuple:
         target_vars = ["diff"] + [f"diff(t+{i})" for i in range(1, self.config["n_out"])]
         y_test = ds.get_test_df().select(["index", "datetime", "id"] + target_vars).to_pandas()
         if cluster_idxs is not None:
@@ -232,14 +234,15 @@ class Baseline(Model):
             logger.info(f"Baseline RMSE on test data: {b_rmse}")
             logger.info(f"Baseline NRMSE on test data: {b_nrmse}")
         if self.config["n_out"] == 1:
-            if log: run.log({"b_nrmse": b_nrmse, "b_rmse": b_rmse, "b_mae": b_mae, "b_mse": b_mse})
+            if run: run.log({"b_nrmse": b_nrmse, "b_rmse": b_rmse, "b_mae": b_mae, "b_mse": b_mse})
         else:
             if log:
                 logger.info(f"Average Baseline MSE on test data: {mean(b_mse)}")
                 logger.info(f"Average Baseline MAE on test data: {mean(b_mse)}")
                 logger.info(f"Average Baseline RMSE on test data: {mean(b_rmse)}")
                 logger.info(f"Average Baseline NRMSE on test data: {mean(b_nrmse)}")
-                run.log({"b_nrmse": mean(b_nrmse), "b_nrmse_ind": b_nrmse,
+                if run:
+                    run.log({"b_nrmse": mean(b_nrmse), "b_nrmse_ind": b_nrmse,
                          "b_rmse": mean(b_rmse), "b_rmse_ind": b_rmse,
                          "b_mae": mean(b_mae), "b_mae_ind": b_mae,
                          "b_mse": mean(b_mse), "b_mse_ind": b_mse
@@ -347,7 +350,8 @@ class NNModel(Model):
 
     def handle_future_covs(self, df: pl.DataFrame) -> pl.DataFrame:
         # drop all columns containing target variables
-        return df.drop(self.target_names)
+        col_to_drop = list(set(self.target_names).intersection(set(df.columns)))
+        return df.drop(col_to_drop)
 
     def split_in_feature_target(self, df):
         if self.config["n_future"] > 0:
@@ -367,7 +371,7 @@ class NNModel(Model):
         df = self.transform_series_to_supervised(df)
         X, y = self.split_in_feature_target(df)
         id_to_data = self.create_id_to_data(df)
-        return X, y, id_to_data
+        return X, y, id_to_data, df["id"]
 
     def create_id_to_data(self, df: pl.DataFrame) -> dict:
         # per id
@@ -445,8 +449,13 @@ class NNModel(Model):
         for b_id, (X_scaled, y_scaled) in ds.id_to_test_series_scaled.items():
             y_hat_scaled = self.predict(X_scaled)
             if ds.scale:
-                y_hat = ds.scaler_y.inverse_transform(
-                    y_hat_scaled.reshape(len(y_hat_scaled), self.config["n_out"]))  # TODO: scaler from scaler_y list
+                if self.config["scale_mode"] == "individual":
+                    scaler_key = re.sub(r'(-\d+)*$', '', b_id)  # get base id without suffixes
+                    y_hat = ds.scaler_y[scaler_key].inverse_transform(
+                        y_hat_scaled.reshape(len(y_hat_scaled), self.config["n_out"]))
+                else:
+                    y_hat = self.scaler_y.inverse_transform(
+                        y_hat_scaled.reshape(len(y_hat_scaled), self.config["n_out"]))
             else:
                 y_hat = y_hat_scaled
 
@@ -480,7 +489,8 @@ class NNModel(Model):
             run.log({"building_metrics": wandb_table})
         else:
             metrics_df.write_csv(
-                REPORTS_DIR / "metrics" / f"{self.name}_{self.config['n_out']}_{datetime.datetime.timestamp(datetime.datetime.now())}.csv")  # TODO: log to wandb
+                REPORTS_DIR / "metrics" / f"{self.name}_{self.config['n_out']}.csv")  # overwrites in next run
+            logger.info(f"Metrics saved to {REPORTS_DIR}/metrics/{self.name}_{self.config['n_out']}.csv")
 
     @overrides(check_signature=False)
     def evaluate(self, ds: TrainingDataset, run: Optional[Run], log: bool = True, plot: bool = False) -> tuple:
@@ -492,16 +502,18 @@ class NNModel(Model):
         """
         # get data split either scaled or not
         test = ds.get_test_df(ds.scale).select(["id", "datetime"] + self.config["features"])
-        ds.X_test_scaled, ds.y_test_scaled, ds.id_to_test_series_scaled = self.create_time_series_data_and_id_map(test)
+        ds.X_test_scaled, ds.y_test_scaled, ds.id_to_test_series_scaled, id_column = self.create_time_series_data_and_id_map(test)
         X_test_scaled, y_test_scaled = ds.X_test_scaled, ds.y_test_scaled
         if ds.scale:
-            _, y_test, ds.id_to_test_series = self.create_time_series_data_and_id_map(
+            _, y_test, ds.id_to_test_series, _ = self.create_time_series_data_and_id_map(
                 ds.get_test_df(scale=False).select(["id"] + self.config["features"]))
+            if self.config["scale_mode"] == "all":
+                assert (ds.y_test_scaled["diff"].to_numpy().reshape(-1, 1) == ds.scaler_y.transform(y_test["diff"].to_numpy().reshape(-1, 1))).all()  # check that this is the same data but scaled
         else:
             y_test = y_test_scaled
             ds.id_to_test_series = ds.id_to_test_series_scaled
 
-        self.calculate_metrics_per_id(ds, run, log, plot)
+        self.calculate_metrics_per_id(ds, run, log, plot)  # TODO: use metrics calculated here for average metrics
 
         # get predictions
         y_hat_scaled = self.predict(X_test_scaled)
@@ -512,8 +524,7 @@ class NNModel(Model):
             if log:
                 run.log({"test_mse_scaled": test_mse_scaled, "test_mae_scaled": test_mae_scaled})
             # rescale predictions
-            y_hat = ds.scaler_y.inverse_transform(
-                y_hat_scaled.reshape(len(y_hat_scaled), self.config["n_out"]))  # TODO list of scalers
+            y_hat = ds.rescale_predictions(y_hat_scaled, id_column)
         else:
             y_hat = y_hat_scaled
 

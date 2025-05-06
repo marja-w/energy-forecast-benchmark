@@ -181,22 +181,20 @@ def plot_per_step_metrics(per_step_metrics: np.ndarray):
     store_plot_wandb(plt, "per_step_metrics.png")
 
 
-def plot_predictions(ds, b_id, y_hat, lag_in, n_out, run: Optional[wandb.sdk.wandb_run.Run], model_name):
+def plot_predictions(ds, y: np.ndarray, b_id: str, y_hat: np.ndarray, dates: pl.Series, lag_in: int, n_out: int,
+                     lag_out: int, run: Optional[wandb.sdk.wandb_run.Run], model_name: str):
     test_df = ds.get_test_df().filter(pl.col("id") == b_id)
-    train_df = ds.get_train_df().filter(pl.col("id") == b_id)
-
-    dates_series = train_df["datetime"].append(test_df["datetime"])
-    train_series = train_df["diff"]
-    test_series = test_df["diff"]
-
     plt.figure(figsize=(10, 6))
 
-    # Plot the actual series
-    # plt.plot(train_df["datetime"], train_df["diff"], label='Train', marker='o', linewidth=2, color='black')
-    plt.plot(test_df["datetime"], test_df["diff"], label='Test')
-    test_dates = test_df[lag_in:]["datetime"]
-    for row_id, row in enumerate(y_hat):
-        plt.plot(test_dates[row_id:row_id + n_out], row, linewidth=2, color='red')
+    if y_hat.shape[1] == 1:
+        plt.plot(dates, y, label='Test')
+        y_hat = y_hat.squeeze(1)
+        plt.scatter(dates, y_hat, linewidth=2, color='red')
+    else:
+        plt.plot(test_df["datetime"], test_df["diff"], label='Test')
+        test_dates = test_df[lag_in:]["datetime"]
+        for row_id, row in enumerate(y_hat):
+            plt.plot(test_dates[row_id:row_id + n_out], row, linewidth=2, color='red')
 
     plt.xlabel('Time (Day)')
     plt.ylabel('Value')

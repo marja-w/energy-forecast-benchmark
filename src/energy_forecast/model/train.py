@@ -135,7 +135,7 @@ def train(run_config: dict):
     run = m.train_ds(ds, log=run_config["log"])
 
     # Evaluate the models
-    m.evaluate(ds, run, log=run_config["log"], plot=True if run else False)
+    m.evaluate(ds, run, log=run_config["log"], plot=True)
     baseline.evaluate(ds, run)
 
     # per_cluster_evaluation(baseline, ds, m, run)
@@ -147,28 +147,30 @@ def train(run_config: dict):
 
 if __name__ == '__main__':
     configs_path = REFERENCES_DIR / "configs.jsonl"
-    models = ["RNN1", "lstm", "Transformer"]
+    models = ["FCN3", "RNN1", "lstm", "Transformer"]
     feature_codes = [12, 14, 13]
-    n_ins = [1, 7]
-    n_outs = [1, 7]
+    neurons_list = [60, 100, 120]
+    n_ins = [1, 3, 7]
+    n_outs = [1, 3, 7]
+    n_futures = [0, 1, 3, 7]
+    epochs_list = [40, 80, 120]
     config = {"project": "ma-wahl-forecast",
-              "log": True,  # whether to log to wandb
+              "log": False,  # whether to log to wandb
               "energy": "all",
               "res": "daily",
               "interpolate": 1,
               "dataset": "building",  # building, meta, missing_data_90
               "model": "FCN3",
-              "train_len": 32,
               "lag_in": 7,
               "lag_out": 7,
-              "n_in": 2,
-              "n_out": 7,
+              "n_in": 7,
+              "n_out": 1,
               "n_future": 1,
-              "scaler": "standard",
+              "scaler": "none",
               "scale_mode": "individual",  # all, individual
-              "feature_code": 14,
+              "feature_code": 12,
               "train_test_split_method": "time",
-              "epochs": 40,
+              "epochs": 1,
               "optimizer": "adam",
               "loss": "mean_squared_error",
               "metrics": ["mae"],
@@ -191,11 +193,16 @@ if __name__ == '__main__':
             wandb_run = train(config_dict)
             wandb_run.finish()  # finish run to start new run with next config
     elif all_models:
-        for model, feature_code, n_in, n_out in itertools.product(models, feature_codes, n_ins, n_outs):
+        for model, feature_code, n_in, n_out, n_f, epochs, neurons in itertools.product(models, feature_codes, n_ins, n_outs, n_futures, epochs_list, neurons_list):
+            if n_f > n_out: continue
+            logger.info(f"Training combination: feature code {feature_code}, n_in {n_in}, n_out {n_out}, n_future {n_f}, epochs {epochs}, neurons {neurons}")
             config["model"] = model
             config["feature_code"] = feature_code
             config["n_in"] = n_in
             config["n_out"] = n_out
+            config["n_future"] = n_f
+            config["epochs"] = epochs
+            config["neurons"] = neurons
             wandb_run = train(config)
             wandb_run.finish()
     else:

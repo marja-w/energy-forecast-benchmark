@@ -243,10 +243,10 @@ class Baseline(Model):
                 logger.info(f"Average Baseline NRMSE on test data: {mean(b_nrmse)}")
                 if run:
                     run.log({"b_nrmse": mean(b_nrmse), "b_nrmse_ind": b_nrmse,
-                         "b_rmse": mean(b_rmse), "b_rmse_ind": b_rmse,
-                         "b_mae": mean(b_mae), "b_mae_ind": b_mae,
-                         "b_mse": mean(b_mse), "b_mse_ind": b_mse
-                         })
+                             "b_rmse": mean(b_rmse), "b_rmse_ind": b_rmse,
+                             "b_mae": mean(b_mae), "b_mae_ind": b_mae,
+                             "b_mse": mean(b_mse), "b_mse_ind": b_mse
+                             })
         return b_mse, b_mae, b_nrmse, b_rmse
 
     @overrides(check_signature=False)
@@ -280,7 +280,7 @@ class NNModel(Model):
                             product(range(self.config["n_in"], 0, -1), self.config["features"])]
         self.future_cov_names = [f"{f}(t+{i})" if i != 0 else f"{f}" for i, f in
                                  product(range(self.config["n_future"]),
-                                         self.config["features"])]  # TODO use diff but mask diff=t
+                                         self.config["features"])]
         self.target_names = ["diff"] + [f"diff(t+{i})" for i in range(1, self.config["n_out"])]
         self.scaled = False  # whether we have already scaled data
 
@@ -344,13 +344,15 @@ class NNModel(Model):
         except KeyError:
             lag_in, lag_out = self.config["n_in"], self.config["n_out"]
         n_in, n_out = self.config["n_in"], self.config["n_out"]
+        if not lag_out >= self.config["n_future"]: raise ValueError("n_future can not be larger than lag out")
         df = df.group_by("id").map_groups(lambda group: series_to_supervised(group, n_in, n_out, lag_in, lag_out))
         df = df.sort(["id"])
         return df
 
     def handle_future_covs(self, df: pl.DataFrame) -> pl.DataFrame:
         # drop all columns containing target variables
-        col_to_drop = list(set(self.target_names).intersection(set(df.columns)))
+        lag_target_names = ["diff"] + [f"diff(t+{i})" for i in range(1, self.config["lag_out"])]
+        col_to_drop = list(set(lag_target_names).intersection(set(df.columns)))
         return df.drop(col_to_drop)
 
     def split_in_feature_target(self, df):
@@ -367,19 +369,39 @@ class NNModel(Model):
         X, y = self.split_in_feature_target(df)
         return X, y
 
-    def create_time_series_data_and_id_map(self, df: pl.DataFrame) -> tuple[Any, pl.DataFrame, dict]:
+    def create_time_series_data_and_id_map(self, df: pl.DataFrame) -> tuple[Any, pl.DataFrame, dict, pl.Series]:
+        """
+        Transforms the given DataFrame for time series analysis by preparing supervised learning data and mapping IDs
+        to their corresponding data entries.
+
+        The method processes an input DataFrame by converting it into a supervised learning structure,
+        splitting it into features and target variables, creating an ID-to-data mapping for downstream tasks,
+        and finally returns the appropriate components, including a Series of IDs.
+
+        :param df: Input DataFrame containing time series data.
+            It is expected to have the necessary structure for transformation
+            into supervised learning format.
+
+        :return:
+            A tuple containing the following:
+            - The features dataset created for supervised learning tasks.
+            - The target dataset corresponding to the features dataset.
+            - A dictionary mapping IDs to specific data entries for later use.
+            - A Series object containing IDs derived from the input data.
+        """
         df = self.transform_series_to_supervised(df)
         X, y = self.split_in_feature_target(df)
         id_to_data = self.create_id_to_data(df)
         return X, y, id_to_data, df["id"]
 
-    def create_id_to_data(self, df: pl.DataFrame) -> dict:
+    def create_id_to_data(self, df: pl.DataFrame) -> dict[str, tuple[np.ndarray, np.ndarray, pl.Series]]:
         # per id
         id_to_data = dict()
         for b_id in df["id"].unique().to_list():
             b_df = df.filter(pl.col("id") == b_id)
+            date_c = b_df["datetime"]
             b_X, b_y = self.split_in_feature_target(b_df)
-            id_to_data[b_id] = (b_X, b_y)
+            id_to_data[b_id] = (b_X, b_y, date_c)
         return id_to_data
 
     def set_model(self, input_shape: tuple) -> None:
@@ -440,13 +462,15 @@ class NNModel(Model):
         logger.success("Model training complete.")
         return run
 
-    def calculate_metrics_per_id(self, ds: TrainingDataset, run: Optional[Run], log: bool = True, plot: bool = False):
+    def calculate_metrics_per_id(self, ds: TrainingDataset, run: Optional[Run], log: bool = True,
+                                 plot: bool = False):
         # calculate metrics for each id
         id_to_test_series = ds.id_to_test_series
         id_to_metrics = list()
+
         if run:
             wandb_table = wandb.Table(columns=["id", "predictions", "mape", "mse", "mae", "nrmse", "rmse", "avg_diff"])
-        for b_id, (X_scaled, y_scaled) in ds.id_to_test_series_scaled.items():
+        for b_id, (X_scaled, y_scaled, dates) in ds.id_to_test_series_scaled.items():
             y_hat_scaled = self.predict(X_scaled)
             if ds.scale:
                 if self.config["scale_mode"] == "individual":
@@ -476,9 +500,11 @@ class NNModel(Model):
                 test_mae = mean(test_mae)
 
             if plot:
-                plt = plot_predictions(ds, b_id, y_hat, self.config["lag_in"], self.config["n_out"], run, self.name)
+                plt = plot_predictions(ds, y, b_id, y_hat, dates, self.config["lag_in"], self.config["n_out"],
+                                       self.config["lag_out"], run, self.name)
                 if run:
-                    wandb_table.add_data(b_id, wandb.Image(plt), test_mape, test_mse, test_mae, test_nrmse, test_rmse, np.mean(y))
+                    wandb_table.add_data(b_id, wandb.Image(plt), test_mape, test_mse, test_mae, test_nrmse, test_rmse,
+                                         np.mean(y))
                     plt.close()
             if not run:
                 b_metrics = {"id": b_id, "mape": test_mape, "mse": test_mse, "mae": test_mae, "nrmse": test_nrmse,
@@ -502,13 +528,15 @@ class NNModel(Model):
         """
         # get data split either scaled or not
         test = ds.get_test_df(ds.scale).select(["id", "datetime"] + self.config["features"])
-        ds.X_test_scaled, ds.y_test_scaled, ds.id_to_test_series_scaled, id_column = self.create_time_series_data_and_id_map(test)
+        ds.X_test_scaled, ds.y_test_scaled, ds.id_to_test_series_scaled, id_column = self.create_time_series_data_and_id_map(
+            test)
         X_test_scaled, y_test_scaled = ds.X_test_scaled, ds.y_test_scaled
         if ds.scale:
             _, y_test, ds.id_to_test_series, _ = self.create_time_series_data_and_id_map(
-                ds.get_test_df(scale=False).select(["id"] + self.config["features"]))
+                ds.get_test_df(scale=False).select(["id", "datetime"] + self.config["features"]))
             if self.config["scale_mode"] == "all":
-                assert (ds.y_test_scaled["diff"].to_numpy().reshape(-1, 1) == ds.scaler_y.transform(y_test["diff"].to_numpy().reshape(-1, 1))).all()  # check that this is the same data but scaled
+                assert (ds.y_test_scaled["diff"].to_numpy().reshape(-1, 1) == ds.scaler_y.transform(
+                    y_test["diff"].to_numpy().reshape(-1, 1))).all()  # check that this is the same data but scaled
         else:
             y_test = y_test_scaled
             ds.id_to_test_series = ds.id_to_test_series_scaled
@@ -615,23 +643,24 @@ class RNNModel(NNModel):
         self.scaled = False  # whether we have already scaled data
 
     @overrides
-    def create_id_to_data(self, df) -> dict:
+    def create_id_to_data(self, df) -> dict[str, tuple[np.ndarray, np.ndarray, pl.Series]]:
         # per id
         id_to_data = dict()
         for b_id in df["id"].unique().to_list():
             b_df = df.filter(pl.col("id") == b_id)
             b_X, b_y = b_df[self.input_names], b_df[self.target_names]
-
+            date_c = b_df["datetime"]
             # reshape input to be 3D [samples, timesteps, features] numpy array
             b_X = b_X.to_numpy().reshape((b_X.shape[0], self.config["n_in"], len(self.config["features"])))
-            id_to_data[b_id] = (b_X, b_y)
+            id_to_data[b_id] = (b_X, b_y, date_c)
         return id_to_data
 
     @overrides
     def handle_future_covs(self, df: pl.DataFrame) -> pl.DataFrame:
         # mask target variable columns, since we can not drop them
         df = df.to_pandas()
-        df[self.target_names] = MASKING_VALUE
+        lag_target_names = ["diff"] + [f"diff(t+{i})" for i in range(1, self.config["lag_out"])]
+        df[lag_target_names] = MASKING_VALUE
         return pl.DataFrame(df)
 
     @overrides
@@ -642,11 +671,11 @@ class RNNModel(NNModel):
         return X, y
 
     @overrides
-    def create_time_series_data_and_id_map(self, df: pl.DataFrame) -> tuple[Any, pl.DataFrame, dict]:
-        X, y, id_to_data = super().create_time_series_data_and_id_map(df)
+    def create_time_series_data_and_id_map(self, df: pl.DataFrame) -> tuple[Any, pl.DataFrame, dict, pl.Series]:
+        X, y, id_to_data, id_column = super().create_time_series_data_and_id_map(df)
         X = X.to_numpy().reshape(
             (X.shape[0], self.config["n_in"] + self.config["n_future"], len(self.config["features"])))
-        return X, y, id_to_data
+        return X, y, id_to_data, id_column
 
 
 def mean_absolute_percentage_error(y_true: np.array, y_pred: np.array) -> float:

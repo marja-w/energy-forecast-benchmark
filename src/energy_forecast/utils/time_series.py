@@ -3,6 +3,8 @@ import pandas as pd
 import re
 
 import polars as pl
+from polars.polars import PanicException
+from sympy.codegen.ast import continue_
 
 from src.energy_forecast.config import STATIC_COVARIATES
 
@@ -22,7 +24,13 @@ def series_to_supervised(df: pl.DataFrame, n_in: int, n_out: int, lag_in: int, l
 
     """
     b_id = df["id"].mode().item()
-    df = df.drop("id").to_pandas()
+    col_to_drop = ["id"]
+    if "datetime" in list(df.columns):
+        datetime_column = df["datetime"]
+        col_to_drop += ["datetime"]
+    else:
+        pass
+    df = df.drop(col_to_drop).to_pandas()
     # if static_covs_extra:
     #     static_covariates_ = ["datetime"] + list(set(df.columns).intersection(STATIC_COVARIATES))
     #     df_static = df[static_covariates_]  # save for later
@@ -44,17 +52,18 @@ def series_to_supervised(df: pl.DataFrame, n_in: int, n_out: int, lag_in: int, l
     # put it all together
     agg = pd.concat(cols, axis=1)
     agg.columns = names
+    if "datetime" in col_to_drop:
+        agg["datetime"] = datetime_column.to_pandas()
     # drop rows with NaN values
     if dropnan:
         agg.dropna(inplace=True)
     df = pl.DataFrame(agg)
     # after dropping nulls for lag values use actual n_in, n_out values for features
-    if n_in < lag_in:
-        for c_name in c_names:
-            df = df.drop([f"{c_name}(t-{i})" for i in range(lag_in, n_in, -1)])
-    if n_out < lag_out:
-        for c_name in c_names:
-            df = df.drop([f"{c_name}(t+{i})" for i in range(n_out, lag_out)])
+    # if n_in < lag_in:
+    #     for c_name in c_names:
+    #         df = df.drop([f"{c_name}(t-{i})" for i in range(lag_in, n_in, -1)])
+    # if n_out < lag_out:
+    #     for c_name in c_names:
+    #         df = df.drop([f"{c_name}(t+{i})" for i in range(n_out, lag_out)])
     df = df.with_columns(pl.lit(b_id).alias("id"))
-    # agg["id"] = b_id
     return df

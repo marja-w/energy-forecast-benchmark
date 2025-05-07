@@ -147,14 +147,14 @@ def train(run_config: dict):
 
 if __name__ == '__main__':
     configs_path = REFERENCES_DIR / "configs.jsonl"
-    models = ["FCN3", "RNN1", "lstm", "Transformer"]
+    models = ["lstm", "Transformer"]
     scalers = ["standard", "none"]
     feature_codes = [12, 14, 13]
-    neurons_list = [60, 100, 120]
+    neurons_list = [100, 120]
     n_ins = [1, 7]
     n_outs = [1, 7]
     n_futures = [0, 1, 7]
-    epochs_list = [40, 80, 100]
+    epochs_list = [80, 100]
     config = {"project": "ma-wahl-forecast",
               "log": True,  # whether to log to wandb
               "plot": False, # whether to plot predictions
@@ -165,12 +165,12 @@ if __name__ == '__main__':
               "model": "FCN3",
               "lag_in": 7,
               "lag_out": 7,
-              "n_in": 7,
-              "n_out": 7,
-              "n_future": 1,
+              "n_in": 1,
+              "n_out": 1,
+              "n_future": 0,
               "scaler": "none",
               "scale_mode": "individual",  # all, individual
-              "feature_code": 12,
+              "feature_code": 14,
               "train_test_split_method": "time",
               "epochs": 1,
               "optimizer": "adam",
@@ -199,6 +199,7 @@ if __name__ == '__main__':
             if n_f > n_out: continue
             if feature_code == 12 and n_f > 0: continue  # only feature is diff
             if model == "FCN3" and n_in == 1 and neurons != 120 and n_out == 1: continue
+            if model == "FCN3" and feature_code == 12: continue
             logger.info(f"Training combination: feature code {feature_code}, n_in {n_in}, n_out {n_out}, n_future {n_f}, epochs {epochs}, neurons {neurons}, scaler {scaler}")
             config["model"] = model
             config["feature_code"] = feature_code
@@ -208,6 +209,10 @@ if __name__ == '__main__':
             config["epochs"] = epochs
             config["neurons"] = neurons
             config["scaler"] = scaler
+            try:
+                del config["features"]  # delete feature names if set in previous run
+            except KeyError:
+                pass
             wandb_run = train(config)
             wandb_run.finish()
     else:

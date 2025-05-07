@@ -100,15 +100,12 @@ class Model:
         """Make predictions with the model"""
         return self.model.predict(X)
 
-    def evaluate_ds(self, ds: TrainingDataset, run: Run) -> Tuple[float, float, float, float]:
-        """Evaluate using a dataset object"""
-        return self.evaluate(ds.X_test, ds.y_test, run)
-
-    def evaluate(self, X_test: DataFrame, y_test: DataFrame, run: Run) -> Tuple[float, float, float, float]:
+    def evaluate(self, ds: TrainingDataset, run: Optional[Run], log: bool, plot: bool) -> Tuple[float, float, float, float]:
         """Evaluate model performance and log metrics"""
+        X_test, y_test = ds.X_test, ds.y_test
         y_hat = self.predict(X_test)
         evaluator = RegressionMetric(y_test.to_numpy(), y_hat)
-        return self.log_eval_results(evaluator, run, len(y_test))
+        return self.log_eval_results(evaluator, run, len(y_test), log)
 
     def evaluate_per_cluster(self, X_test: DataFrame, y_test: DataFrame, run: Run, clusters: Dict[str, List[int]]) -> \
             Dict[str, Any]:
@@ -135,7 +132,7 @@ class Model:
             performed.
         :type len_y_test: int
         :param log: Boolean flag indicating whether computed metrics should be
-            logged using the provided run object.
+            logged to the console
         :type log: bool
         :return: Tuple containing computed metrics in the following order:
             test_mse (float), test_mae (float), test_nrmse (float), test_rmse (float).
@@ -149,8 +146,8 @@ class Model:
 
         # Handle multiple outputs
         if self.config["n_out"] > 1:
+            if run: run.log(data={"test_nrmse_ind": test_nrmse, "test_mse_ind": test_mse, "test_mae_ind": test_mae})
             if log:
-                if run: run.log(data={"test_nrmse_ind": test_nrmse, "test_mse_ind": test_mse, "test_mae_ind": test_mae})
                 logger.info(f"MSE Loss on test data per index: {test_mse}")
                 logger.info(f"MAE Loss on test data per index: {test_mae}")
                 logger.info(f"RMSE Loss on test data per index: {test_rmse}")
@@ -161,14 +158,14 @@ class Model:
             test_mae = mean(test_mae)
 
         # Log metrics
+        if run:
+            run.log(data={"test_data_length": len_y_test,
+                          "test_mse": test_mse,
+                          "test_mae": test_mae,
+                          "test_rmse": test_rmse,
+                          "test_nrmse": test_nrmse
+                          })
         if log:
-            if run:
-                run.log(data={"test_data_length": len_y_test,
-                              "test_mse": test_mse,
-                              "test_mae": test_mae,
-                              "test_rmse": test_rmse,
-                              "test_nrmse": test_nrmse
-                              })
             logger.info(f"MSE Loss on test data: {test_mse}")
             logger.info(f"MAE Loss on test data: {test_mae}")
             logger.info(f"RMSE on test data: {test_rmse}")
@@ -460,9 +457,27 @@ class NNModel(Model):
         logger.success("Model training complete.")
         return run
 
-    def calculate_metrics_per_id(self, ds: TrainingDataset, run: Optional[Run], log: bool = True,
-                                 plot: bool = False):
-        # calculate metrics for each id
+    def calculate_metrics_per_id(self, ds: TrainingDataset, run: Optional[Run], plot: bool = False) -> None:
+        """
+        Calculates regression metrics for each unique identifier in the dataset.
+
+        This method evaluates the prediction performance of the model on a test dataset
+        provided in `ds`. It computes various regression metrics such as MAPE, MSE, MAE,
+        NRMSE, RMSE, and average difference. The results are logged or visualized based
+        on the input parameters, and optionally saved for further analysis.
+
+        :param ds: An instance of `TrainingDataset` with configurations, test datasets,
+            scalers, and related data required for metrics calculation.
+        :type ds: TrainingDataset
+
+        :param run: An optional instance of `Run`, used to log visualizations and metrics
+            to `wandb` dashboard. If `None`, the metrics are saved locally instead.
+        :type run: Optional[Run]
+
+        :param plot: A boolean flag indicating whether to generate and include prediction
+            plots in the computed outputs. Set to `True` to enable plotting.
+        :type plot: bool
+        """
         id_to_test_series = ds.id_to_test_series
         id_to_metrics = list()
         id_to_ind_metrics = list()
@@ -494,7 +509,7 @@ class NNModel(Model):
             rse_list = root_squared_error(y, y_hat)
             id_to_ind_metrics.append(
                 {"id": b_id, "rse": rse_list, "nrse": rse_list / heated_area, "avg_diff": mean_target_value})
-            test_rmse = root_mean_squared_error(y, y_hat)
+            test_rmse = root_mean_squared_error(y, y_hat)  # TODO: not a float
 
             test_nrmse = test_rmse / mean_target_value
             test_mape = mean_absolute_percentage_error(y, y_hat)
@@ -534,9 +549,10 @@ class NNModel(Model):
     def evaluate(self, ds: TrainingDataset, run: Optional[Run], log: bool = True, plot: bool = False) -> tuple:
         """
         Evaluate the NNModel on the test data. Log metrics to wandb.
-        :param run:
-        :param ds:
-        :param log: whether to log metrics to wandb
+        :param plot: whether to plot the predictions for each building ID
+        :param run: wandb run, if available
+        :param ds: TrainingDataset containing test data and scaler
+        :param log: whether to log metrics to console
         """
         # get data split either scaled or not
         test = ds.get_test_df(ds.scale).select(["id", "datetime"] + self.config["features"])
@@ -553,7 +569,7 @@ class NNModel(Model):
             y_test = y_test_scaled
             ds.id_to_test_series = ds.id_to_test_series_scaled
 
-        self.calculate_metrics_per_id(ds, run, log, plot)  # TODO: use metrics calculated here for average metrics
+        self.calculate_metrics_per_id(ds, run, plot)  # TODO: use metrics calculated here for average metrics
 
         # get predictions
         y_hat_scaled = self.predict(X_test_scaled)
@@ -561,7 +577,7 @@ class NNModel(Model):
             scaled_ev = RegressionMetric(y_test_scaled.to_numpy(), y_hat_scaled)
             test_mse_scaled = scaled_ev.mean_squared_error()
             test_mae_scaled = scaled_ev.mean_absolute_error()
-            if log:
+            if run:
                 run.log({"test_mse_scaled": test_mse_scaled, "test_mae_scaled": test_mae_scaled})
             # rescale predictions
             y_hat = ds.rescale_predictions(y_hat_scaled, id_column)
@@ -571,10 +587,13 @@ class NNModel(Model):
         evaluator = RegressionMetric(y_test.to_numpy(), y_hat)
         test_mape = mean_absolute_percentage_error(y_test.to_numpy(), y_hat)
         if self.config["n_out"] > 1:
-            if log: run.log({"test_mape_ind": test_mape})
+            if run: run.log({"test_mape_ind": test_mape})
+            if log: logger.info(f"MAPE on individual test data: {test_mape}")
             test_mape = mean(test_mape)
+
         if run: run.log({"test_mape": test_mape})
-        return self.log_eval_results(evaluator, run, len(y_test), log)
+        if log: logger.info(f"MAPE on test data: {test_mape}")
+        return self.log_eval_results(evaluator, run, len(y_test))
 
     def evaluate_per_cluster(self, X_test: DataFrame, y_test: DataFrame, run: Run, clusters: dict) -> dict:
         """

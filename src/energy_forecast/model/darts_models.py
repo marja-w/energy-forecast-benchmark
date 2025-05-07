@@ -55,7 +55,6 @@ class DartsModel(RNNModel):
     def predict(self, X: list[darts.TimeSeries]) -> list[darts.TimeSeries]:
         return self.model.predict(self.config["n_out"], X)
 
-    @overrides(check_signature=False)
     def evaluate_ds(self, ds: TimeSeriesDataset, run: Run, log: bool = False) -> tuple:
         test_list, test_covs = ds.get_test_series(ds.scale)
 

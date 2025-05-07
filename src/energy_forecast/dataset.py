@@ -344,6 +344,9 @@ class TrainingDataset(Dataset):
     def get_val_df(self, scale: bool = False) -> pl.DataFrame:
         return self.get_from_idxs("val", scale)
 
+    def get_heated_area_by_id(self, id: str) -> float:
+        return self.df.filter(pl.col("id") == id)["heated_area"].first()
+
     @overrides
     def create(self):
         super().load_feat_data(self.config["interpolate"])

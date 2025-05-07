@@ -23,23 +23,34 @@ def download_from_wandb(run_id: str) -> LiteralString | str | bytes:
     for file in run.files():
         if file.name.startswith("models/"):
             print(f"Downloading file: {file.name}")
-            file.download(root=download_dir, replace=True)
             path_to_file = os.path.join(download_dir, file.name)
+            if os.path.exists(path_to_file):
+                os.remove(path_to_file)
+            file.download(root=download_dir, replace=True)
+            break
     print(f"Download complete. Files are saved in: {MODELS_DIR}")
+    run = wandb.init(entity="rausch-technology", project="ma-wahl-forecast", id=run_id, resume="allow")
     return run, path_to_file
 
 
-if __name__ == '__main__':
-    run, path_to_model_file = download_from_wandb(run_id="8ggm6ii5")
-
+def get_model_from_wandb(run_id: str):
+    run, path_to_model_file = download_from_wandb(run_id)
     # get dataset
     config = run.config
     config["features"] = FEATURE_SETS[config["feature_code"]]
     ds, config = prepare_dataset(config)
-
     # load model
     m = get_model(config)
     m.load_model_from_file(path_to_model_file)
+    return m, ds, run
 
+
+def main(run_id: str):
+    m, ds, run = get_model_from_wandb(run_id=run_id)
     # evaluate and plot predictions
-    m.evaluate_ds(ds, run, log=False, plot=True)
+    m.evaluate(ds, run, log=False, plot=True)
+    run.finish()
+
+if __name__ == '__main__':
+    run_id = "tfr85tvh"
+    main(run_id)

@@ -11,6 +11,7 @@ from loguru import logger
 from matplotlib import pyplot as plt
 import seaborn as sns
 import os
+import plotly.express as px
 
 from src.energy_forecast.config import PROCESSED_DATA_DIR, FIGURES_DIR, REPORTS_DIR
 from src.energy_forecast.utils.util import find_time_spans, get_missing_dates, store_plot_wandb
@@ -181,6 +182,13 @@ def plot_per_step_metrics(per_step_metrics: np.ndarray):
     store_plot_wandb(plt, "per_step_metrics.png")
 
 
+def save_plot(plot_save_path: Path):
+    # Save the plot as a PNG file
+    plt.savefig(plot_save_path, format='png', bbox_inches='tight')
+    logger.info(f"Saved plot to {plot_save_path}")
+    plt.close()
+
+
 def plot_predictions(ds, y: np.ndarray, b_id: str, y_hat: np.ndarray, dates: pl.Series, lag_in: int, n_out: int,
                      lag_out: int, run: Optional[wandb.sdk.wandb_run.Run], model_name: str):
     test_df = ds.get_test_df().filter(pl.col("id") == b_id)
@@ -205,13 +213,39 @@ def plot_predictions(ds, y: np.ndarray, b_id: str, y_hat: np.ndarray, dates: pl.
     if run:
         return plt  # store plot to wandb.Table
     else:
-        # Save the plot as a PNG file
-        plot_dir = REPORTS_DIR / "predictions" / f"{model_name}_{lag_in}_{n_out}"
+        plot_dir = REPORTS_DIR / "predictions" / f"{model_name}_{n_out}"
         os.makedirs(plot_dir, exist_ok=True)
         plot_save_path = plot_dir / f"{b_id}.png"
-        plt.savefig(plot_save_path, format='png', bbox_inches='tight')
+        save_plot(plot_save_path)
         logger.info(f"Plotted predictions for ID {b_id}")
-        plt.close()
+
+
+def create_box_plot_predictions(id_to_metrics: list, metric_to_plot: str, run: Optional[wandb.sdk.wandb_run.Run],
+                                n_out: int, model_name: str, log_y: bool = False):
+    df = pd.DataFrame(id_to_metrics).explode(metric_to_plot)
+    df[metric_to_plot] = df[metric_to_plot].astype(float)
+    df = df.sort_values("avg_diff")
+
+    fig = px.box(df, x="id", y=metric_to_plot, log_y=log_y, custom_data=["avg_diff"],
+                 title=f"Boxplot of Prediction {metric_to_plot}")
+    fig.update_traces(
+        hovertemplate="<br>".join([
+            "id: %{x}",
+            metric_to_plot + ": %{y}",
+            "avg_diff: %{customdata[0]}"
+        ])
+    )
+    fig.update_layout(
+        yaxis=dict(
+            title=dict(
+                text=f"{metric_to_plot} (kwh) {'(log)' if log_y else ''}"
+            )
+        )
+    )
+    if run:
+        run.log({f"boxplot_predictions": fig})
+    else:
+        fig.show()
 
 
 if __name__ == "__main__":

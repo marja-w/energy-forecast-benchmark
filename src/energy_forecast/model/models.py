@@ -31,12 +31,10 @@ from wandb.sdk.wandb_run import Run
 
 from src.energy_forecast.config import MODELS_DIR, CONTINUOUS_FEATURES, REPORTS_DIR, MASKING_VALUE
 from src.energy_forecast.dataset import TrainingDataset
-from src.energy_forecast.plots import plot_predictions
+from src.energy_forecast.plots import plot_predictions, create_box_plot_predictions
+from src.energy_forecast.utils.metrics import mean_absolute_percentage_error, root_mean_squared_error, \
+    root_squared_error
 from src.energy_forecast.utils.time_series import series_to_supervised
-
-
-def root_mean_squared_error(y_true, y_pred):
-    return keras.sqrt(keras.mean(keras.square(y_pred - y_true)))
 
 
 # learning rate schedule
@@ -467,9 +465,12 @@ class NNModel(Model):
         # calculate metrics for each id
         id_to_test_series = ds.id_to_test_series
         id_to_metrics = list()
-
+        id_to_ind_metrics = list()
         if run:
-            wandb_table = wandb.Table(columns=["id", "predictions", "mape", "mse", "mae", "nrmse", "rmse", "avg_diff"])
+            table_cols = ["id", "mape", "mse", "mae", "nrmse", "rmse", "avg_diff"]
+            if plot:
+                table_cols = ["id", "predictions", "mape", "mse", "mae", "nrmse", "rmse", "avg_diff"]
+            wandb_table = wandb.Table(columns=table_cols)
         for b_id, (X_scaled, y_scaled, dates) in ds.id_to_test_series_scaled.items():
             y_hat_scaled = self.predict(X_scaled)
             if ds.scale:
@@ -488,8 +489,14 @@ class NNModel(Model):
             # Get metrics
             test_mse = evaluator.mean_squared_error()
             test_mae = evaluator.mean_absolute_error()
-            test_rmse = evaluator.root_mean_squared_error()
-            test_nrmse = test_rmse / len(y)
+            mean_target_value = np.mean(y)
+            heated_area = ds.get_heated_area_by_id(b_id)
+            rse_list = root_squared_error(y, y_hat)
+            id_to_ind_metrics.append(
+                {"id": b_id, "rse": rse_list, "nrse": rse_list / heated_area, "avg_diff": mean_target_value})
+            test_rmse = root_mean_squared_error(y, y_hat)
+
+            test_nrmse = test_rmse / mean_target_value
             test_mape = mean_absolute_percentage_error(y, y_hat)
 
             if self.config["n_out"] > 1:
@@ -502,14 +509,19 @@ class NNModel(Model):
             if plot:
                 plt = plot_predictions(ds, y, b_id, y_hat, dates, self.config["lag_in"], self.config["n_out"],
                                        self.config["lag_out"], run, self.name)
-                if run:
-                    wandb_table.add_data(b_id, wandb.Image(plt), test_mape, test_mse, test_mae, test_nrmse, test_rmse,
-                                         np.mean(y))
-                    plt.close()
-            if not run:
+            if run and plot:
+                wandb_table.add_data(b_id, wandb.Image(plt), test_mape, test_mse, test_mae, test_nrmse, test_rmse,
+                                     mean_target_value)
+                plt.close()
+            elif run:
+                wandb_table.add_data(b_id, test_mape, test_mse, test_mae, test_nrmse, test_rmse,
+                                     mean_target_value)
+            elif not run:
                 b_metrics = {"id": b_id, "mape": test_mape, "mse": test_mse, "mae": test_mae, "nrmse": test_nrmse,
-                             "rmse": test_rmse, "avg_diff": np.mean(y)}
+                             "rmse": test_rmse, "avg_diff": mean_target_value}
                 id_to_metrics.append(b_metrics)
+        create_box_plot_predictions(id_to_ind_metrics, "rse", run, self.config["n_out"], self.name, log_y=True)
+        create_box_plot_predictions(id_to_ind_metrics, "nrse", run, self.config["n_out"], self.name, log_y=True)
         metrics_df = pl.DataFrame(id_to_metrics)
         if run:
             run.log({"building_metrics": wandb_table})
@@ -676,13 +688,6 @@ class RNNModel(NNModel):
         X = X.to_numpy().reshape(
             (X.shape[0], self.config["n_in"] + self.config["n_future"], len(self.config["features"])))
         return X, y, id_to_data, id_column
-
-
-def mean_absolute_percentage_error(y_true: np.array, y_pred: np.array) -> float:
-    # To avoid division by zero, replace zeros in y_true with a very small number.
-    y_true_safe = np.where(y_true == 0, np.finfo(float).eps, y_true)
-    mape = np.mean(np.abs((y_true - y_pred) / y_true_safe), axis=0) * 100
-    return mape
 
 
 class RNN1Model(RNNModel):

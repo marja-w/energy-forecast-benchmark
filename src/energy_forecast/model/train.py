@@ -135,7 +135,7 @@ def train(run_config: dict):
     run = m.train_ds(ds, log=run_config["log"])
 
     # Evaluate the models
-    m.evaluate(ds, run, log=run_config["log"], plot=True)
+    m.evaluate(ds, run, log=run_config["log"], plot=run_config["plot"])
     baseline.evaluate(ds, run)
 
     # per_cluster_evaluation(baseline, ds, m, run)
@@ -148,14 +148,16 @@ def train(run_config: dict):
 if __name__ == '__main__':
     configs_path = REFERENCES_DIR / "configs.jsonl"
     models = ["FCN3", "RNN1", "lstm", "Transformer"]
+    scalers = ["standard", "none"]
     feature_codes = [12, 14, 13]
     neurons_list = [60, 100, 120]
-    n_ins = [1, 3, 7]
-    n_outs = [1, 3, 7]
-    n_futures = [0, 1, 3, 7]
-    epochs_list = [40, 80, 120]
+    n_ins = [1, 7]
+    n_outs = [1, 7]
+    n_futures = [0, 1, 7]
+    epochs_list = [40, 80, 100]
     config = {"project": "ma-wahl-forecast",
-              "log": False,  # whether to log to wandb
+              "log": True,  # whether to log to wandb
+              "plot": False, # whether to plot predictions
               "energy": "all",
               "res": "daily",
               "interpolate": 1,
@@ -164,7 +166,7 @@ if __name__ == '__main__':
               "lag_in": 7,
               "lag_out": 7,
               "n_in": 7,
-              "n_out": 1,
+              "n_out": 7,
               "n_future": 1,
               "scaler": "none",
               "scale_mode": "individual",  # all, individual
@@ -181,7 +183,7 @@ if __name__ == '__main__':
               "weight_initializer": "glorot",
               "activation": "relu"}  # ReLU, Linear
     # config = None
-    all_models = False
+    all_models = True
     if config is None:
         # Read in configs from .jsonl file
         configs = list()
@@ -193,9 +195,11 @@ if __name__ == '__main__':
             wandb_run = train(config_dict)
             wandb_run.finish()  # finish run to start new run with next config
     elif all_models:
-        for model, feature_code, n_in, n_out, n_f, epochs, neurons in itertools.product(models, feature_codes, n_ins, n_outs, n_futures, epochs_list, neurons_list):
+        for model, feature_code, n_in, n_out, n_f, epochs, neurons, scaler in itertools.product(models, feature_codes, n_ins, n_outs, n_futures, epochs_list, neurons_list, scalers):
             if n_f > n_out: continue
-            logger.info(f"Training combination: feature code {feature_code}, n_in {n_in}, n_out {n_out}, n_future {n_f}, epochs {epochs}, neurons {neurons}")
+            if feature_code == 12 and n_f > 0: continue  # only feature is diff
+            if model == "FCN3" and n_in == 1 and neurons != 120 and n_out == 1: continue
+            logger.info(f"Training combination: feature code {feature_code}, n_in {n_in}, n_out {n_out}, n_future {n_f}, epochs {epochs}, neurons {neurons}, scaler {scaler}")
             config["model"] = model
             config["feature_code"] = feature_code
             config["n_in"] = n_in
@@ -203,6 +207,7 @@ if __name__ == '__main__':
             config["n_future"] = n_f
             config["epochs"] = epochs
             config["neurons"] = neurons
+            config["scaler"] = scaler
             wandb_run = train(config)
             wandb_run.finish()
     else:

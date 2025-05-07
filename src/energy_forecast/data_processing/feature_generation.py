@@ -172,5 +172,6 @@ def generate_holiday_df():
         for date, holiday in holidays_state_dict[state].items():
             holiday_list.append({"state": state, "start": date, "end": "null", "type": holiday})
     df_holidays = pl.read_csv(DATA_DIR / "ferien.csv", separator=";").with_columns(pl.col("start").str.to_date())
-    pl.concat([df_holidays, pl.DataFrame(holiday_list).cast(
-        {"end": pl.Date},strict=False)]).write_csv(FEATURES_DIR / "holidays.csv")
+    pl.concat([df_holidays.with_columns(pl.col("end").str.to_date(format="%d.%m.%Y", strict=False))
+                  , pl.DataFrame(holiday_list).with_columns(pl.col("end").str.to_date(format="%d.%m.%Y", strict=False))]
+              ).write_csv(FEATURES_DIR / "holidays.csv")

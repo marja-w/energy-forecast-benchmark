@@ -732,7 +732,7 @@ if __name__ == '__main__':
     # daily data
     # LegacyDataLoader(RAW_DATA_DIR / "legacy_data" / "legacy_systen_counter_daily_values.csv").write_data_and_meta()
     # KinergyDataLoader(RAW_DATA_DIR / "kinergy").write_data_and_meta()
-    # DHDataLoader(RAW_DATA_DIR / "district_heating_data").write_data_and_meta()
+    DHDataLoader(RAW_DATA_DIR / "district_heating_data").write_data_and_meta()
     #
     # # hourly data
     # KinergyDataLoader(RAW_DATA_DIR / "kinergy", res="hourly").write_data_and_meta()
@@ -742,13 +742,13 @@ if __name__ == '__main__':
 
     logger.info("Finish data loading")
 
-    # ds = InterpolatedDataset()
-    # ds.create_and_clean(plot=False)
-    # ds.create_clean_and_add_feat()
+    ds = InterpolatedDataset()
+    ds.create_and_clean(plot=False)
+    ds.create_clean_and_add_feat()
     # #
-    # ds = Dataset()
-    # ds.create_and_clean()
-    # ds.create_clean_and_add_feat()
+    ds = Dataset()
+    ds.create_and_clean()
+    ds.create_clean_and_add_feat()
 
     # ds.load_feat_data()
     # df_train, df_test = ds.get_train_and_test(0.8)
@@ -775,4 +775,4 @@ if __name__ == '__main__':
                      "train_test_split_method": "time"}  # ReLU, Linear
 
     ds = TrainDatasetBuilding(freeze_config)
-    ds.create_clean_and_add_feat()
+    # ds.create_clean_and_add_feat()

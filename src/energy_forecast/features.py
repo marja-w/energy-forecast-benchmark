@@ -15,6 +15,6 @@ def generate_lod_data():
     generate_lod_df()
 
 if __name__ == '__main__':
-    generate_weather_features()
-    generate_holiday_feature()
+    # generate_weather_features()
+    # generate_holiday_feature()
     generate_lod_data()

@@ -36,7 +36,6 @@ def polygon_area_3d(coords):
 
 def generate_lod_df():
     # Define file paths
-    xml_file = DATA_DIR / "lod2" / 'LoD2_32_565_5952_1_SH.xml'
     xml_file_folder = DATA_DIR / "lod2"
     csv_file = DATA_DIR / "lod2" / 'building_data.csv'
     # Define the namespace mappings
@@ -238,7 +237,7 @@ def generate_lod_df():
                         [building_id, creation_date, country, address, postal_code, function_text, height_value,
                          storeys_value, ground_surface])
     print(f"CSV file saved at {csv_file}")
-    dh_meta = pl.read_csv(RAW_DATA_DIR / "district_heating_meta.csv").with_columns(
+    dh_meta = pl.read_csv(META_DIR / "district_heating_meta.csv").with_columns(
         pl.lit("Mehrfamilienhaus").alias("typ"),
         pl.lit(75).alias("min_vorlauf_temp"),
         pl.lit(90).alias("max_vorlauf_temp")
@@ -263,5 +262,5 @@ def generate_lod_df():
     ).unique(["adresse"]).sort(pl.col("adresse")).drop(["address_code", "adresse_right"])
     dh_meta_lod.write_csv(META_DIR / "dh_meta_lod.csv")
 
-
-generate_lod_df()
+if __name__ == '__main__':
+    generate_lod_df()

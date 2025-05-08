@@ -1,6 +1,7 @@
 import datetime
 import math
 import os
+import pickle
 import re
 from itertools import product
 from pathlib import Path
@@ -176,6 +177,9 @@ class Model:
     def save(self) -> Path:
         """Save model to disk and to wandb"""
         model_path = MODELS_DIR / f"{self.name}.keras"
+        if os.path.exists(model_path):
+            os.remove(model_path)
+
         self.model.save(model_path)
         logger.success(f"Model saved to {model_path}")
 
@@ -509,7 +513,7 @@ class NNModel(Model):
             rse_list = root_squared_error(y, y_hat)
             id_to_ind_metrics.append(
                 {"id": b_id, "rse": rse_list, "nrse": rse_list / heated_area, "avg_diff": mean_target_value})
-            test_rmse = root_mean_squared_error(y, y_hat)  # TODO: not a float
+            test_rmse = root_mean_squared_error(y, y_hat)
 
             test_nrmse = test_rmse / mean_target_value
             test_mape = mean_absolute_percentage_error(y, y_hat)

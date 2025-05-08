@@ -121,6 +121,7 @@ def prepare_dataset(run_config: dict) -> tuple[TrainingDataset, dict]:
     ds = get_train_test_val_split(ds)
     # scaling
     ds.fit_scalers()
+    ds.config["features"].sort()
     return ds, ds.config
 
 
@@ -147,14 +148,14 @@ def train(run_config: dict):
 
 if __name__ == '__main__':
     configs_path = REFERENCES_DIR / "configs.jsonl"
-    models = ["lstm", "Transformer"]
-    scalers = ["standard", "none"]
+    models = ["Transformer"]
+    scalers = ["standard"]
     feature_codes = [12, 14, 13]
-    neurons_list = [100, 120]
-    n_ins = [1, 7]
+    neurons_list = [100]
+    n_ins = [3, 7]
     n_outs = [1, 7]
     n_futures = [0, 1, 7]
-    epochs_list = [80, 100]
+    epochs_list = [40]
     config = {"project": "ma-wahl-forecast",
               "log": True,  # whether to log to wandb
               "plot": False, # whether to plot predictions
@@ -168,7 +169,7 @@ if __name__ == '__main__':
               "n_in": 1,
               "n_out": 1,
               "n_future": 0,
-              "scaler": "none",
+              "scaler": "standard",
               "scale_mode": "individual",  # all, individual
               "feature_code": 14,
               "train_test_split_method": "time",
@@ -183,7 +184,7 @@ if __name__ == '__main__':
               "weight_initializer": "glorot",
               "activation": "relu"}  # ReLU, Linear
     # config = None
-    all_models = True
+    all_models = False
     if config is None:
         # Read in configs from .jsonl file
         configs = list()

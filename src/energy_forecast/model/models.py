@@ -691,6 +691,7 @@ class RNNModel(NNModel):
         # mask target variable columns, since we can not drop them
         df = df.to_pandas()
         lag_target_names = ["diff"] + [f"diff(t+{i})" for i in range(1, self.config["lag_out"])]
+        lag_target_names = list(set(df.columns).intersection(lag_target_names))
         df[lag_target_names] = MASKING_VALUE
         return pl.DataFrame(df)
 
@@ -825,6 +826,9 @@ class TransformerModel(RNNModel):
         head_size = 256
         num_heads = 8
         ff_dim = 4
+
+        # masking layer
+        x = layers.Masking(mask_value=MASKING_VALUE)(x)
 
         for _ in range(num_transformer_blocks):
             x = self.transformer_encoder(x, head_size, num_heads, ff_dim)

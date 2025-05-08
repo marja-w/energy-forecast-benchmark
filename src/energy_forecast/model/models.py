@@ -679,10 +679,10 @@ class RNNModel(NNModel):
         id_to_data = dict()
         for b_id in df["id"].unique().to_list():
             b_df = df.filter(pl.col("id") == b_id)
-            b_X, b_y = b_df[self.input_names], b_df[self.target_names]
             date_c = b_df["datetime"]
+            b_X, b_y = self.split_in_feature_target(b_df)
             # reshape input to be 3D [samples, timesteps, features] numpy array
-            b_X = b_X.to_numpy().reshape((b_X.shape[0], self.config["n_in"], len(self.config["features"])))
+            b_X = b_X.to_numpy().reshape((b_X.shape[0], self.config["n_in"] + self.config["n_future"], len(self.config["features"])))
             id_to_data[b_id] = (b_X, b_y, date_c)
         return id_to_data
 

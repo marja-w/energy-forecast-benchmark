@@ -29,15 +29,15 @@ def download_from_wandb(run_id: str) -> LiteralString | str | bytes:
             file.download(root=download_dir, replace=True)
             break
     print(f"Download complete. Files are saved in: {MODELS_DIR}")
-    run = wandb.init(entity="rausch-technology", project="ma-wahl-forecast", id=run_id, resume="allow")
+    run = wandb.init(entity="rausch-technology", project="ma-wahl-forecast", id=run_id, resume="allow", allow_val_change=True)
     return run, path_to_file
 
 
 def get_model_from_wandb(run_id: str):
     run, path_to_model_file = download_from_wandb(run_id)
     # get dataset
+    run.config.update({"features": FEATURE_SETS[run.config["feature_code"]]}, allow_val_change=True)
     config = run.config
-    config["features"] = FEATURE_SETS[config["feature_code"]]
     ds, config = prepare_dataset(config)
     # load model
     m = get_model(config)
@@ -52,5 +52,5 @@ def main(run_id: str):
     run.finish()
 
 if __name__ == '__main__':
-    run_id = "tfr85tvh"
+    run_id = "dyq4e0zk"
     main(run_id)

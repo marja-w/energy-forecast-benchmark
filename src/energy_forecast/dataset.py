@@ -11,6 +11,7 @@ import numpy as np
 import pandas as pd
 import polars as pl
 import sklearn.exceptions
+import wandb
 from darts import TimeSeries
 from darts.dataprocessing.transformers import Scaler, MissingValuesFiller
 from loguru import logger
@@ -390,8 +391,12 @@ class TrainingDataset(Dataset):
                 self.df = self.df.with_columns(((2 * math.pi * pl.col(f)) / 24).sin().alias(f"{f}_sin"),
                                                ((2 * math.pi * pl.col(f)) / 24).cos().alias(f"{f}_cos"))
                 self.df = self.df.drop(f)
-            self.config["features"] = (list(set(self.config["features"]) - set(fs))
-                                       + [f"{f}_sin" for f in fs] + [f"{f}_cos" for f in fs])
+            cyclic_encoded_features = (list(set(self.config["features"]) - set(fs)) + [f"{f}_sin" for f in fs] + [f"{f}_cos" for f in fs])
+            try:
+                self.config["features"] = cyclic_encoded_features
+            except:
+                wandb.run.config.update({"features": cyclic_encoded_features}, allow_val_change=True)
+                self.config = wandb.run.config
 
     def fit_scalers(self):
         """

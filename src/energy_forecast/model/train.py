@@ -196,7 +196,7 @@ if __name__ == '__main__':
             wandb_run.finish()  # finish run to start new run with next config
     elif all_models:
         for model, feature_code, n_in, n_out, n_f, epochs, neurons, scaler in itertools.product(models, feature_codes, n_ins, n_outs, n_futures, epochs_list, neurons_list, scalers):
-            if n_f > n_out: continue
+            if n_f != n_out: continue
             if feature_code == 12 and n_f > 0: continue  # only feature is diff
             if model == "FCN3" and n_in == 1 and neurons != 120 and n_out == 1: continue
             if model == "FCN3" and feature_code == 12: continue

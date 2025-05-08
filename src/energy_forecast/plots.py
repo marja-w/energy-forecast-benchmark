@@ -1,3 +1,4 @@
+import sys
 from datetime import timedelta, datetime
 from pathlib import Path
 from typing import Optional
@@ -5,6 +6,7 @@ from typing import Optional
 import darts
 import numpy as np
 import pandas as pd
+import plotly.io
 import polars as pl
 import wandb
 from loguru import logger
@@ -243,7 +245,10 @@ def create_box_plot_predictions(id_to_metrics: list, metric_to_plot: str, run: O
         )
     )
     if run:
-        run.log({f"boxplot_predictions": fig})
+        if sys.platform == "win32":
+            wandb.log({"boxplot_predictions": wandb.Html(plotly.io.to_html(fig))})
+        else:
+            run.log({f"boxplot_predictions": fig})
     else:
         fig.show()
 

@@ -33,13 +33,13 @@ REFERENCES_DIR = PROJ_ROOT / "references"
 N_LAG = 7
 LAG_FEATURES = [f"diff(t-{i})" for i in range(1, N_LAG + 1)] + [f"diff(t+{i})" for i in range(1, N_LAG)]
 
-CATEGORICAL_FEATURES = ["typ", "primary_energy"]
+CATEGORICAL_FEATURES = ["typ", "primary_energy"]  # one-hot encoded
 CATEGORICAL_FEATURES_BINARY = ["weekend", "holiday"]
 CONTINUOUS_FEATURES = ['hum_avg', 'hum_min', 'hum_max', 'tavg', 'tmin', 'tmax', 'prcp', 'snow', 'wdir',
                        'wspd', 'wpgt', 'pres', 'tsun', "daily_avg", "heated_area", "heated_area_lod", "anzahlwhg",
                        "ground_surface",
                        "building_height", "storeys_above_ground"]
-CONTINUOUS_FEATURES_CYCLIC = ["weekday", "day_of_month"]
+CONTINUOUS_FEATURES_CYCLIC = ["weekday", "day_of_month"]  # sine and cosine encoded
 FEATURES = ["diff"] + CATEGORICAL_FEATURES + CONTINUOUS_FEATURES + CATEGORICAL_FEATURES_BINARY + CONTINUOUS_FEATURES_CYCLIC
 
 STATIC_COVARIATES = ["daily_avg", "heated_area", "anzahlwhg", "typ", "primary_energy", "building_height", "storeys_above_ground"]

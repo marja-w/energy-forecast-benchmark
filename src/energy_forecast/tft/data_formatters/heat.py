@@ -93,10 +93,10 @@ class HeatDataFormatter(GenericDataFormatter):
     # check if needed features are all in the dataset
     if not set(self.meta_features).issubset(set(df.columns)):
         raise ValueError(f"Features {self.meta_features} not in dataset")
-    df = df.drop_nulls(subset=self.meta_features)  # remove null values for used features
+    df = df.dropna(subset=self.meta_features)  # remove null values for used features
     
     # Add row index for easier tracking
-    df = df.reset_index(drop=False).rename(columns={'index': 'orig_index'})
+    df = df.reset_index(drop=True)
     
     # Group by building ID and split
     train_dfs = []
@@ -106,8 +106,9 @@ class HeatDataFormatter(GenericDataFormatter):
     discarded_ids = []
     for building_id, b_df in df.groupby('id'):
         # Add building-specific index
+        b_df = b_df.reset_index(drop=False).rename(columns={'index': 'orig_index'})
         b_df = b_df.reset_index(drop=False).rename(columns={'index': 'b_idx'})
-        
+
         # Calculate split indices
         split_idx = int(len(b_df) * train_percentage)
         split_idx_two = int(len(b_df) * (((1 - train_percentage) / 2) + train_percentage))
@@ -147,9 +148,9 @@ class HeatDataFormatter(GenericDataFormatter):
     print(f"Remaining series: {len(train_dfs)}")
     
     # Concatenate results
-    train_df = pd.concat(train_dfs).drop(columns=['orig_index'])
-    val_df = pd.concat(val_dfs).drop(columns=['orig_index'])
-    test_df = pd.concat(test_dfs).drop(columns=['orig_index'])
+    train_df = pd.concat(train_dfs).drop(columns=['orig_index']).reset_index(drop=True)
+    val_df = pd.concat(val_dfs).drop(columns=['orig_index']).reset_index(drop=True)
+    test_df = pd.concat(test_dfs).drop(columns=['orig_index']).reset_index(drop=True)
     
     self.set_scalers(train_df)
     
@@ -172,7 +173,7 @@ class HeatDataFormatter(GenericDataFormatter):
                                                      column_definitions)
 
     # Extract identifiers in case required
-    self.identifiers = list(df[id_column].unique())
+    self.identifiers = list(df[id_column].unique())  # TODO: check why there is one more ID than in other dataset
 
     # Format real scalers for input features (non-target)
     real_inputs = utils.extract_cols_from_data_type(

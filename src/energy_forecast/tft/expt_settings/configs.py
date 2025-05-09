@@ -24,6 +24,7 @@ import os
 import src.energy_forecast.tft.data_formatters.electricity
 import src.energy_forecast.tft.data_formatters.volatility
 import src.energy_forecast.tft.data_formatters.heat
+from src.energy_forecast.config import PROJ_ROOT
 from src.energy_forecast.tft import data_formatters
 
 
@@ -56,15 +57,14 @@ class ExperimentConfig(object):
 
     # Defines all relevant paths
     if root_folder is None:
-      root_folder = os.path.join(
-          os.path.dirname(os.path.realpath(__file__)), '..', 'outputs')
+      root_folder = PROJ_ROOT
       print('Using root folder {}'.format(root_folder))
 
     self.root_folder = root_folder
     self.experiment = experiment
-    self.data_folder = os.path.join(root_folder, 'data', experiment)
-    self.model_folder = os.path.join(root_folder, 'saved_models', experiment)
-    self.results_folder = os.path.join(root_folder, 'results', experiment)
+    self.data_folder = os.path.join(root_folder, 'data', "processed")
+    self.model_folder = os.path.join(root_folder, 'models', experiment)
+    self.results_folder = os.path.join(root_folder, 'reports', experiment)
 
     # Creates folders if they don't exist
     for relevant_directory in [
@@ -81,7 +81,7 @@ class ExperimentConfig(object):
         'electricity': 'hourly_electricity.csv',
         'traffic': 'hourly_data.csv',
         'favorita': 'favorita_consolidated.csv',
-        'heat': 'data/processed/dataset_interpolate_daily_feat.csv'
+        'heat': 'dataset_interpolate_daily_feat.csv'
     }
 
     return os.path.join(self.data_folder, csv_map[self.experiment])

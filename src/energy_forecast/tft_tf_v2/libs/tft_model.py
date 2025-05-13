@@ -29,14 +29,22 @@ import os
 import shutil
 
 import data_formatters.base
+
+import keras
+from keras import ops
+from keras import Model
+
 import libs.utils as utils
 import numpy as np
 import pandas as pd
-import tensorflow as tf
+import tensorflow.compat.v1 as tf
+tf.enable_eager_execution()
 
 # Layer definitions.
-concat = tf.keras.backend.concatenate
-stack = tf.keras.backend.stack
+concat = keras.ops.concatenate
+stack = keras.ops.stack
+expand_dims = keras.ops.expand_dims
+sqrt = keras.ops.sqrt
 K = tf.keras.backend
 Add = tf.keras.layers.Add
 LayerNorm = tf.keras.layers.LayerNormalization
@@ -231,9 +239,9 @@ def get_decoder_mask(self_attn_inputs):
     Args:
       self_attn_inputs: Inputs to self attention layer to determine mask shape
     """
-    len_s = tf.shape(self_attn_inputs)[1]
-    bs = tf.shape(self_attn_inputs)[:1]
-    mask = K.cumsum(tf.eye(len_s, batch_shape=bs), 1)
+    len_s = keras.ops.shape(self_attn_inputs)[1]
+    # bs = keras.ops.shape(self_attn_inputs)[-1]  # TODO: i dont know if we need the batch shape
+    mask = keras.ops.cumsum(keras.ops.eye(len_s), 1)
     return mask
 
 
@@ -262,7 +270,7 @@ class ScaledDotProductAttention():
         Returns:
           Tuple of (layer outputs, attention weights)
         """
-        temper = tf.sqrt(tf.cast(tf.shape(k)[-1], dtype='float32'))
+        temper = sqrt(ops.cast(ops.shape(k)[-1], dtype='float32'))
         attn = Lambda(lambda x: K.batch_dot(x[0], x[1], axes=[2, 2]) / temper)(
             [q, k])  # shape=(batch, q, k)
         if mask is not None:
@@ -346,10 +354,10 @@ class InterpretableMultiHeadAttention():
             head_dropout = Dropout(self.dropout)(head)
             heads.append(head_dropout)
             attns.append(attn)
-        head = K.stack(heads) if n_head > 1 else heads[0]
-        attn = K.stack(attns)
+        head = ops.stack(heads) if n_head > 1 else heads[0]
+        attn = ops.stack(attns)
 
-        outputs = K.mean(head, axis=0) if n_head > 1 else head
+        outputs = ops.mean(head, axis=0) if n_head > 1 else head
         outputs = self.w_o(outputs)
         outputs = Dropout(self.dropout)(outputs)  # output dropout
 
@@ -499,10 +507,10 @@ class TemporalFusionTransformer(object):
             if i in self._static_input_loc:
                 raise ValueError('Observation cannot be static!')
 
-        if all_inputs.get_shape().as_list()[-1] != self.input_size:
+        if all_inputs._shape[-1] != self.input_size:
             raise ValueError(
                 'Illegal number of inputs! Inputs observed={}, expected={}'.format(
-                    all_inputs.get_shape().as_list()[-1], self.input_size))
+                    all_inputs._shape()[-1], self.input_size))
 
         num_categorical_variables = len(self.category_counts)
         num_regular_variables = self.input_size - num_categorical_variables
@@ -540,7 +548,7 @@ class TemporalFusionTransformer(object):
                             + [embedded_inputs[i][:, 0, :]
                                for i in range(num_categorical_variables)
                                if i + num_regular_variables in self._static_input_loc]
-            static_inputs = tf.keras.backend.stack(static_inputs, axis=1)
+            static_inputs = keras.ops.stack(static_inputs, axis=1)
 
         else:
             static_inputs = None
@@ -552,11 +560,10 @@ class TemporalFusionTransformer(object):
                 x)
 
         # Targets
-        obs_inputs = tf.keras.backend.stack([
+        obs_inputs = keras.ops.stack([
             convert_real_to_embedding(regular_inputs[Ellipsis, i:i + 1])
             for i in self._input_obs_loc
-        ],
-            axis=-1)
+        ], axis=-1)
 
         # Observed (a prioir unknown) inputs
         wired_embeddings = []
@@ -574,8 +581,7 @@ class TemporalFusionTransformer(object):
                 unknown_inputs.append(e)
 
         if unknown_inputs + wired_embeddings:
-            unknown_inputs = tf.keras.backend.stack(
-                unknown_inputs + wired_embeddings, axis=-1)
+            unknown_inputs = keras.ops.stack(unknown_inputs + wired_embeddings, axis=-1)
         else:
             unknown_inputs = None
 
@@ -591,8 +597,7 @@ class TemporalFusionTransformer(object):
             if i + num_regular_variables not in self._static_input_loc
         ]
 
-        known_combined_layer = tf.keras.backend.stack(
-            known_regular_inputs + known_categorical_inputs, axis=-1)
+        known_combined_layer = keras.ops.stack(known_regular_inputs + known_categorical_inputs, axis=-1)
 
         return unknown_inputs, known_combined_layer, obs_inputs, static_inputs
 
@@ -795,18 +800,14 @@ class TemporalFusionTransformer(object):
 
         # Isolate known and observed historical inputs.
         if unknown_inputs is not None:
-            historical_inputs = concat([
-                unknown_inputs[:, :encoder_steps, :],
-                known_combined_layer[:, :encoder_steps, :],
-                obs_inputs[:, :encoder_steps, :]
-            ],
-                axis=-1)
+            historical_inputs = keras.layers.Concatenate(-1)([unknown_inputs[:, :encoder_steps, :],
+                                                              known_combined_layer[:, :encoder_steps, :],
+                                                              obs_inputs[:, :encoder_steps, :]])
         else:
-            historical_inputs = concat([
+            historical_inputs = keras.layers.Concatenate(-1)([
                 known_combined_layer[:, :encoder_steps, :],
                 obs_inputs[:, :encoder_steps, :]
-            ],
-                axis=-1)
+            ])
 
         # Isolate only known future inputs.
         future_inputs = known_combined_layer[:, encoder_steps:, :]
@@ -822,7 +823,7 @@ class TemporalFusionTransformer(object):
             """
 
             # Add temporal features
-            _, num_static, _ = embedding.get_shape().as_list()
+            _, num_static, _ = embedding._shape
 
             flatten = tf.keras.layers.Flatten()(embedding)
 
@@ -836,7 +837,8 @@ class TemporalFusionTransformer(object):
                 additional_context=None)
 
             sparse_weights = tf.keras.layers.Activation('softmax')(mlp_outputs)
-            sparse_weights = K.expand_dims(sparse_weights, axis=-1)
+
+            sparse_weights = keras.ops.expand_dims(sparse_weights, axis=-1)
 
             trans_emb_list = []
             for i in range(num_static):
@@ -847,12 +849,12 @@ class TemporalFusionTransformer(object):
                     use_time_distributed=False)
                 trans_emb_list.append(e)
 
-            transformed_embedding = concat(trans_emb_list, axis=1)
+            transformed_embedding = keras.layers.Concatenate(1)(trans_emb_list)
 
             combined = tf.keras.layers.Multiply()(
                 [sparse_weights, transformed_embedding])
 
-            static_vec = K.sum(combined, axis=1)
+            static_vec = keras.ops.sum(combined, axis=1)
 
             return static_vec, sparse_weights
 
@@ -890,13 +892,11 @@ class TemporalFusionTransformer(object):
             """
 
             # Add temporal features
-            _, time_steps, embedding_dim, num_inputs = embedding.get_shape().as_list()
+            _, time_steps, embedding_dim, num_inputs = embedding._shape
 
-            flatten = K.reshape(embedding,
-                                [-1, time_steps, embedding_dim * num_inputs])
+            flatten = keras.ops.reshape(embedding, [-1, time_steps, embedding_dim * num_inputs])
 
-            expanded_static_context = K.expand_dims(
-                static_context_variable_selection, axis=1)
+            expanded_static_context = keras.ops.expand_dims(static_context_variable_selection, axis=1)
 
             # Variable selection weights
             mlp_outputs, static_gate = gated_residual_network(
@@ -909,7 +909,7 @@ class TemporalFusionTransformer(object):
                 return_gate=True)
 
             sparse_weights = tf.keras.layers.Activation('softmax')(mlp_outputs)
-            sparse_weights = tf.expand_dims(sparse_weights, axis=2)
+            sparse_weights = keras.ops.expand_dims(sparse_weights, axis=2)
 
             # Non-linear Processing & weight application
             trans_emb_list = []
@@ -925,7 +925,7 @@ class TemporalFusionTransformer(object):
 
             combined = tf.keras.layers.Multiply()(
                 [sparse_weights, transformed_embedding])
-            temporal_ctx = K.sum(combined, axis=-1)
+            temporal_ctx = keras.ops.sum(combined, axis=-1)
 
             return temporal_ctx, sparse_weights, static_gate
 
@@ -976,7 +976,7 @@ class TemporalFusionTransformer(object):
         temporal_feature_layer = add_and_norm([lstm_layer, input_embeddings])
 
         # Static enrichment layers
-        expanded_static_context = K.expand_dims(static_context_enrichment, axis=1)
+        expanded_static_context = expand_dims(static_context_enrichment, axis=1)
         enriched, _ = gated_residual_network(
             temporal_feature_layer,
             self.hidden_layer_size,
@@ -1046,7 +1046,7 @@ class TemporalFusionTransformer(object):
             self._attention_components = attention_components
 
             adam = tf.keras.optimizers.Adam(
-                lr=self.learning_rate, clipnorm=self.max_gradient_norm)
+                learning_rate=self.learning_rate, clipnorm=self.max_gradient_norm)
 
             model = tf.keras.Model(inputs=all_inputs, outputs=outputs)
 
@@ -1090,7 +1090,7 @@ class TemporalFusionTransformer(object):
             quantile_loss = QuantileLossCalculator(valid_quantiles).quantile_loss
 
             model.compile(
-                loss=quantile_loss, optimizer=adam, sample_weight_mode='temporal')
+                loss=quantile_loss, optimizer=adam, run_eagerly=True)
 
             self._input_placeholder = all_inputs
 
@@ -1108,16 +1108,16 @@ class TemporalFusionTransformer(object):
 
         # Add relevant callbacks
         callbacks = [
-            tf.keras.callbacks.EarlyStopping(
+            keras.callbacks.EarlyStopping(
                 monitor='val_loss',
                 patience=self.early_stopping_patience,
                 min_delta=1e-4),
-            tf.keras.callbacks.ModelCheckpoint(
+            keras.callbacks.ModelCheckpoint(
                 filepath=self.get_keras_saved_path(self._temp_folder),
                 monitor='val_loss',
                 save_best_only=True,
                 save_weights_only=True),
-            tf.keras.callbacks.TerminateOnNaN()
+            keras.callbacks.TerminateOnNaN()
         ]
 
         print('Getting batched_data')
@@ -1145,19 +1145,24 @@ class TemporalFusionTransformer(object):
 
         all_callbacks = callbacks
 
+        print("Type training:", type(data))
+        print("Type validation:", type(val_data))
+
         self.model.fit(
             x=data,
             y=np.concatenate([labels, labels, labels], axis=-1),
             sample_weight=active_flags,
             epochs=self.num_epochs,
             batch_size=self.minibatch_size,
-            validation_data=(val_data,
-                             np.concatenate([val_labels, val_labels, val_labels],
-                                            axis=-1), val_flags),
-            callbacks=all_callbacks,
-            shuffle=True,
-            use_multiprocessing=True,
-            workers=self.n_multiprocessing_workers)
+            #validation_data=(val_data,
+            #                 np.concatenate([val_labels, val_labels, val_labels],
+            #                                axis=-1), val_flags),
+            # callbacks=all_callbacks,
+            # shuffle=True)
+            #,
+            #use_multiprocessing=True,
+            #workers=self.n_multiprocessing_workers) TODO
+        )
 
         # Load best checkpoint again
         tmp_checkpont = self.get_keras_saved_path(self._temp_folder)
@@ -1333,7 +1338,7 @@ class TemporalFusionTransformer(object):
 
     def get_keras_saved_path(self, model_folder):
         """Returns path to keras checkpoint."""
-        return os.path.join(model_folder, '{}.check'.format(self.name))
+        return os.path.join(model_folder, '{}.weights.h5'.format(self.name))
 
     def save(self, model_folder):
         """Saves optimal TFT weights.

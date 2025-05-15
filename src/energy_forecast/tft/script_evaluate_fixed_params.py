@@ -41,8 +41,12 @@ import numpy as np
 import pandas as pd
 import tensorflow.compat.v1 as tf
 
+from src.energy_forecast.config import DATA_DIR
 from src.energy_forecast.tft.data_formatters import base
 from tensorflow.python.keras.backend import get_session
+
+from src.energy_forecast.tft.libs.utils import save_dataframe_to_csv
+from src.energy_forecast.utils.metrics import root_mean_squared_error, mean_squared_error
 
 ExperimentConfig = expt_settings.configs.ExperimentConfig
 HyperparamOptManager = libs.hyperparam_opt.HyperparamOptManager
@@ -67,9 +71,6 @@ def main(expt_name,
       use_testing_mode: Uses a smaller models and data sizes for testing purposes
         only -- switch to False to use original default settings
     """
-
-    num_repeats = 1
-
     if not isinstance(data_formatter, base.GenericDataFormatter):
         raise ValueError(
             "Data formatters should inherit from" +
@@ -89,8 +90,6 @@ def main(expt_name,
     print("Loading & splitting data...")
     raw_data = pd.read_csv(data_csv_path)
     train, valid, test = data_formatter.split_data(raw_data)
-    train_samples, valid_samples = data_formatter.get_num_samples_for_calibration(
-    )
 
     # Sets up default params
     fixed_params = data_formatter.get_experiment_params()
@@ -101,45 +100,12 @@ def main(expt_name,
     if use_testing_mode:
         fixed_params["num_epochs"] = 1
         params["hidden_layer_size"] = 5
-        train_samples, valid_samples = 100, 10
 
     # Sets up hyperparam manager
     print("*** Loading hyperparm manager ***")
     opt_manager = HyperparamOptManager({k: [params[k]] for k in params},
                                        fixed_params, model_folder)
-
-    # Training -- one iteration only
-    print("*** Running calibration ***")
-    print("Params Selected:")
-    for k in params:
-        print("{}: {}".format(k, params[k]))
-
-    best_loss = np.inf
-    for _ in range(num_repeats):
-
-        tf.reset_default_graph()
-        with tf.Graph().as_default(), tf.Session(config=tf_config) as sess:
-
-            tf.keras.backend.set_session(sess)
-
-            params = opt_manager.get_next_parameters()
-            model = ModelClass(params, use_cudnn=use_gpu)
-
-            if not model.training_data_cached():
-                model.cache_batched_data(train, "train", num_samples=train_samples)
-                model.cache_batched_data(valid, "valid", num_samples=valid_samples)
-
-            sess.run(tf.global_variables_initializer())
-
-            model.fit()
-
-            val_loss = model.evaluate()
-
-            if val_loss < best_loss:
-                opt_manager.update_score(params, val_loss, model)
-                best_loss = val_loss
-
-            tf.keras.backend.set_session(default_keras_session)
+    opt_manager.load_results()  # loads params stored in models folder
 
     print("*** Running tests ***")
     tf.reset_default_graph()
@@ -165,6 +131,14 @@ def main(expt_name,
                 col for col in data.columns
                 if col not in {"forecast_time", "identifier"}
             ]]
+
+        mse = mean_squared_error(extract_numerical_data(targets).to_numpy(), extract_numerical_data(p90_forecast).to_numpy())
+        rmse = root_mean_squared_error(extract_numerical_data(targets).to_numpy(), extract_numerical_data(p90_forecast).to_numpy())
+
+        print(f"MSE: {mse}, RMSE: {rmse}")
+
+        save_dataframe_to_csv(p90_forecast, DATA_DIR / "predictions" / "tft" / "p90_predictions.csv")
+        save_dataframe_to_csv(targets, DATA_DIR / "predictions" / "tft" / "targets.csv")
 
         p50_loss = utils.numpy_normalised_quantile_loss(
             extract_numerical_data(targets), extract_numerical_data(p50_forecast),
@@ -238,4 +212,4 @@ if __name__ == "__main__":
         model_folder=os.path.join(config.model_folder, "fixed"),
         data_csv_path=config.data_csv_path,
         data_formatter=formatter,
-        use_testing_mode=False)  # Change to false to use original default params
+        use_testing_mode=True)  # Change to false to use original default params

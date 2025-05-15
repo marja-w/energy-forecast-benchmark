@@ -17,9 +17,13 @@
 
 import os
 import pathlib
+from typing import Optional, Union
+import wandb
 
 import numpy as np
 import tensorflow.compat.v1 as tf
+import pandas as pd
+from pandas import DataFrame
 from tensorflow.python.tools.inspect_checkpoint import print_tensors_in_checkpoint_file
 
 
@@ -233,3 +237,17 @@ def print_weights_in_checkpoint(model_folder, cp_name):
         tensor_name='',
         all_tensors=True,
         all_tensor_names=True)
+
+
+def save_dataframe_to_csv(df: DataFrame, path: Union[str, pathlib.Path]) -> None:
+    """Saves a pandas DataFrame to a CSV file.
+
+    Args:
+        df: DataFrame to save
+        path: Path where to save the CSV file
+
+    Returns:
+        None
+    """
+    create_folder_if_not_exist(os.path.dirname(path))
+    df.to_csv(path, index=False)

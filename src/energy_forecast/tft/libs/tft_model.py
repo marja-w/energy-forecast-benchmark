@@ -1105,7 +1105,6 @@ class TemporalFusionTransformer(object):
         """
 
         print('*** Fitting {} ***'.format(self.name))
-
         # Add relevant callbacks
         callbacks = [
             tf.keras.callbacks.EarlyStopping(

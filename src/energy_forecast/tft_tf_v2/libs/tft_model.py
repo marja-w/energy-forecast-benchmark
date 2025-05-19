@@ -1039,16 +1039,16 @@ class TemporalFusionTransformer(object):
             transformer_layer, all_inputs, attention_components \
                 = self._build_base_graph()
 
-            outputs = tf.keras.layers.TimeDistributed(
-                tf.keras.layers.Dense(self.output_size * len(self.quantiles))) \
+            outputs = keras.layers.TimeDistributed(
+                keras.layers.Dense(self.output_size * len(self.quantiles))) \
                 (transformer_layer[Ellipsis, self.num_encoder_steps:, :])
 
             self._attention_components = attention_components
 
-            adam = tf.keras.optimizers.Adam(
+            adam = keras.optimizers.Adam(
                 learning_rate=self.learning_rate, clipnorm=self.max_gradient_norm)
 
-            model = tf.keras.Model(inputs=all_inputs, outputs=outputs)
+            model = keras.Model(inputs=all_inputs, outputs=outputs)
 
             print(model.summary())
 
@@ -1148,21 +1148,33 @@ class TemporalFusionTransformer(object):
         print("Type training:", type(data))
         print("Type validation:", type(val_data))
 
+        # # Create TensorFlow datasets for training
+        # train_labels = np.concatenate([labels, labels, labels], axis=-1)
+        # train_dataset = tf.data.Dataset.from_tensor_slices(
+        #     (data, train_labels, active_flags)
+        # ).batch(self.minibatch_size)
+        #
+        # # Create TensorFlow datasets for validation
+        # val_labels = np.concatenate([val_labels, val_labels, val_labels], axis=-1)
+        # val_dataset = tf.data.Dataset.from_tensor_slices(
+        #     (val_data, val_labels, val_flags)
+        # ).batch(self.minibatch_size)
+
         self.model.fit(
             x=data,
             y=np.concatenate([labels, labels, labels], axis=-1),
             sample_weight=active_flags,
             epochs=self.num_epochs,
             batch_size=self.minibatch_size,
-            #validation_data=(val_data,
-            #                 np.concatenate([val_labels, val_labels, val_labels],
-            #                                axis=-1), val_flags),
-            # callbacks=all_callbacks,
-            # shuffle=True)
+            validation_data=(val_data,
+                             np.concatenate([val_labels, val_labels, val_labels],
+                                            axis=-1), val_flags),
+            callbacks=all_callbacks,
+            shuffle=True)
             #,
             #use_multiprocessing=True,
-            #workers=self.n_multiprocessing_workers) TODO
-        )
+            #workers=self.n_multiprocessing_workers  # TODO: Enable these if needed
+
 
         # Load best checkpoint again
         tmp_checkpont = self.get_keras_saved_path(self._temp_folder)
@@ -1195,10 +1207,14 @@ class TemporalFusionTransformer(object):
         outputs = raw_data['outputs']
         active_entries = self._get_active_locations(raw_data['active_entries'])
 
+        # Create evaluation dataset
+        eval_labels = np.concatenate([outputs, outputs, outputs], axis=-1)
+        eval_dataset = tf.data.Dataset.from_tensor_slices(
+            (inputs, eval_labels, active_entries)
+        ).batch(self.minibatch_size)
+
         metric_values = self.model.evaluate(
-            x=inputs,
-            y=np.concatenate([outputs, outputs, outputs], axis=-1),
-            sample_weight=active_entries,
+            eval_dataset,
             workers=16,
             use_multiprocessing=True)
 
@@ -1225,11 +1241,13 @@ class TemporalFusionTransformer(object):
         identifier = data['identifier']
         outputs = data['outputs']
 
+        # Create prediction dataset
+        predict_dataset = tf.data.Dataset.from_tensor_slices(inputs).batch(self.minibatch_size)
+
         combined = self.model.predict(
-            inputs,
+            predict_dataset,
             workers=16,
-            use_multiprocessing=True,
-            batch_size=self.minibatch_size)
+            use_multiprocessing=True)
 
         # Format output_csv
         if self.output_size != 1:

@@ -446,7 +446,10 @@ class TemporalFusionTransformer(object):
         self.column_definition = params['column_definition']
 
         # Network params
-        self.quantiles = [0.1, 0.5, 0.9]
+        try:
+            self.quantiles = params['quantiles']
+        except KeyError:
+            self.quantiles = [0.1, 0.5, 0.9]
         self.use_cudnn = use_cudnn  # Whether to use GPU optimised LSTM
         self.hidden_layer_size = int(params['hidden_layer_size'])
         self.dropout_rate = float(params['dropout_rate'])
@@ -469,9 +472,9 @@ class TemporalFusionTransformer(object):
         self._attention_components = None
         self._prediction_parts = None
 
-        print('*** {} params ***'.format(self.name))
-        for k in params:
-            print('# {} = {}'.format(k, params[k]))
+        # print('*** {} params ***'.format(self.name))
+        # for k in params:
+        #     print('# {} = {}'.format(k, params[k]))
 
         # Build model
         self.model = self.build_model()
@@ -1050,7 +1053,7 @@ class TemporalFusionTransformer(object):
 
             model = tf.keras.Model(inputs=all_inputs, outputs=outputs)
 
-            print(model.summary())
+            # print(model.summary())
 
             valid_quantiles = self.quantiles
             output_size = self.output_size
@@ -1087,10 +1090,13 @@ class TemporalFusionTransformer(object):
                                 b[Ellipsis, output_size * i:output_size * (i + 1)], quantile)
                     return loss
 
-            quantile_loss = QuantileLossCalculator(valid_quantiles).quantile_loss
+            if len(self.quantiles) > 1:
+                loss = QuantileLossCalculator(valid_quantiles).quantile_loss
+            else:
+                loss = "mean_squared_error"
 
             model.compile(
-                loss=quantile_loss, optimizer=adam, sample_weight_mode='temporal')
+                loss=loss, optimizer=adam, sample_weight_mode='temporal')
 
             self._input_placeholder = all_inputs
 
@@ -1144,14 +1150,14 @@ class TemporalFusionTransformer(object):
 
         all_callbacks = callbacks
 
-        self.model.fit(
+        history = self.model.fit(
             x=data,
-            y=np.concatenate([labels, labels, labels], axis=-1),
+            y=np.concatenate([labels] * len(self.quantiles), axis=-1),
             sample_weight=active_flags,
             epochs=self.num_epochs,
             batch_size=self.minibatch_size,
             validation_data=(val_data,
-                             np.concatenate([val_labels, val_labels, val_labels],
+                             np.concatenate([val_labels] * len(self.quantiles),
                                             axis=-1), val_flags),
             callbacks=all_callbacks,
             shuffle=True,
@@ -1167,6 +1173,7 @@ class TemporalFusionTransformer(object):
 
         else:
             print('Cannot load from {}, skipping ...'.format(self._temp_folder))
+        return history
 
     def evaluate(self, data=None, eval_metric='loss'):
         """Applies evaluation metric to the training data.
@@ -1191,7 +1198,7 @@ class TemporalFusionTransformer(object):
 
         metric_values = self.model.evaluate(
             x=inputs,
-            y=np.concatenate([outputs, outputs, outputs], axis=-1),
+            y=np.concatenate([outputs] * len(self.quantiles), axis=-1),
             sample_weight=active_entries,
             workers=16,
             use_multiprocessing=True)

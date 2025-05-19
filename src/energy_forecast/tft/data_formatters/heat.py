@@ -83,6 +83,8 @@ class HeatDataFormatter(GenericDataFormatter):
         self.categorical_inputs = []
         self.features = FEATURE_SET_13  # can only be less features than meta features
 
+        self.config = None
+
     def split_data(self, df, train_percentage=0.8):
         """Splits data frame into training-validation-test data frames based on the time-based split logic.
 
@@ -359,10 +361,10 @@ class HeatDataFormatter(GenericDataFormatter):
         """Returns fixed model parameters for experiments."""
 
         fixed_params = {
-            'total_time_steps': 7 + 7,  # History + prediction horizon
-            'num_encoder_steps': 7,  # History length
-            'num_epochs': 100,
-            'early_stopping_patience': 5,
+            'total_time_steps': self.config["n_in"] + self.config["n_out"],  # History + prediction horizon
+            'num_encoder_steps': self.config["n_in"],  # History length
+            'num_epochs': self.config["num_epochs"],
+            'early_stopping_patience': self.config["early_stopping_patience"],
             'multiprocessing_workers': 5,
         }
 
@@ -382,3 +384,7 @@ class HeatDataFormatter(GenericDataFormatter):
         }
 
         return model_params
+
+    def set_config(self, config):
+        """ Make sure it is run before get_default_model_params() and get_experiment_params() """
+        self.config = config

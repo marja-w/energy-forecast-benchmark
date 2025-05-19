@@ -81,7 +81,7 @@ class ExperimentConfig(object):
         'electricity': 'hourly_electricity.csv',
         'traffic': 'hourly_data.csv',
         'favorita': 'favorita_consolidated.csv',
-        'heat': 'dataset_interpolate_daily_feat.csv'
+        'heat': 'dataset_building_interpolate_daily_lag_7_7_feat.csv'
     }
 
     return os.path.join(self.data_folder, csv_map[self.experiment])

@@ -195,7 +195,7 @@ class HyperparamOptManager:
 
     raise ValueError("Exceeded max number of hyperparameter searches!!")
 
-  def update_score(self, parameters, loss, model, info=""):
+  def update_score(self, parameters, loss, model, training_time, info=""):
     """Updates the results from last optimisation run.
 
     Args:
@@ -227,7 +227,7 @@ class HyperparamOptManager:
       self.best_score = loss
       self.optimal_name = name
 
-    self.results[name] = pd.Series({"loss": loss, "info": info})
+    self.results[name] = pd.Series({"loss": loss, "info": info, "training_time": training_time})
     self.saved_params[name] = pd.Series(parameters)
 
     self.results.to_csv(os.path.join(self.hyperparam_folder, "results.csv"))

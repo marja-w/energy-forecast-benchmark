@@ -72,11 +72,11 @@ if __name__ == '__main__':
         "res": "daily",
         "interpolate": 1,
         "dataset": "building",  # building, meta, missing_data_90
-        "model": "FCN3",
+        "model": "tft",
         "lag_in": 7,
         "lag_out": 7,
-        "n_in": 1,
-        "n_out": 1,
+        "n_in": 7,
+        "n_out": 7,
         "n_future": 0,
         "scaler": "standard",
         "scale_mode": "individual",  # all, individual
@@ -92,6 +92,6 @@ if __name__ == '__main__':
         "weight_initializer": "glorot",
         "activation": "relu"
     }
-    model_path = MODELS_DIR / "FCN3.keras"
-    # main_local(model_path, training_config)
+    model_path = MODELS_DIR / "heat" / "fixed"
+    main_local(model_path, training_config)
     main(run_id)

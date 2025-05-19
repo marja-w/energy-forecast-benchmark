@@ -29,10 +29,11 @@ Command line args:
 """
 
 import argparse
+import datetime
 import datetime as dte
 import os
+from statistics import mean
 
-import data_formatters.base
 import expt_settings.configs
 import libs.hyperparam_opt
 import libs.tft_model
@@ -43,6 +44,9 @@ import tensorflow.compat.v1 as tf
 
 from src.energy_forecast.tft.data_formatters import base
 from tensorflow.python.keras.backend import get_session
+from permetrics.regression import RegressionMetric
+
+from src.energy_forecast.utils.metrics import root_mean_squared_error
 
 ExperimentConfig = expt_settings.configs.ExperimentConfig
 HyperparamOptManager = libs.hyperparam_opt.HyperparamOptManager
@@ -54,6 +58,7 @@ def main(expt_name,
          model_folder,
          data_csv_path,
          data_formatter,
+         extra_config,
          use_testing_mode=False):
     """Trains tft based on defined model params.
 
@@ -85,6 +90,7 @@ def main(expt_name,
         tf_config = utils.get_default_tensorflow_config(tf_device="cpu")
 
     print("*** Training from defined parameters for {} ***".format(expt_name))
+    data_formatter.set_config(config=extra_config)
 
     print("Loading & splitting data...")
     raw_data = pd.read_csv(data_csv_path)
@@ -94,6 +100,10 @@ def main(expt_name,
 
     # Sets up default params
     fixed_params = data_formatter.get_experiment_params()
+    fixed_params["quantiles"] = extra_config["quantiles"]
+    fixed_params["train_data_length"] = len(train)
+    fixed_params["valid_data_length"] = len(valid)
+    fixed_params["test_data_length"] = len(test)
     params = data_formatter.get_default_model_params()
     params["model_folder"] = model_folder
 
@@ -131,12 +141,21 @@ def main(expt_name,
 
             sess.run(tf.global_variables_initializer())
 
-            model.fit()
+            pre_training = dte.datetime.now()
+            history = model.fit()
+            after_training = dte.datetime.now()
+
+            training_time = after_training - pre_training
+            print(f"Training took {training_time}")
+
+            df_history = pd.DataFrame({"loss": history.history["loss"], "val_loss": history.history["val_loss"]})
+            df_history.to_csv(f"{model_folder}/history.csv")
 
             val_loss = model.evaluate()
+            print(f"Validation loss right after training: {val_loss}")
 
             if val_loss < best_loss:
-                opt_manager.update_score(params, val_loss, model)
+                opt_manager.update_score(params, val_loss, model, training_time=training_time)
                 best_loss = val_loss
 
             tf.keras.backend.set_session(default_keras_session)
@@ -156,8 +175,7 @@ def main(expt_name,
         print("Computing test loss")
         output_map = model.predict(test, return_targets=True)
         targets = data_formatter.format_predictions(output_map["targets"])
-        p50_forecast = data_formatter.format_predictions(output_map["p50"])
-        p90_forecast = data_formatter.format_predictions(output_map["p90"])
+        predictions = [data_formatter.format_predictions(output_map[f"p{int(x * 100)}"]) for x in params["quantiles"]]
 
         def extract_numerical_data(data):
             """Strips out forecast time and identifier columns."""
@@ -166,12 +184,26 @@ def main(expt_name,
                 if col not in {"forecast_time", "identifier"}
             ]]
 
-        p50_loss = utils.numpy_normalised_quantile_loss(
-            extract_numerical_data(targets), extract_numerical_data(p50_forecast),
-            0.5)
-        p90_loss = utils.numpy_normalised_quantile_loss(
-            extract_numerical_data(targets), extract_numerical_data(p90_forecast),
-            0.9)
+        if params["quantiles"] == [1.0]:
+            losses = [root_mean_squared_error(extract_numerical_data(targets).to_numpy(),
+                                              extract_numerical_data(predictions[0]).to_numpy())]
+            evaluator = RegressionMetric(extract_numerical_data(targets).to_numpy(),
+                                              extract_numerical_data(predictions[0]).to_numpy())
+
+            test_mse = evaluator.mean_squared_error()
+            test_mae = evaluator.mean_absolute_error()
+            test_nrmse = evaluator.normalized_root_mean_square_error()
+
+            losses += [test_mae, test_nrmse, test_mse]
+            metric_names = ["rmse", "mae", "nrmse", "mse"]
+            metrics = {metric: loss for metric, loss in zip(metric_names, losses)}
+            df_metrics = pd.DataFrame(metrics)
+            df_metrics.loc["mean"] = df_metrics.mean()  # add means as last row
+            df_metrics.to_csv(f"{model_folder}/metrics.csv")
+        else:
+            losses = [utils.numpy_normalised_quantile_loss(
+                extract_numerical_data(targets), extract_numerical_data(x),
+                q) for q, x in zip(params["quantiles"], predictions)]
 
         tf.keras.backend.set_session(default_keras_session)
 
@@ -181,9 +213,12 @@ def main(expt_name,
 
     for k in best_params:
         print(k, " = ", best_params[k])
-    print()
-    print("Normalised Quantile Loss for Test Data: P50={}, P90={}".format(
-        p50_loss.mean(), p90_loss.mean()))
+    if len(params["quantiles"]) == 1:
+        for m, v in metrics.items():
+            print(f"{m} on Test Data: {v.mean()}")
+    else:
+        for q, x in zip(params["quantiles"], losses):
+            print(f"Normalised Quantile Loss for Test Data: P{int(100 * q)}={x.mean()}")
 
 
 if __name__ == "__main__":
@@ -223,19 +258,27 @@ if __name__ == "__main__":
 
         return args.expt_name, root_folder, args.use_gpu == "yes"
 
-
     name, output_folder, use_tensorflow_with_gpu = get_args()
 
     print("Using output folder {}".format(output_folder))
 
     config = ExperimentConfig(name, output_folder)
+    extra_config = {
+        "quantiles": [1.0],
+        "num_epochs": 50,
+        "early_stopping_patience": 100,
+        "n_in": 7,
+        "n_out": 7
+    }
     formatter = config.make_data_formatter()
 
     # Customise inputs to main() for new datasets.
     main(
         expt_name=name,
         use_gpu=use_tensorflow_with_gpu,
-        model_folder=os.path.join(config.model_folder, "fixed"),
+        model_folder=os.path.join(config.model_folder,
+                                  f"fixed_{extra_config['n_in']}_{extra_config['n_out']}_{datetime.datetime.now().strftime('%Y%m%d_%H%M%S')}"),
         data_csv_path=config.data_csv_path,
         data_formatter=formatter,
+        extra_config=extra_config,
         use_testing_mode=False)  # Change to false to use original default params

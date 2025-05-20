@@ -539,8 +539,8 @@ class NNModel(Model):
                 b_metrics = {"id": b_id, "mape": test_mape, "mse": test_mse, "mae": test_mae, "nrmse": test_nrmse,
                              "rmse": test_rmse, "avg_diff": mean_target_value}
                 id_to_metrics.append(b_metrics)
-        create_box_plot_predictions(id_to_ind_metrics, "rse", run, self.config["n_out"], self.name, log_y=True)
-        create_box_plot_predictions(id_to_ind_metrics, "nrse", run, self.config["n_out"], self.name, log_y=True)
+        create_box_plot_predictions(id_to_ind_metrics, "rse", run, log_y=True)
+        create_box_plot_predictions(id_to_ind_metrics, "nrse", run, log_y=True)
         metrics_df = pl.DataFrame(id_to_metrics)
         if run:
             run.log({"building_metrics": wandb_table})

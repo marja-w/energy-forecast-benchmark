@@ -3,7 +3,6 @@ from datetime import timedelta, datetime
 from pathlib import Path
 from typing import Optional
 
-import darts
 import numpy as np
 import pandas as pd
 import plotly.io
@@ -126,7 +125,7 @@ def plot_missing_dates_per_building(df: pl.DataFrame):
         plot_missing_dates(b_df, sensor_id=b_id[0])
 
 
-def plot_interpolated_series(series: darts.TimeSeries, b_id: str, data_source: str):
+def plot_interpolated_series(series, b_id: str, data_source: str):
     # logger.info(f"Plotting interpolated series to {FIGURES_DIR / 'interpolated_data'}")
     fig, ax = plt.subplots()
     ax = series.plot()
@@ -135,7 +134,7 @@ def plot_interpolated_series(series: darts.TimeSeries, b_id: str, data_source: s
     plt.close()
 
 
-def plot_series(series: darts.TimeSeries, b_id: str, data_source: str, folder: Path):
+def plot_series(series, b_id: str, data_source: str, folder: Path):
     # logger.info(f"Plotting interpolated series to {FIGURES_DIR / 'interpolated_data'}")
     plt.subplots()
     ax = series.plot()
@@ -223,7 +222,7 @@ def plot_predictions(ds, y: np.ndarray, b_id: str, y_hat: np.ndarray, dates: pl.
 
 
 def create_box_plot_predictions(id_to_metrics: list, metric_to_plot: str, run: Optional[wandb.sdk.wandb_run.Run],
-                                n_out: int, model_name: str, log_y: bool = False):
+                                log_y: bool = False, model_folder: str = ""):
     df = pd.DataFrame(id_to_metrics).explode(metric_to_plot)
     df[metric_to_plot] = df[metric_to_plot].astype(float)
     df = df.sort_values("avg_diff")
@@ -251,6 +250,7 @@ def create_box_plot_predictions(id_to_metrics: list, metric_to_plot: str, run: O
             run.log({f"boxplot_predictions": fig})
     else:
         fig.show()
+        fig.write_html(f"{model_folder}/boxplot_{metric_to_plot}.html")
 
 
 if __name__ == "__main__":

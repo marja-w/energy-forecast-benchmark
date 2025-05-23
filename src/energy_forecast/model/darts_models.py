@@ -294,3 +294,91 @@ class DartsTransformer(DartsModel):
         y_hat = self.predict(self.config["n_out"], test_series)
         evaluator = RegressionMetric(test_series.to_numpy(), y_hat)
         return self.log_eval_results(evaluator, run, len(test_df), log=log)
+
+
+class TimeSeriesDataset(TrainingDataset):
+    def __init__(self, config: dict):
+        super().__init__(config)
+
+    @overrides
+    def handle_missing_features(self):
+        """
+        If we have missing features for a TimeSeriesDataset, we cant just drop them, as it would create holes in
+        the time series. Therefore, linear interpolate them
+        """
+        self.df = remove_null_series_by_id(self.df, self.config["features"])
+
+    @overrides
+    def preprocess(self) -> tuple[pl.DataFrame, dict]:
+        super().preprocess()
+        return self.df, self.config
+
+    def get_time_series_from_idxs(self, data_split: str, scale: bool = False) -> tuple[
+        list[darts.TimeSeries], Union[list[darts.TimeSeries], None]]:
+        """
+        Get a list of darts.TimeSeries objects for the train-test-val split data. Return an additional list of time
+        series if there are continuous features other than the heat consumption.
+        :param data_split: train, test, val
+        :param scale: whether to scale the data
+        :return:
+        """
+        df = super().get_from_idxs(data_split, False)
+        df = df.select(["datetime", "id"] + self.config["features"])
+        df = remove_null_series_by_id(df, self.config[
+            "features"])  # again, remove series if there is only nans for a feature after cropping
+
+        # create list of darts Series objects
+        target_series = darts.TimeSeries.from_group_dataframe(df.to_pandas(),
+                                                              group_cols="id",
+                                                              time_col="datetime",
+                                                              value_cols=["diff"],
+                                                              static_cols=self.static_features,
+                                                              freq="D",
+                                                              fill_missing_dates=True
+                                                              )
+        if self.cont_features is not None:
+            covariate_list = darts.TimeSeries.from_group_dataframe(df.to_pandas(),
+                                                                   group_cols="id",
+                                                                   time_col="datetime",
+                                                                   value_cols=self.cont_features,
+                                                                   freq="D",
+                                                                   fill_missing_dates=True
+                                                                   )
+        else:
+            covariate_list = None  # otherwise no covariates
+
+        # scaling
+        if scale:
+            scaler_y = Scaler(self.scaler_y, global_fit=True)
+            scaler_X = Scaler(self.scaler_X, global_fit=True)
+
+            if data_split == "train":
+                target_series = scaler_y.fit_transform(target_series)
+                if covariate_list: covariate_list = scaler_X.fit_transform(covariate_list)
+                self.scaler_y = scaler_y
+                self.scaler_X = scaler_X
+            else:
+                target_series = self.scaler_y.transform(target_series)
+                if covariate_list: covariate_list = self.scaler_X.transform(covariate_list)
+
+        # fill missing values using darts  # TODO maybe throw away rather than fill?
+        transformer = MissingValuesFiller()
+        target_series = transformer.transform(target_series)
+        if covariate_list: covariate_list = transformer.transform(covariate_list)
+
+        assert sum(
+            [np.isnan(t.values()).sum() for t in target_series]) == 0  # there should be no nans in the train series
+
+        return target_series, covariate_list
+
+    def get_train_series(self, scale: bool = False) -> tuple[list[TimeSeries], list[TimeSeries]]:
+        return self.get_time_series_from_idxs("train", scale)
+
+    def get_test_series(self, scale: bool = False) -> tuple[list[TimeSeries], list[TimeSeries]]:
+        """
+        Get the data of the test split as target and covariate series, one series for each ID
+        """
+        return self.get_time_series_from_idxs("test", scale)
+
+    def get_val_series(self, scale: bool = False) -> tuple[list[TimeSeries], list[TimeSeries]]:
+        return self.get_time_series_from_idxs("val", scale)

@@ -11,18 +11,16 @@ from tensorflow.keras import layers
 from tqdm import tqdm
 import os
 
-from src.energy_forecast.model.darts_models import DartsTransformer, DartsRNN, DartsBlockRNN, DartsLSTM
 from src.energy_forecast.utils.train_test_val_split import get_train_test_val_split
 from src.energy_forecast.utils.util import store_df_wandb
 
 try:
     from src.energy_forecast.plots import plot_means, plot_std
     from src.energy_forecast.config import REFERENCES_DIR, FEATURE_SETS, PROCESSED_DATA_DIR, REPORTS_DIR, N_CLUSTER
-    from src.energy_forecast.dataset import Dataset, TrainingDataset, TrainDataset90, TimeSeriesDataset, \
-        TrainDatasetBuilding
+    from src.energy_forecast.dataset import Dataset, TrainingDataset, TrainDataset90, TrainDatasetBuilding
     from src.energy_forecast.model.models import Model, FCNModel, DTModel, LinearRegressorModel, RegressionModel, \
-        NNModel, \
-        RNN1Model, FCN2Model, FCN3Model, Baseline, RNN3Model, TransformerModel, LSTMModel
+    NNModel, \
+    RNN1Model, FCN2Model, FCN3Model, Baseline, RNN3Model, TransformerModel, LSTMModel, xLSTMModel
 except ModuleNotFoundError:
     import sys
     import os
@@ -38,7 +36,7 @@ except ModuleNotFoundError:
         from src.energy_forecast.config import REFERENCES_DIR, FEATURE_SETS
         from src.energy_forecast.dataset import Dataset, TrainingDataset, TrainDataset90
         from src.energy_forecast.model.models import Model, FCNModel, DTModel, LinearRegressorModel, RegressionModel, \
-            NNModel, RNN1Model, FCN2Model, FCN3Model, Baseline, DartsModel, RNN3Model
+            NNModel, RNN1Model, FCN2Model, FCN3Model, Baseline, RNN3Model
     else:
         raise IOError("Current Frame not found")
 
@@ -54,14 +52,14 @@ def get_model(config: dict) -> Model:
         return DTModel(config)
     elif config["model"] == "RNN1":
         return RNN1Model(config)
-    elif config["model"] == "RNN2":
-        return DartsRNN(config)
     elif config["model"] == "RNN3":
         return RNN3Model(config)
     elif config["model"] == "Transformer":
         return TransformerModel(config)
     elif config["model"] == "lstm":
         return LSTMModel(config)
+    elif config["model"] == "xlstm":
+        return xLSTMModel(config)
     else:
         raise Exception(f"Unknown model {config['model']}")
 
@@ -157,21 +155,21 @@ if __name__ == '__main__':
     n_futures = [0, 1, 7]
     epochs_list = [40]
     config = {"project": "ma-wahl-forecast",
-              "log": True,  # whether to log to wandb
+              "log": False,  # whether to log to wandb
               "plot": False, # whether to plot predictions
               "energy": "all",
               "res": "daily",
               "interpolate": 1,
               "dataset": "building",  # building, meta, missing_data_90
-              "model": "FCN3",
+              "model": "xlstm",
               "lag_in": 7,
               "lag_out": 7,
-              "n_in": 1,
-              "n_out": 1,
+              "n_in": 7,
+              "n_out": 7,
               "n_future": 0,
               "scaler": "standard",
               "scale_mode": "individual",  # all, individual
-              "feature_code": 14,
+              "feature_code": 12,
               "train_test_split_method": "time",
               "epochs": 1,
               "optimizer": "adam",

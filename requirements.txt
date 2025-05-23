@@ -1,13 +1,19 @@
-awscli
-black
-flake8
-isort
 loguru
-mkdocs
 pip
 python-dotenv
 tqdm
-typer
--e .
 permetrics
 networkx
+dotenv
+overrides
+jsonlines
+
+wandb
+polars
+pandas
+tensorflow
+keras
+
+matplotlib
+plotly
+seaborn

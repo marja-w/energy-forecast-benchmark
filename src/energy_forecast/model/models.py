@@ -50,6 +50,8 @@ from src.energy_forecast.xlstm.xlstm import (
     sLSTMLayerConfig,
     FeedForwardConfig,
 )
+from src.energy_forecast.xlstm_tsf.xLSTM import xLSTM
+
 
 # learning rate schedule
 def step_decay(epoch):
@@ -993,26 +995,6 @@ class xLSTMModel(RNNModel):
 
         print(self.model)
 
-        # Set optimizer and loss function
-        if self.config["optimizer"] == "adam":
-            self.optimizer = optim.Adam(
-                self.model.parameters(),
-                lr=self.config.get("learning_rate", 0.001),
-                weight_decay=self.config.get("weight_decay", 0)
-            )
-        else:
-            self.optimizer = optim.SGD(
-                self.model.parameters(),
-                lr=self.config.get("learning_rate", 0.01)
-            )
-
-        if self.config["loss"] == "mean_squared_error":
-            self.criterion = nn.MSELoss()
-        elif self.config["loss"] == "mean_absolute_error":
-            self.criterion = nn.L1Loss()
-        else:
-            self.criterion = nn.MSELoss()  # Default to MSE
-
     def train(self, X_train, y_train, X_val, y_val, log=False):
         """Train the model"""
         # Initialize wandb if logging is enabled
@@ -1039,6 +1021,26 @@ class xLSTMModel(RNNModel):
         val_loader = torch.utils.data.DataLoader(
             val_dataset, batch_size=batch_size, shuffle=False
         )
+
+        # Set optimizer and loss function
+        if self.config["optimizer"] == "adam":
+            self.optimizer = optim.Adam(
+                self.model.parameters(),
+                lr=self.config.get("learning_rate", 0.001),
+                weight_decay=self.config.get("weight_decay", 0)
+            )
+        else:
+            self.optimizer = optim.SGD(
+                self.model.parameters(),
+                lr=self.config.get("learning_rate", 0.01)
+            )
+
+        if self.config["loss"] == "mean_squared_error":
+            self.criterion = nn.MSELoss()
+        elif self.config["loss"] == "mean_absolute_error":
+            self.criterion = nn.L1Loss()
+        else:
+            self.criterion = nn.MSELoss()  # Default to MSE
 
         # Training loop
         epochs = self.config["epochs"]
@@ -1307,3 +1309,123 @@ class xLSTMModel(RNNModel):
         self.optimizer.load_state_dict(checkpoint['optimizer_state_dict'])
 
         logger.info(f"Successfully loaded {self.name} model from {file_path}")
+
+class xLSTMTSFModel(xLSTMModel):
+    def __init__(self, config):
+        super().__init__(config)
+        self.name = "xlstm_tsf"
+
+    def get_target_feature_index(self) -> int:
+        return self.config["features"].index("diff")
+
+    def set_model(self, input_shape):
+        """Set model architecture"""
+        self.model = xLSTM(input_size=input_shape[2], head_size=32, num_heads=4, batch_first=True, layers='msm')
+
+    def train(self, X_train, y_train, X_val, y_val, log=False):
+        """Train the model"""
+        # Initialize wandb if logging is enabled
+        if log:
+            config, run = self.init_wandb(X_train, X_val)
+        else:
+            run = None
+            config = self.config
+
+        # Convert data to PyTorch tensors
+        X_train_tensor = torch.tensor(X_train, dtype=torch.float32).to(self.device)
+        y_train_tensor = torch.tensor(y_train.to_numpy(), dtype=torch.float32).to(self.device)
+        X_val_tensor = torch.tensor(X_val, dtype=torch.float32).to(self.device)
+        y_val_tensor = torch.tensor(y_val.to_numpy(), dtype=torch.float32).to(self.device)
+
+        # Create DataLoader
+        batch_size = self.config["batch_size"]
+        train_dataset = torch.utils.data.TensorDataset(X_train_tensor, y_train_tensor)
+        train_loader = torch.utils.data.DataLoader(
+            train_dataset, batch_size=batch_size, shuffle=True
+        )
+
+        val_dataset = torch.utils.data.TensorDataset(X_val_tensor, y_val_tensor)
+        val_loader = torch.utils.data.DataLoader(
+            val_dataset, batch_size=batch_size, shuffle=False
+        )
+
+        # Set optimizer and loss function
+        if self.config["optimizer"] == "adam":
+            self.optimizer = optim.Adam(
+                self.model.parameters(),
+                lr=self.config.get("learning_rate", 0.001),
+                weight_decay=self.config.get("weight_decay", 0)
+            )
+        else:
+            self.optimizer = optim.SGD(
+                self.model.parameters(),
+                lr=self.config.get("learning_rate", 0.01)
+            )
+
+        if self.config["loss"] == "mean_squared_error":
+            self.criterion = nn.MSELoss()
+        elif self.config["loss"] == "mean_absolute_error":
+            self.criterion = nn.L1Loss()
+        else:
+            self.criterion = nn.MSELoss()  # Default to MSE
+
+        target_feature_idx = self.get_target_feature_index()
+        # Training loop
+        epochs = self.config["epochs"]
+        for epoch in tqdm(range(epochs), desc="Training epochs"):
+            # Training phase
+            self.model.train()
+            train_loss = 0.0
+            train_mae = 0.0
+
+            for inputs, targets in tqdm(train_loader, desc="Training batches", position=1, leave=True):
+                self.optimizer.zero_grad()
+                outputs, _ = self.model(inputs)  # returns tuple (outputs, weights)
+                # print(outputs)
+                # print(outputs.shape)
+                outputs = outputs[:, :, target_feature_idx]  # remove last dimension
+                loss = self.criterion(outputs, targets)  # only use diff for loss computation
+                loss.backward()
+                self.optimizer.step()
+
+                train_loss += loss.item() * inputs.size(0)
+                mae = torch.nn.functional.l1_loss(outputs, targets)
+                train_mae += mae.item() * inputs.size(0)
+
+            train_loss = train_loss / len(train_loader.dataset)
+            train_mae = train_mae / len(train_loader.dataset)
+
+            # Validation phase
+            self.model.eval()
+            val_loss = 0.0
+            val_mae = 0.0
+
+            with torch.no_grad():
+                for inputs, targets in val_loader:
+                    outputs, _ = self.model(inputs)
+                    outputs = outputs[:, :, target_feature_idx]
+                    loss = self.criterion(outputs, targets)
+
+                    val_loss += loss.item() * inputs.size(0)
+                    mae = torch.nn.functional.l1_loss(outputs, targets)
+                    val_mae += mae.item() * inputs.size(0)
+
+            val_loss = val_loss / len(val_loader.dataset)
+            val_mae = val_mae / len(val_loader.dataset)
+
+            # Log metrics
+            if log:
+                run.log({
+                    "epoch": epoch + 1,
+                    "train_loss": train_loss,
+                    "train_mae": train_mae,
+                    "val_loss": val_loss,
+                    "val_mae": val_mae
+                })
+
+            logger.info(f"Epoch {epoch + 1}/{epochs} - "
+                        f"Train Loss: {train_loss:.4f}, Train MAE: {train_mae:.4f}, "
+                        f"Val Loss: {val_loss:.4f}, Val MAE: {val_mae:.4f}")
+
+        logger.success("Model training complete.")
+        return run

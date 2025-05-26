@@ -24,6 +24,8 @@ import os
 import src.energy_forecast.tft.data_formatters.electricity
 import src.energy_forecast.tft.data_formatters.volatility
 import src.energy_forecast.tft.data_formatters.heat
+import src.energy_forecast.tft.data_formatters.heat_no_building
+import src.energy_forecast.tft.data_formatters.heat_diff
 from src.energy_forecast.config import PROJ_ROOT
 from src.energy_forecast.tft import data_formatters
 
@@ -42,7 +44,7 @@ class ExperimentConfig(object):
       experiment.
   """
 
-  default_experiments = ['heat', 'volatility', 'electricity', 'traffic', 'favorita']
+  default_experiments = ['heat', 'heat_no_building', 'heat_diff', 'volatility', 'electricity', 'traffic', 'favorita']
 
   def __init__(self, experiment='volatility', root_folder=None):
     """Creates configs based on default experiment chosen.
@@ -81,7 +83,9 @@ class ExperimentConfig(object):
         'electricity': 'hourly_electricity.csv',
         'traffic': 'hourly_data.csv',
         'favorita': 'favorita_consolidated.csv',
-        'heat': 'dataset_building_interpolate_daily_lag_7_7_feat.csv'
+        'heat': 'dataset_building_interpolate_daily_lag_7_7_feat.csv',
+        'heat_no_building': 'dataset_building_interpolate_daily_lag_7_7_feat.csv',
+        'heat_diff': 'dataset_building_interpolate_daily_lag_7_7_feat.csv'
     }
 
     return os.path.join(self.data_folder, csv_map[self.experiment])
@@ -101,7 +105,9 @@ class ExperimentConfig(object):
     data_formatter_class = {
         'volatility': data_formatters.volatility.VolatilityFormatter,
         'electricity': data_formatters.electricity.ElectricityFormatter,
-        'heat': data_formatters.heat.HeatDataFormatter
+        'heat': data_formatters.heat.HeatDataFormatter,
+        'heat_no_building': data_formatters.heat_no_building.HeatNoBuildingDataFormatter,
+        'heat_diff': data_formatters.heat_diff.HeatDiffDataFormatter
     }
 
     return data_formatter_class[self.experiment]()

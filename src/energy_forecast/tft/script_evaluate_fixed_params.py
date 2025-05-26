@@ -237,7 +237,7 @@ def main(expt_name,
             losses += [test_mae, test_nrmse, test_mse]
             metric_names = ["rmse", "mae", "nrmse", "mse"]
             metrics = {metric: loss for metric, loss in zip(metric_names, losses)}
-            df_metrics = pd.DataFrame(metrics)
+            df_metrics = pd.DataFrame(metrics, index=range(extra_config["n_out"]))
             df_metrics.loc["mean"] = df_metrics.mean()  # add means as last row
             df_metrics.to_csv(f"{model_folder}/metrics.csv")
         else:
@@ -317,7 +317,7 @@ if __name__ == "__main__":
     main(
         expt_name=name,
         use_gpu=use_tensorflow_with_gpu,
-        model_folder=os.path.join(config.model_folder, "fixed_7_7_20250516_203802"),
+        model_folder=os.path.join(config.model_folder, "fixed_7_1_20250526_095150"),
         data_csv_path=config.data_csv_path,
         data_formatter=formatter,
         use_testing_mode=True)  # Change to false to use original default params

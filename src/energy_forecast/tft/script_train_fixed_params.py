@@ -197,7 +197,7 @@ def main(expt_name,
             losses += [test_mae, test_nrmse, test_mse]
             metric_names = ["rmse", "mae", "nrmse", "mse"]
             metrics = {metric: loss for metric, loss in zip(metric_names, losses)}
-            df_metrics = pd.DataFrame(metrics)
+            df_metrics = pd.DataFrame(metrics, index=range(extra_config["n_out"]))
             df_metrics.loc["mean"] = df_metrics.mean()  # add means as last row
             df_metrics.to_csv(f"{model_folder}/metrics.csv")
         else:
@@ -265,19 +265,22 @@ if __name__ == "__main__":
     config = ExperimentConfig(name, output_folder)
     extra_config = {
         "quantiles": [1.0],
-        "num_epochs": 50,
+        "num_epochs": 1,
         "early_stopping_patience": 100,
         "n_in": 7,
         "n_out": 7
     }
     formatter = config.make_data_formatter()
 
+    # model_folder = os.path.join(config.model_folder,
+    #                               f"fixed_{extra_config['n_in']}_{extra_config['n_out']}_{datetime.datetime.now().strftime('%Y%m%d_%H%M%S')}"
+    model_folder = os.path.join(config.model_folder, "fixed_7_7_20250526_092911")
+
     # Customise inputs to main() for new datasets.
     main(
         expt_name=name,
         use_gpu=use_tensorflow_with_gpu,
-        model_folder=os.path.join(config.model_folder,
-                                  f"fixed_{extra_config['n_in']}_{extra_config['n_out']}_{datetime.datetime.now().strftime('%Y%m%d_%H%M%S')}"),
+        model_folder=model_folder,
         data_csv_path=config.data_csv_path,
         data_formatter=formatter,
         extra_config=extra_config,

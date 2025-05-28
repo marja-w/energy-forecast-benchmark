@@ -1,3 +1,4 @@
+import os
 from datetime import timedelta
 
 import darts
@@ -5,7 +6,7 @@ import polars as pl
 from darts.utils.missing_values import fill_missing_values, extract_subseries
 from matplotlib import pyplot as plt
 
-from src.energy_forecast.config import FIGURES_DIR
+from src.energy_forecast.config import FIGURES_DIR, MIN_GAP_SIZE_DAILY
 from src.energy_forecast.plots import plot_dataframe
 from src.energy_forecast.utils.util import get_missing_dates, find_time_spans
 
@@ -119,8 +120,7 @@ def filter_connection_errors_by_id(df: pl.DataFrame, freq: str) -> pl.DataFrame:
     return filtered_df
 
 
-def interpolate_values(df: pl.DataFrame) -> pl.DataFrame:
-    freq = "D"  # TODO: for hours
+def interpolate_values(df: pl.DataFrame, freq: str) -> pl.DataFrame:
     data_source = df["source"].mode().item()
     building_id = df["id"].mode().item()
     # use darts and pandas for interpolating values
@@ -140,28 +140,40 @@ def interpolate_values(df: pl.DataFrame) -> pl.DataFrame:
     return df_filled
 
 
-def interpolate_values_by_id(df: pl.DataFrame):
-    interpolated_df = df.group_by("id").map_groups(lambda group: interpolate_values(group))
+def interpolate_values_by_id(df: pl.DataFrame, freq: str = "D"):
+    interpolated_df = df.group_by("id").map_groups(lambda group: interpolate_values(group, freq))
     return interpolated_df
 
 
-def split_series(df: pl.DataFrame, min_gap_size: int, plot: bool = True) -> pl.DataFrame:
-    freq = "D"  # TODO: for hours
+def split_series(df: pl.DataFrame, min_gap_size: int, res: str, plot: bool = True) -> pl.DataFrame:
+    freq = "D" if res == "daily" else "h"
     data_source = df["source"].mode().item()
     building_id = df["id"].mode().item()
     # use darts for extracting subseries
     series = darts.TimeSeries.from_dataframe(df, time_col="datetime", value_cols=["value", "diff"], freq=freq,
                                              fill_missing_dates=True)
-    if plot:
-        series.plot(label=building_id)
-        plt.show()
+    # if plot:
+    #     series.plot(label=building_id)
+    #     plt.show()
     subseries = extract_subseries(series, min_gap_size=min_gap_size)
+
+    # create output directory if it doesnt exist yet
+    # delete all files in output directory if it exists
+    output_directory = FIGURES_DIR / "interpolated_and_split_data" / freq
+    if os.path.exists(output_directory):
+        filelist = [f for f in os.listdir(output_directory) if f.endswith(".csv")]
+        for f in filelist:
+            os.remove(os.path.join(output_directory, f))
+    else:
+        os.makedirs(output_directory)
+
     if len(subseries) == 1:
-        if plot: plot_dataframe(df, building_id, data_source, folder=FIGURES_DIR / "interpolated_and_split_data")
+        if plot:
+            plot_dataframe(df, building_id, data_source, folder=output_directory)
         return df  # if we dont have any gaps, return original dataframe
-    if plot:
-        [s["diff"].plot(label=building_id) for s in subseries]
-        plt.show()
+    # if plot:
+    #     [s["diff"].plot(label=building_id) for s in subseries]
+    #     plt.show()
     df_subs_raw = [s.to_dataframe(backend="polars", time_as_index=False) for s in subseries]
     df_subs = list()
     for idx, df_sub in enumerate(df_subs_raw):
@@ -170,7 +182,7 @@ def split_series(df: pl.DataFrame, min_gap_size: int, plot: bool = True) -> pl.D
             df_sub = df_sub.with_columns(pl.lit(data_source).alias("source"),
                                          pl.lit(new_building_id).alias("id"))
             if plot: plot_dataframe(df_sub, new_building_id, data_source,
-                                    folder=FIGURES_DIR / "interpolated_and_split_data")
+                                    folder=output_directory)
             df_subs.append(df_sub)
     if len(df_subs) > 0:
         df_concat = pl.concat(df_subs)
@@ -181,19 +193,19 @@ def split_series(df: pl.DataFrame, min_gap_size: int, plot: bool = True) -> pl.D
                                     "source": pl.String})
 
 
-def split_series_by_id_list(df: pl.DataFrame, min_gap_size: int, plot: bool = False) -> pl.DataFrame:
+def split_series_by_id_list(df: pl.DataFrame, min_gap_size: int, res: str, plot: bool = False) -> pl.DataFrame:
     concat_df = pl.DataFrame(
         schema={"datetime": pl.Datetime, "value": pl.Float64, "diff": pl.Float64, "id": pl.String, "source": pl.String})
     concat_df = concat_df.with_columns(pl.col("datetime").dt.cast_time_unit("ns"))
     for b_idx in df["id"].unique():
         df_b = df.filter(pl.col("id") == b_idx)
-        df_b = split_series(df_b, min_gap_size=min_gap_size, plot=plot)
+        df_b = split_series(df_b, min_gap_size=min_gap_size, res=res, plot=plot)
         concat_df = pl.concat([concat_df, df_b], how="diagonal")
     return concat_df
 
 
-def split_series_by_id(df: pl.DataFrame, min_gap_size: int, plot: bool = False) -> pl.DataFrame:
-    interpolated_df = df.group_by("id").map_groups(lambda group: split_series(group, min_gap_size, plot))
+def split_series_by_id(df: pl.DataFrame, min_gap_size: int, res: str, plot: bool = False) -> pl.DataFrame:
+    interpolated_df = df.group_by("id").map_groups(lambda group: split_series(group, min_gap_size, res, plot))
     return interpolated_df
 
 

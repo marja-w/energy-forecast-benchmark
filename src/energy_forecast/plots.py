@@ -79,11 +79,13 @@ def plot_train_val_test_split(train_df: pl.DataFrame, val_df: pl.DataFrame, test
     # df.plot.line(x="datetime", y="diff", color="split")
 
 
-def plot_missing_dates(df_data: pl.DataFrame, sensor_id: str):
+def plot_missing_dates(df_data: pl.DataFrame, res: str, sensor_id: str):
     df_data = df_data.filter(pl.col("id") == sensor_id)
     # address = df_data["adresse"].unique().item()
-    missing_dates: list[datetime.date] = get_missing_dates(df_data, "D").select(
+    freq = "D" if res == "daily" else "h"
+    missing_dates: list[datetime.date] = get_missing_dates(df_data, freq).select(
         pl.col("missing_dates")).item().to_list()
+    t_delta = timedelta(days=1) if res == "daily" else timedelta(hours=1)
     df_spans: pl.DataFrame = find_time_spans(missing_dates, delta=timedelta(days=1))
     if df_spans.is_empty():
         avg_length = 0
@@ -96,7 +98,7 @@ def plot_missing_dates(df_data: pl.DataFrame, sensor_id: str):
     logger.info(f"{sensor_id} number of missing time spans: {n_spans}")
     min_date = df_data.select(pl.col("datetime").min()).item()
     max_date = df_data.select(pl.col("datetime").max()).item()
-    time_span = pd.date_range(min_date, max_date, freq="D")
+    time_span = pd.date_range(min_date, max_date, freq=freq)
 
     df = pl.DataFrame({"datetime": list(time_span)})
     df = df.join(df_data, on="datetime", how="left")
@@ -115,14 +117,18 @@ def plot_missing_dates(df_data: pl.DataFrame, sensor_id: str):
 
     ax.xaxis.set_tick_params(rotation=45)
     plt.tight_layout()
-    plt.savefig(FIGURES_DIR / "missing_data" / f"{sensor_id}.png")
+    output_dir = FIGURES_DIR / "missing_data" / res
+    os.makedirs(output_dir, exist_ok=True)
+    output_file_path = output_dir / f"{sensor_id}.png"
+    plt.savefig(output_file_path)
+    logger.info(f"Saved missing dates plot to {output_file_path}")
     plt.close()
 
 
-def plot_missing_dates_per_building(df: pl.DataFrame):
+def plot_missing_dates_per_building(df: pl.DataFrame, res: str):
     logger.info(f"Plotting missing date plots to {FIGURES_DIR / 'missing_data'}")
     for (b_id, b_df) in df.group_by(["id"]):
-        plot_missing_dates(b_df, sensor_id=b_id[0])
+        plot_missing_dates(b_df, res=res, sensor_id=b_id[0])
 
 
 def plot_interpolated_series(series, b_id: str, data_source: str):
@@ -252,8 +258,10 @@ def create_box_plot_predictions(id_to_metrics: list, metric_to_plot: str, run: O
         fig.show()
         # fig.write_html(f"{model_folder}/boxplot_{metric_to_plot}.html")
 
-def create_box_plot_predictions_by_size(id_to_metrics: list, metric_to_plot: str, entry_threshold: int, run: Optional[wandb.sdk.wandb_run.Run],
-                                log_y: bool = False):
+
+def create_box_plot_predictions_by_size(id_to_metrics: list, metric_to_plot: str, entry_threshold: int,
+                                        run: Optional[wandb.sdk.wandb_run.Run],
+                                        log_y: bool = False):
     df = pd.DataFrame(id_to_metrics).explode(metric_to_plot)
 
     # Count entries per ID and add size column

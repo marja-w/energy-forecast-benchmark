@@ -14,8 +14,9 @@ from sklearn.preprocessing import LabelEncoder, OneHotEncoder, MinMaxScaler, Sta
 
 from src.energy_forecast.config import DATA_DIR, PROCESSED_DATA_DIR, CATEGORICAL_FEATURES, FEATURES, \
     FEATURES_DIR, META_DIR, INTERIM_DATA_DIR, N_CLUSTER, REPORTS_DIR, CONTINUOUS_FEATURES_CYCLIC, CONTINUOUS_FEATURES, \
-    RAW_DATA_DIR, FEATURE_SET_8, FEATURE_SET_10, N_LAG, FEATURE_SETS
-from src.energy_forecast.data_processing.data_loader import DHDataLoader
+    RAW_DATA_DIR, FEATURE_SET_8, FEATURE_SET_10, N_LAG, FEATURE_SETS, FEATURES_HOURLY, FEATURES_DAILY, \
+    THRESHOLD_FLAT_LINES_DAILY, THRESHOLD_FLAT_LINES_HOURLY, MIN_GAP_SIZE_DAILY, MIN_GAP_SIZE_HOURLY
+from src.energy_forecast.data_processing.data_loader import DHDataLoader, KinergyDataLoader
 from src.energy_forecast.plots import plot_missing_dates_per_building, plot_clusters
 from src.energy_forecast.utils.cluster import hierarchical_clustering_on_meta_data
 from src.energy_forecast.utils.data_processing import remove_neg_diff_vals, filter_connection_errors_by_id, \
@@ -75,12 +76,12 @@ class Dataset:
         logger.info(f"Number of rows after filtering outliers: {len(df)}")
 
         logger.info("Filtering flat lines")
-        thresh = 12 if self.res == "hourly" else 7  # allowed length of flat lines
+        thresh = THRESHOLD_FLAT_LINES_HOURLY if self.res == "hourly" else THRESHOLD_FLAT_LINES_DAILY
         df = filter_flat_lines_by_id(df, thresh)
         logger.info(f"Number of rows after filtering flat lines: {len(df)}")
 
-        if plot: plot_missing_dates_per_building(df)
-        get_missing_dates(df)
+        if plot: plot_missing_dates_per_building(df, self.res)
+        get_missing_dates(df, frequency=freq)
         logger.success(f"Number of rows after cleaning data: {len(df)}")
         self.df = df
 
@@ -97,7 +98,7 @@ class Dataset:
             the building needs a year)
         """
         # load all the feature dataframes
-        df_weather = pl.read_csv(FEATURES_DIR / "weather_daily.csv").with_columns(
+        df_weather = pl.read_csv(FEATURES_DIR / f"weather_{self.res}.csv").with_columns(
             pl.col("time").str.to_datetime().alias("datetime"))
         df_holidays = pl.read_csv(FEATURES_DIR / "holidays.csv").with_columns(pl.col("start").str.to_date(),
                                                                               pl.col("end").str.to_date(strict=False))
@@ -130,7 +131,7 @@ class Dataset:
             elif row[1] is not None:
                 holiday_dict[row[0]].extend([row[1]])
 
-        attributes = FEATURES
+        attributes = FEATURES_DAILY if self.res == "daily" else FEATURES_HOURLY
         self.df_meta = df_meta
 
         def is_weekend(date: datetime.datetime):
@@ -231,15 +232,27 @@ class InterpolatedDataset(Dataset):
         df = self.df
         logger.info("Split series with long series of missing values")
         df = df.with_columns(pl.col("datetime").dt.cast_time_unit("ns"))
-        df = split_series_by_id_list(df, 7, plot=False)  # split series if there are long missing periods
+        min_gap_size_periods = MIN_GAP_SIZE_DAILY if self.res == "daily" else MIN_GAP_SIZE_HOURLY
+        df = split_series_by_id_list(df, min_gap_size_periods, res=self.res, plot=False)  # split series if there are long missing periods
         logger.info("Interpolating values")
-        df = interpolate_values_by_id(df)  # interpolate missing dates/hours
+        freq = "D" if self.res == "daily" else "h"
+        df = interpolate_values_by_id(df, freq)  # interpolate missing dates/hours
         logger.info("Remove negative consumption values")
         df = remove_neg_diff_vals(df)  # interpolation might create new negative diff values, remove them
         df = remove_positive_jumps(df)  # remove too high diff values
         logger.info("Split series with long series of missing values")
-        df = split_series_by_id(df, 1, plot)  # split series if there were holes created by removing neg diff values
+        df = split_series_by_id(df, 1, self.res, plot)  # split series if there were holes created by removing neg diff values
         logger.info(f"Number of rows after interpolating: {len(df)}")
+
+        df_info = df.group_by("id").agg(pl.len()).to_pandas()
+        df_info.loc["mean"] = [None, df_info["len"].mean()]
+        df_info.loc["median"] = [None, df_info["len"].median()]
+        df_info.loc["std"] = [None, df_info["len"].std()]
+        output_path_info = REPORTS_DIR / f"dataset_{self.name}_{min_gap_size_periods}_series_info.csv"
+        df_info.to_csv(output_path_info)
+        logger.info(f"Saved series info to {output_path_info}")
+        logger.info(f"Number of series after splitting: {len(df_info)-1}")
+
         assert len(df.filter(pl.col("diff") < 0)) == 0  # no negative diff values should be present
         self.df = df
 
@@ -658,13 +671,13 @@ if __name__ == '__main__':
 
     logger.info("Finish data loading")
 
-    ds = InterpolatedDataset()
-    # ds.create_and_clean(plot=False)
-    ds.create_clean_and_add_feat()
+    ds = InterpolatedDataset(res="hourly")
+    ds.create_and_clean(plot=False)
+    # ds.create_clean_and_add_feat()
     # #
-    ds = Dataset()
-    # ds.create_and_clean()
-    ds.create_clean_and_add_feat()
+    # ds = Dataset(res="hourly")
+    # ds.create_and_clean(plot=True)
+    # ds.create_clean_and_add_feat()
 
     # ds.load_feat_data()
     # df_train, df_test = ds.get_train_and_test(0.8)
@@ -690,5 +703,5 @@ if __name__ == '__main__':
                      "feature_code": 13,
                      "train_test_split_method": "time"}  # ReLU, Linear
 
-    ds = TrainDatasetBuilding(freeze_config)
+    # ds = TrainDatasetBuilding(freeze_config)
     # ds.create_clean_and_add_feat()

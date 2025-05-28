@@ -33,14 +33,26 @@ REFERENCES_DIR = PROJ_ROOT / "references"
 N_LAG = 7
 LAG_FEATURES = [f"diff(t-{i})" for i in range(1, N_LAG + 1)] + [f"diff(t+{i})" for i in range(1, N_LAG)]
 
+# allowed length of flat lines per resolution
+THRESHOLD_FLAT_LINES_DAILY = 90
+THRESHOLD_FLAT_LINES_HOURLY = THRESHOLD_FLAT_LINES_DAILY*24
+
+# gaps for splitting dataseries
+# if the data gap is bigger than this threshold, the data is split into multiple series
+MIN_GAP_SIZE_DAILY = 7
+MIN_GAP_SIZE_HOURLY = 24
+
 CATEGORICAL_FEATURES = ["typ", "primary_energy"]  # one-hot encoded
 CATEGORICAL_FEATURES_BINARY = ["weekend", "holiday"]
-CONTINUOUS_FEATURES = ['hum_avg', 'hum_min', 'hum_max', 'tavg', 'tmin', 'tmax', 'prcp', 'snow', 'wdir',
-                       'wspd', 'wpgt', 'pres', 'tsun', "daily_avg", "heated_area", "heated_area_lod", "anzahlwhg",
-                       "ground_surface",
-                       "building_height", "storeys_above_ground"]
+CONTINUOUS_FEATURES_DAILY = ['hum_avg', 'hum_min', 'hum_max', 'tavg', 'tmin', 'tmax', 'pres', 'tsun']
+CONTINUOUS_FEATURES = ['prcp', 'snow', 'wdir', 'wspd', 'wpgt', 'pres', 'tsun', "daily_avg", "heated_area",
+                       "heated_area_lod", "anzahlwhg", "ground_surface", "building_height", "storeys_above_ground"]
+CONTINUOUS_FEATURES_HOURLY = ["temp", "dwpt", "rhum", "coco"]
 CONTINUOUS_FEATURES_CYCLIC = ["weekday", "day_of_month"]  # sine and cosine encoded
+
 FEATURES = ["diff"] + CATEGORICAL_FEATURES + CONTINUOUS_FEATURES + CATEGORICAL_FEATURES_BINARY + CONTINUOUS_FEATURES_CYCLIC
+FEATURES_DAILY = FEATURES + CONTINUOUS_FEATURES_DAILY
+FEATURES_HOURLY = FEATURES + CONTINUOUS_FEATURES_HOURLY
 
 STATIC_COVARIATES = ["daily_avg", "heated_area", "anzahlwhg", "typ", "primary_energy", "building_height", "storeys_above_ground"]
 DYNAMIC_COVARIATES = ["hum_avg", "hum_min", "hum_max", "tavg", "tmin", "tmax", "prcp", "snow", "wdir", "wspd", "wpgt",

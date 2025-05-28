@@ -103,7 +103,7 @@ def get_missing_dates(df: pl.DataFrame, frequency: str = "D", store=True) -> pl.
     df_missing_dates = pl.DataFrame(missing_dates).sort(pl.col("len"), descending=True)
     if store:
         # write to csv
-        missing_dates_csv_ = REPORTS_DIR / "missing_dates.csv"
+        missing_dates_csv_ = REPORTS_DIR / f"missing_dates_{frequency}.csv"
         df_missing_dates.select(["id", "len", "n", "per", "start_date", "end_date"]).sort(pl.col("per"),
                                                                                           descending=True).write_csv(
             missing_dates_csv_)

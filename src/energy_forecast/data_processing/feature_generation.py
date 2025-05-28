@@ -11,14 +11,16 @@ from src.energy_forecast.config import RAW_DATA_DIR, PROCESSED_DATA_DIR, DATA_DI
 
 # INPUT PATHS
 dataset_daily_csv_ = PROCESSED_DATA_DIR / "dataset_daily.csv"
+dataset_hourly_csv_ = PROCESSED_DATA_DIR / "dataset_hourly.csv"
 
 # OUTPUT PATHS
 city_df_path = FEATURES_DIR / "city_info.csv"
+city_df_hourly_path = FEATURES_DIR / "city_info_hourly.csv"
 output_path_weather_daily = FEATURES_DIR / "weather_daily.csv"
 output_path_weather_hourly = FEATURES_DIR / "weather_hourly.csv"
 
 
-def create_data_df():
+def create_data_df(res: str):
     """
     Creates a DataFrame by reading a CSV file and processing it to include
     additional metadata. The method ensures the inclusion of time intervals
@@ -27,7 +29,12 @@ def create_data_df():
     :return: A processed Polars DataFrame with appended metadata columns
     :rtype: pl.DataFrame
     """
-    data_df = pl.read_csv(dataset_daily_csv_).with_columns(pl.col("datetime").str.to_datetime())
+    if res == "daily":
+        data_df = pl.read_csv(dataset_daily_csv_).with_columns(pl.col("datetime").str.to_datetime())
+    elif res == "hourly":
+        data_df = pl.read_csv(dataset_hourly_csv_).with_columns(pl.col("datetime").str.to_datetime())
+    else:
+        raise ValueError("res must be either 'daily' or 'hourly'")
     # Find time intervals for every city
     data_df = data_df.with_columns(
         pl.coalesce(data_df.join(pl.read_csv(META_DIR / "kinergy_meta.csv"), on="id", how="left")["plz"],
@@ -38,7 +45,7 @@ def create_data_df():
     return data_df
 
 
-def generate_weather_dfs():
+def generate_weather_dfs(res: str = "daily"):
     """
     Generate Weather DataFrames from a given daily dataset, metadata files, and external APIs.
 
@@ -66,7 +73,7 @@ def generate_weather_dfs():
     :param None: This function does not accept any parameters.
     :returns: None. The processed weather data is written directly to CSV files at predefined locations.
     """
-    data_df = create_data_df()
+    data_df = create_data_df(res=res)
     city_df = data_df.group_by(pl.col("plz")).agg(pl.col("datetime").min().alias("min_date"),
                                                   pl.col("datetime").max().alias("max_date")).filter(
         ~(pl.col("plz") == "2700"))  # wien
@@ -77,7 +84,12 @@ def generate_weather_dfs():
         rows.append({"plz": plz, "lat": data["latitude"], "lon": data["longitude"], "state": data["state_code"]})
     info_df = pl.DataFrame(rows)
     city_df = city_df.join(info_df, on="plz", how="left")
-    city_df.write_csv(city_df_path)
+    if res == "daily":
+        city_df.write_csv(city_df_path)
+    elif res == "hourly":
+        city_df.write_csv(city_df_hourly_path)
+    else:
+        raise ValueError("res must be either 'daily' or 'hourly'")
     weather_dfs = list()
     for row in city_df.iter_rows():
         start = row[1]
@@ -134,7 +146,9 @@ def generate_weather_dfs():
     weather_df_hourly = pl.concat(weather_dfs)
     # Add to other weather data
     weather_df = weather_df_hourly.join(weather_df, on=["plz", 'time'], how="left")
-    weather_df.write_csv(output_path_weather_daily)
+    if res == "daily":
+        weather_df.write_csv(output_path_weather_daily)
+        logger.info(f"Weather Data written to {output_path_weather_daily}")
     # Get hourly weather data as well
     weather_dfs = list()
     for row in city_df.iter_rows():
@@ -146,8 +160,9 @@ def generate_weather_dfs():
         data = data.fetch()
         weather_dfs.append(pl.from_pandas(data.reset_index()).with_columns(pl.lit(row[0]).alias("plz")))
     weather_df_hourly = pl.concat(weather_dfs)
-    weather_df_hourly.write_csv(output_path_weather_hourly)
-    logger.info(f"Weather Data written to {output_path_weather_daily} and {output_path_weather_hourly}")
+    if res == "hourly":
+        weather_df_hourly.write_csv(output_path_weather_hourly)
+        logger.info(f"Weather Data written to {output_path_weather_hourly}")
 
 
 def generate_holiday_df():

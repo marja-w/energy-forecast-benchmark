@@ -157,23 +157,23 @@ if __name__ == '__main__':
     n_futures = [0, 1, 7]
     epochs_list = [40]
     config = {"project": "ma-wahl-forecast",
-              "log": False,  # whether to log to wandb
-              "plot": False, # whether to plot predictions
+              "log": True,  # whether to log to wandb
+              "plot": True, # whether to plot predictions
               "energy": "all",
               "res": "daily",
               "interpolate": 1,
               "dataset": "building",  # building, meta, missing_data_90
-              "model": "xlstm_tsf",
+              "model": "FCN3",
               "lag_in": 7,
               "lag_out": 7,
               "n_in": 7,
               "n_out": 7,
-              "n_future": 0,
+              "n_future": 7,
               "scaler": "standard",
               "scale_mode": "individual",  # all, individual
               "feature_code": 14,
               "train_test_split_method": "time",
-              "epochs": 2,
+              "epochs": 20,
               "optimizer": "adam",
               "loss": "mean_squared_error",
               "metrics": ["mae"],

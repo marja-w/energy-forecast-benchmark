@@ -36,8 +36,10 @@ def download_from_wandb(run_id: str) -> LiteralString | str | bytes:
 
 def get_model_from_wandb(run_id: str):
     run, path_to_model_file = download_from_wandb(run_id)
+    orig_features = run.config["features"]
     run.config.update({"features": FEATURE_SETS[run.config["feature_code"]]}, allow_val_change=True)
     ds, config = prepare_dataset(run.config)
+    run.config.update({"features": orig_features}, allow_val_change=True)
     # load model
     m = get_model(config)
     m.load_model_from_file(path_to_model_file)
@@ -66,7 +68,7 @@ def main_local(path_to_model: Path, config: dict):
 
 
 if __name__ == '__main__':
-    run_id = "cr7dp2d6"
+    run_id = "62ne9qky"
     training_config = {
         "energy": "all",
         "res": "daily",
@@ -93,5 +95,5 @@ if __name__ == '__main__':
         "activation": "relu"
     }
     model_path = MODELS_DIR / "heat" / "fixed"
-    main_local(model_path, training_config)
+    # main_local(model_path, training_config)
     main(run_id)

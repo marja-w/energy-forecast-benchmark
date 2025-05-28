@@ -366,7 +366,11 @@ class TrainingDataset(Dataset):
             df = df.drop(columns=cat_features)
             df = pd.concat([df, X_enc], axis=1)
             self.df = pl.DataFrame(df)
-            config["features"] = list(set(config["features"]) - set(cat_features)) + list(cat_features_names)
+            try:
+                config["features"] = list(set(config["features"]) - set(cat_features)) + list(cat_features_names)
+            except wandb.sdk.lib.config_util.ConfigError:
+                wandb.config.update({"features": list(set(config["features"]) - set(cat_features)) + list(cat_features_names)}, allow_val_change=True)
+                config = wandb.config
         self.config = config
 
     def remove_corrupt_buildings(self):

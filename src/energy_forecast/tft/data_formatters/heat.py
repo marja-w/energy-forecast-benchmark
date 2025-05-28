@@ -376,9 +376,9 @@ class HeatDataFormatter(GenericDataFormatter):
         model_params = {
             'dropout_rate': 0.3,
             'hidden_layer_size': 160,
-            'learning_rate': 0.01,
+            'learning_rate': 0.001,
             'minibatch_size': 64,
-            'max_gradient_norm': 0.01,
+            'max_gradient_norm': 1.0,
             'num_heads': 4,
             'stack_size': 1
         }

@@ -152,12 +152,26 @@ def main(expt_name,
                 pred_values = extract_numerical_data(pred_id).to_numpy()
 
                 evaluator = RegressionMetric(target_values, pred_values)
+
+                rmse = root_mean_squared_error(target_values, pred_values)
+                mse = evaluator.mean_squared_error()
+                mae = evaluator.mean_absolute_error()
+                nrmse = evaluator.normalized_root_mean_square_error()
+                mape = mean_absolute_percentage_error(target_values, pred_values)
+
+                if extra_config["n_out"] > 1:
+                    rmse = mean(rmse)
+                    mse = mean(mse)
+                    mae = mean(mae)
+                    nrmse = mean(nrmse)
+                    mape = mean(mape)
+
                 metrics_by_id[identifier] = {
-                    'rmse': mean(root_mean_squared_error(target_values, pred_values)),
-                    'mse': mean(evaluator.mean_squared_error()),
-                    'mae': mean(evaluator.mean_absolute_error()),
-                    'nrmse': mean(evaluator.normalized_root_mean_square_error()),
-                    'mape': mean(mean_absolute_percentage_error(target_values, pred_values)),
+                    'rmse': rmse,
+                    'mse': mse,
+                    'mae': mae,
+                    'nrmse': nrmse,
+                    'mape': mape,
                     'mean_consumption': target_values.mean()
                 }
 
@@ -309,7 +323,7 @@ if __name__ == "__main__":
         "num_epochs": 50,
         "early_stopping_patience": 100,
         "n_in": 7,
-        "n_out": 7
+        "n_out": 1
     }
     formatter = config.make_data_formatter()
 
@@ -317,7 +331,7 @@ if __name__ == "__main__":
     main(
         expt_name=name,
         use_gpu=use_tensorflow_with_gpu,
-        model_folder=os.path.join(config.model_folder, "fixed_7_1_20250526_095150"),
+        model_folder=os.path.join(config.model_folder, "fixed_7_1_20250526_160841"),
         data_csv_path=config.data_csv_path,
         data_formatter=formatter,
-        use_testing_mode=True)  # Change to false to use original default params
+        use_testing_mode=False)  # Change to false to use original default params

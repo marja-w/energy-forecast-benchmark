@@ -32,7 +32,7 @@ from wandb.sdk.wandb_run import Run
 
 from src.energy_forecast.config import MODELS_DIR, CONTINUOUS_FEATURES, REPORTS_DIR, MASKING_VALUE
 from src.energy_forecast.dataset import TrainingDataset
-from src.energy_forecast.plots import plot_predictions, create_box_plot_predictions
+from src.energy_forecast.plots import plot_predictions, create_box_plot_predictions, create_box_plot_predictions_by_size
 from src.energy_forecast.utils.metrics import mean_absolute_percentage_error, root_mean_squared_error, \
     root_squared_error
 from src.energy_forecast.utils.time_series import series_to_supervised
@@ -40,6 +40,8 @@ from src.energy_forecast.utils.time_series import series_to_supervised
 import torch
 import torch.nn as nn
 import torch.optim as optim
+
+from torch.masked import masked_tensor
 
 from src.energy_forecast.xlstm.xlstm import (
     xLSTMBlockStack,
@@ -299,6 +301,9 @@ class NNModel(Model):
         self.target_names = ["diff"] + [f"diff(t+{i})" for i in range(1, self.config["n_out"])]
         self.scaled = False  # whether we have already scaled data
 
+    def get_target_feature_index(self) -> int:
+        return self.config["features"].index("diff")
+
     def scale_input_data(self, X: DataFrame, y: DataFrame) -> tuple[DataFrame, DataFrame]:
         """
         Scale the data according to the scaler stored in config.
@@ -557,6 +562,9 @@ class NNModel(Model):
                 id_to_metrics.append(b_metrics)
         create_box_plot_predictions(id_to_ind_metrics, "rse", run, log_y=True)
         create_box_plot_predictions(id_to_ind_metrics, "nrse", run, log_y=True)
+        create_box_plot_predictions_by_size(id_to_ind_metrics, "rse", 50, run, log_y=False)
+        create_box_plot_predictions_by_size(id_to_ind_metrics, "rse", 100, run, log_y=False)
+
         metrics_df = pl.DataFrame(id_to_metrics)
         if run:
             run.log({"building_metrics": wandb_table})
@@ -1041,7 +1049,7 @@ class xLSTMModel(RNNModel):
             self.criterion = nn.L1Loss()
         else:
             self.criterion = nn.MSELoss()  # Default to MSE
-
+        target_feature_idx = self.get_target_feature_index()
         # Training loop
         epochs = self.config["epochs"]
         for epoch in tqdm(range(epochs), desc="Training epochs"):
@@ -1050,17 +1058,16 @@ class xLSTMModel(RNNModel):
             train_loss = 0.0
             train_mae = 0.0
 
-            for inputs, targets in train_loader:
+            for inputs, targets in tqdm(train_loader, desc="Training batches", position=0, leave=True):
                 self.optimizer.zero_grad()
                 outputs = self.model(inputs)
-                print(outputs)
-                print(outputs.shape)
-                loss = self.criterion(outputs[:, :, 0], targets)  # only use diff for loss computation TODO: which index is diff
+                outputs = outputs[:, :, target_feature_idx]  # remove last dimension
+                loss = self.criterion(outputs, targets)  # only use diff for loss computation
                 loss.backward()
                 self.optimizer.step()
 
                 train_loss += loss.item() * inputs.size(0)
-                mae = torch.nn.functional.l1_loss(outputs[:, :, 0], targets)
+                mae = torch.nn.functional.l1_loss(outputs, targets)
                 train_mae += mae.item() * inputs.size(0)
 
             train_loss = train_loss / len(train_loader.dataset)
@@ -1102,170 +1109,11 @@ class xLSTMModel(RNNModel):
 
     def predict(self, X):
         """Make predictions with the model"""
-        X_tensor = torch.tensor(X.to_numpy(), dtype=torch.float32).to(self.device)
+        X_tensor = torch.tensor(X, dtype=torch.float32).to(self.device)
         self.model.eval()
         with torch.no_grad():
-            predictions = self.model(X_tensor)
-        return predictions.cpu().numpy()
-
-    def evaluate(self, ds, run, log=True, plot=False):
-        """Evaluate model performance and log metrics"""
-        # Get data split either scaled or not
-        test = ds.get_test_df(ds.scale).select(["id", "datetime"] + self.config["features"])
-        ds.X_test_scaled, ds.y_test_scaled, ds.id_to_test_series_scaled, id_column = self.create_time_series_data_and_id_map(
-            test)
-        X_test_scaled, y_test_scaled = ds.X_test_scaled, ds.y_test_scaled
-
-        if ds.scale:
-            _, y_test, ds.id_to_test_series, _ = self.create_time_series_data_and_id_map(
-                ds.get_test_df(scale=False).select(["id", "datetime"] + self.config["features"]))
-        else:
-            y_test = y_test_scaled
-            ds.id_to_test_series = ds.id_to_test_series_scaled
-
-        # Calculate metrics per ID
-        self.calculate_metrics_per_id(ds, run, plot)
-
-        # Get predictions
-        y_hat_scaled = self.predict(X_test_scaled)
-
-        if ds.scaler_y is not None:
-            scaled_ev = RegressionMetric(y_test_scaled.to_numpy(), y_hat_scaled)
-            test_mse_scaled = scaled_ev.mean_squared_error()
-            test_mae_scaled = scaled_ev.mean_absolute_error()
-            if run:
-                run.log({"test_mse_scaled": test_mse_scaled, "test_mae_scaled": test_mae_scaled})
-            # Rescale predictions
-            y_hat = ds.rescale_predictions(y_hat_scaled, id_column)
-        else:
-            y_hat = y_hat_scaled
-
-        evaluator = RegressionMetric(y_test.to_numpy(), y_hat)
-        test_mape = mean_absolute_percentage_error(y_test.to_numpy(), y_hat)
-
-        if self.config["n_out"] > 1:
-            if run: run.log({"test_mape_ind": test_mape})
-            if log: logger.info(f"MAPE on individual test data: {test_mape}")
-            test_mape = sum(test_mape) / len(test_mape)
-
-        if run: run.log({"test_mape": test_mape})
-        if log: logger.info(f"MAPE on test data: {test_mape}")
-
-        return self.log_eval_results(evaluator, run, len(y_test), log)
-
-    def log_eval_results(self, evaluator, run, len_y_test, log=True):
-        """Log evaluation results"""
-        # Get metrics
-        test_mse = evaluator.mean_squared_error()
-        test_mae = evaluator.mean_absolute_error()
-        test_nrmse = evaluator.normalized_root_mean_square_error()
-        test_rmse = evaluator.root_mean_squared_error()
-
-        # Handle multiple outputs
-        if self.config["n_out"] > 1:
-            if run: run.log(data={"test_nrmse_ind": test_nrmse, "test_mse_ind": test_mse, "test_mae_ind": test_mae})
-            if log:
-                logger.info(f"MSE Loss on test data per index: {test_mse}")
-                logger.info(f"MAE Loss on test data per index: {test_mae}")
-                logger.info(f"RMSE Loss on test data per index: {test_rmse}")
-                logger.info(f"NRMSE Loss on test data per index: {test_nrmse}")
-            test_nrmse = sum(test_nrmse) / len(test_nrmse)
-            test_rmse = sum(test_rmse) / len(test_rmse)
-            test_mse = sum(test_mse) / len(test_mse)
-            test_mae = sum(test_mae) / len(test_mae)
-
-        # Log metrics
-        if run:
-            run.log(data={"test_data_length": len_y_test,
-                          "test_mse": test_mse,
-                          "test_mae": test_mae,
-                          "test_rmse": test_rmse,
-                          "test_nrmse": test_nrmse
-                          })
-        if log:
-            logger.info(f"MSE Loss on test data: {test_mse}")
-            logger.info(f"MAE Loss on test data: {test_mae}")
-            logger.info(f"RMSE on test data: {test_rmse}")
-            logger.info(f"NRMSE on test data: {test_nrmse}")
-
-        return test_mse, test_mae, test_nrmse, test_rmse
-
-    def calculate_metrics_per_id(self, ds, run, plot=False):
-        """Calculate metrics for each building ID"""
-        id_to_test_series = ds.id_to_test_series
-        id_to_metrics = []
-        id_to_ind_metrics = []
-
-        if run:
-            table_cols = ["id", "mape", "mse", "mae", "nrmse", "rmse", "avg_diff"]
-            if plot:
-                table_cols = ["id", "predictions", "mape", "mse", "mae", "nrmse", "rmse", "avg_diff"]
-            wandb_table = wandb.Table(columns=table_cols)
-
-        for b_id, (X_scaled, y_scaled, dates) in ds.id_to_test_series_scaled.items():
-            y_hat_scaled = self.predict(X_scaled)
-
-            if ds.scale:
-                if self.config["scale_mode"] == "individual":
-                    scaler_key = re.sub(r'(-\d+)*$', '', b_id)  # get base id without suffixes
-                    y_hat = ds.scaler_y[scaler_key].inverse_transform(
-                        y_hat_scaled.reshape(len(y_hat_scaled), self.config["n_out"]))
-                else:
-                    y_hat = ds.scaler_y.inverse_transform(
-                        y_hat_scaled.reshape(len(y_hat_scaled), self.config["n_out"]))
-            else:
-                y_hat = y_hat_scaled
-
-            y = id_to_test_series[b_id][1].to_numpy()
-            evaluator = RegressionMetric(y, y_hat)
-
-            # Get metrics
-            test_mse = evaluator.mean_squared_error()
-            test_mae = evaluator.mean_absolute_error()
-            mean_target_value = np.mean(y)
-            heated_area = ds.get_heated_area_by_id(b_id)
-            rse_list = root_squared_error(y, y_hat)
-
-            id_to_ind_metrics.append(
-                {"id": b_id, "rse": rse_list, "nrse": rse_list / heated_area, "avg_diff": mean_target_value})
-
-            test_rmse = root_mean_squared_error(y, y_hat)
-            test_nrmse = test_rmse / mean_target_value
-            test_mape = mean_absolute_percentage_error(y, y_hat)
-
-            if self.config["n_out"] > 1:
-                test_mape = mean(test_mape)
-                test_nrmse = mean(test_nrmse)
-                test_rmse = mean(test_rmse)
-                test_mse = mean(test_mse)
-                test_mae = mean(test_mae)
-
-            if plot:
-                plt = plot_predictions(ds, y, b_id, y_hat, dates, self.config["lag_in"], self.config["n_out"],
-                                       self.config["lag_out"], run, self.name)
-
-            if run and plot:
-                wandb_table.add_data(b_id, wandb.Image(plt), test_mape, test_mse, test_mae, test_nrmse, test_rmse,
-                                     mean_target_value)
-                plt.close()
-            elif run:
-                wandb_table.add_data(b_id, test_mape, test_mse, test_mae, test_nrmse, test_rmse,
-                                     mean_target_value)
-            elif not run:
-                b_metrics = {"id": b_id, "mape": test_mape, "mse": test_mse, "mae": test_mae, "nrmse": test_nrmse,
-                             "rmse": test_rmse, "avg_diff": mean_target_value}
-                id_to_metrics.append(b_metrics)
-
-        create_box_plot_predictions(id_to_ind_metrics, "rse", run, log_y=True)
-        create_box_plot_predictions(id_to_ind_metrics, "nrse", run, log_y=True)
-
-        metrics_df = pl.DataFrame(id_to_metrics)
-        if run:
-            run.log({"building_metrics": wandb_table})
-        else:
-            metrics_df.write_csv(
-                REPORTS_DIR / "metrics" / f"{self.name}_{self.config['n_out']}.csv")
-            logger.info(f"Metrics saved to {REPORTS_DIR}/metrics/{self.name}_{self.config['n_out']}.csv")
+            predictions, _ = self.model(X_tensor)
+        return predictions.cpu().numpy()[:, :, self.get_target_feature_index()]
 
     def save(self):
         """Save model to disk and to wandb"""
@@ -1315,12 +1163,9 @@ class xLSTMTSFModel(xLSTMModel):
         super().__init__(config)
         self.name = "xlstm_tsf"
 
-    def get_target_feature_index(self) -> int:
-        return self.config["features"].index("diff")
-
     def set_model(self, input_shape):
         """Set model architecture"""
-        self.model = xLSTM(input_size=input_shape[2], head_size=32, num_heads=4, batch_first=True, layers='msm')
+        self.model = xLSTM(input_size=input_shape[2], head_size=32, num_heads=4, batch_first=True, layers='msmsl')
 
     def train(self, X_train, y_train, X_val, y_val, log=False):
         """Train the model"""
@@ -1378,7 +1223,7 @@ class xLSTMTSFModel(xLSTMModel):
             train_loss = 0.0
             train_mae = 0.0
 
-            for inputs, targets in tqdm(train_loader, desc="Training batches", position=1, leave=True):
+            for inputs, targets in tqdm(train_loader, desc="Training batches", position=0, leave=True):
                 self.optimizer.zero_grad()
                 outputs, _ = self.model(inputs)  # returns tuple (outputs, weights)
                 # print(outputs)

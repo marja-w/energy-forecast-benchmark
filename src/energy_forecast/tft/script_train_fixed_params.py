@@ -265,16 +265,15 @@ if __name__ == "__main__":
     config = ExperimentConfig(name, output_folder)
     extra_config = {
         "quantiles": [1.0],
-        "num_epochs": 1,
+        "num_epochs": 25,
         "early_stopping_patience": 100,
         "n_in": 7,
         "n_out": 7
     }
     formatter = config.make_data_formatter()
 
-    # model_folder = os.path.join(config.model_folder,
-    #                               f"fixed_{extra_config['n_in']}_{extra_config['n_out']}_{datetime.datetime.now().strftime('%Y%m%d_%H%M%S')}"
-    model_folder = os.path.join(config.model_folder, "fixed_7_7_20250526_092911")
+    model_folder = os.path.join(config.model_folder,
+                                  f"fixed_{extra_config['n_in']}_{extra_config['n_out']}_{datetime.datetime.now().strftime('%Y%m%d_%H%M%S')}")
 
     # Customise inputs to main() for new datasets.
     main(

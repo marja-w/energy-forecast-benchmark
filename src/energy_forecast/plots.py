@@ -250,7 +250,52 @@ def create_box_plot_predictions(id_to_metrics: list, metric_to_plot: str, run: O
             run.log({f"boxplot_predictions": fig})
     else:
         fig.show()
-        fig.write_html(f"{model_folder}/boxplot_{metric_to_plot}.html")
+        # fig.write_html(f"{model_folder}/boxplot_{metric_to_plot}.html")
+
+def create_box_plot_predictions_by_size(id_to_metrics: list, metric_to_plot: str, entry_threshold: int, run: Optional[wandb.sdk.wandb_run.Run],
+                                log_y: bool = False):
+    df = pd.DataFrame(id_to_metrics).explode(metric_to_plot)
+
+    # Count entries per ID and add size column
+    entry_counts = df.groupby('id').size()
+    df['size'] = df['id'].map(lambda x: 1 if entry_counts[x] >= entry_threshold else 0)
+    class_sizes = df["size"].value_counts()
+    df[metric_to_plot] = df[metric_to_plot].astype(float)
+
+    # Create separate plots for each size
+    fig = px.box(df, x="size", y=metric_to_plot, color="size", log_y=log_y, custom_data=["avg_diff", "id"],
+                 title=f"Boxplot of Prediction {metric_to_plot} by Data Size ({entry_threshold}+ entries)",
+                 color_discrete_map={0: "blue", 1: "red"})
+
+    new_names = {"0": f"small ({class_sizes[0]})", "1": f"large ({class_sizes[1]})"}
+    fig.for_each_trace(lambda t: t.update(name=new_names[t.name]))
+
+    fig.update_traces(
+        hovertemplate="<br>".join([
+            "id: %{customdata[1]}",
+            metric_to_plot + ": %{y}",
+            "avg_diff: %{customdata[0]}"
+        ])
+    )
+    fig.update_layout(
+        yaxis=dict(
+            title=dict(
+                text=f"{metric_to_plot} (kwh) {'(log)' if log_y else ''}"
+            )
+        )
+    )
+
+    if run:
+        if sys.platform == "win32":
+            wandb.log({
+                "boxplot_predictions_by_size": wandb.Html(plotly.io.to_html(fig))
+            })
+        else:
+            run.log({
+                "boxplot_predictions_by_size": fig
+            })
+    else:
+        fig.show()
 
 
 if __name__ == "__main__":

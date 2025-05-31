@@ -15,7 +15,7 @@ from sklearn.preprocessing import LabelEncoder, OneHotEncoder, MinMaxScaler, Sta
 from src.energy_forecast.config import DATA_DIR, PROCESSED_DATA_DIR, CATEGORICAL_FEATURES, FEATURES, \
     FEATURES_DIR, META_DIR, INTERIM_DATA_DIR, N_CLUSTER, REPORTS_DIR, CONTINUOUS_FEATURES_CYCLIC, CONTINUOUS_FEATURES, \
     RAW_DATA_DIR, FEATURE_SET_8, FEATURE_SET_10, N_LAG, FEATURE_SETS, FEATURES_HOURLY, FEATURES_DAILY, \
-    THRESHOLD_FLAT_LINES_DAILY, THRESHOLD_FLAT_LINES_HOURLY, MIN_GAP_SIZE_DAILY, MIN_GAP_SIZE_HOURLY
+    THRESHOLD_FLAT_LINES_DAILY, THRESHOLD_FLAT_LINES_HOURLY, MIN_GAP_SIZE_DAILY, MIN_GAP_SIZE_HOURLY, FEATURE_SET_15
 from src.energy_forecast.data_processing.data_loader import DHDataLoader, KinergyDataLoader
 from src.energy_forecast.plots import plot_missing_dates_per_building, plot_clusters
 from src.energy_forecast.utils.cluster import hierarchical_clustering_on_meta_data
@@ -82,6 +82,7 @@ class Dataset:
 
         if plot: plot_missing_dates_per_building(df, self.res)
         get_missing_dates(df, frequency=freq)
+        logger.info(f"Number of sensors after cleaning data: {len(df.group_by('id').agg())}")
         logger.success(f"Number of rows after cleaning data: {len(df)}")
         self.df = df
 
@@ -102,7 +103,7 @@ class Dataset:
             pl.col("time").str.to_datetime().alias("datetime"))
         df_holidays = pl.read_csv(FEATURES_DIR / "holidays.csv").with_columns(pl.col("start").str.to_date(),
                                                                               pl.col("end").str.to_date(strict=False))
-        df_cities = pl.read_csv(FEATURES_DIR / "city_info.csv")
+        df_cities = pl.read_csv(FEATURES_DIR / f"city_info_{self.res}.csv")
 
         # META DATA
         df_meta_l = pl.read_csv(META_DIR / "legacy_meta.csv").with_columns(pl.col("plz").str.strip_chars())
@@ -150,7 +151,7 @@ class Dataset:
             enc = LabelEncoder()
             # join data with meta data
             # create new id, needed if data series was split, but belongs to same building
-            df = df.with_columns(pl.col("id").str.replace("(-\d)?-\d$", "").alias("meta_id"))
+            df = df.with_columns(pl.col("id").str.replace("(-\d+)?-\d+$", "").alias("meta_id")) # TODO
             df = df.join(df_meta.rename({"id": "meta_id"}), on="meta_id", how="left")
             df = (df.join(df_weather.with_columns(pl.col("datetime").dt.cast_time_unit("ns")), on=["datetime", "plz"],
                           how="left")
@@ -228,7 +229,7 @@ class InterpolatedDataset(Dataset):
 
     @overrides
     def clean(self, plot: bool = False):
-        super().clean(plot=False)
+        super().clean(plot=plot)
         df = self.df
         logger.info("Split series with long series of missing values")
         df = df.with_columns(pl.col("datetime").dt.cast_time_unit("ns"))
@@ -427,7 +428,7 @@ class TrainingDataset(Dataset):
             return
 
         config = self.config
-        scale_mode = config.get("scale_mode", "all")
+        scale_mode = config.get("scale_mode", "individual")
 
         self._set_features()
 
@@ -491,7 +492,7 @@ class TrainingDataset(Dataset):
         :returns: List of scaler IDs
         """
         s_ids = self.df.with_columns(
-            pl.col("id").str.replace_all("(-\d)*$", "").alias("orig_id")
+            pl.col("id").str.replace_all("(-\d+)?-\d+$", "").alias("orig_id")
         )["orig_id"].unique().to_list()
         return [x for x in s_ids if x not in self.discarded_ids]
 
@@ -648,7 +649,10 @@ class TrainDatasetBuilding(TrainingDataset):
 
     def __init__(self, config: dict):
         super().__init__(config)
-        self.meta_features = FEATURE_SET_10  # diff + weather + time + building (no apartment)
+        if self.res == "daily":
+            self.meta_features = FEATURE_SET_10  # diff + weather + time + building (no apartment)
+        elif self.res == "hourly":
+            self.meta_features = FEATURE_SET_15  # same as 10 but with hourly weather features
 
 
 
@@ -672,8 +676,8 @@ if __name__ == '__main__':
     logger.info("Finish data loading")
 
     ds = InterpolatedDataset(res="hourly")
-    ds.create_and_clean(plot=False)
-    # ds.create_clean_and_add_feat()
+    # ds.create_and_clean(plot=True)
+    ds.create_clean_and_add_feat()
     # #
     # ds = Dataset(res="hourly")
     # ds.create_and_clean(plot=True)

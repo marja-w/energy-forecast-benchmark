@@ -14,13 +14,13 @@ dataset_daily_csv_ = PROCESSED_DATA_DIR / "dataset_daily.csv"
 dataset_hourly_csv_ = PROCESSED_DATA_DIR / "dataset_hourly.csv"
 
 # OUTPUT PATHS
-city_df_path = FEATURES_DIR / "city_info.csv"
+city_df_path = FEATURES_DIR / "city_info_daily.csv"
 city_df_hourly_path = FEATURES_DIR / "city_info_hourly.csv"
 output_path_weather_daily = FEATURES_DIR / "weather_daily.csv"
 output_path_weather_hourly = FEATURES_DIR / "weather_hourly.csv"
 
 
-def create_data_df(res: str):
+def create_data_df(res: str, interpolated: str = ""):
     """
     Creates a DataFrame by reading a CSV file and processing it to include
     additional metadata. The method ensures the inclusion of time intervals
@@ -29,12 +29,16 @@ def create_data_df(res: str):
     :return: A processed Polars DataFrame with appended metadata columns
     :rtype: pl.DataFrame
     """
-    if res == "daily":
-        data_df = pl.read_csv(dataset_daily_csv_).with_columns(pl.col("datetime").str.to_datetime())
-    elif res == "hourly":
-        data_df = pl.read_csv(dataset_hourly_csv_).with_columns(pl.col("datetime").str.to_datetime())
+    if interpolated == "":
+        if res == "daily":
+            data_df = pl.read_csv(dataset_daily_csv_).with_columns(pl.col("datetime").str.to_datetime())
+        elif res == "hourly":
+            data_df = pl.read_csv(dataset_hourly_csv_).with_columns(pl.col("datetime").str.to_datetime())
+        else:
+            raise ValueError("res must be either 'daily' or 'hourly'")
     else:
-        raise ValueError("res must be either 'daily' or 'hourly'")
+        dataset_path = PROCESSED_DATA_DIR / f"dataset_{interpolated}_{res}.csv"
+        data_df = pl.read_csv(dataset_path).with_columns(pl.col("datetime").str.to_datetime())
     # Find time intervals for every city
     data_df = data_df.with_columns(
         pl.coalesce(data_df.join(pl.read_csv(META_DIR / "kinergy_meta.csv"), on="id", how="left")["plz"],
@@ -45,7 +49,7 @@ def create_data_df(res: str):
     return data_df
 
 
-def generate_weather_dfs(res: str = "daily"):
+def generate_weather_dfs(res: str = "daily", interpolated: str = ""):
     """
     Generate Weather DataFrames from a given daily dataset, metadata files, and external APIs.
 
@@ -73,7 +77,7 @@ def generate_weather_dfs(res: str = "daily"):
     :param None: This function does not accept any parameters.
     :returns: None. The processed weather data is written directly to CSV files at predefined locations.
     """
-    data_df = create_data_df(res=res)
+    data_df = create_data_df(res=res, interpolated=interpolated)
     city_df = data_df.group_by(pl.col("plz")).agg(pl.col("datetime").min().alias("min_date"),
                                                   pl.col("datetime").max().alias("max_date")).filter(
         ~(pl.col("plz") == "2700"))  # wien

@@ -2,9 +2,9 @@ from src.energy_forecast.data_processing.feature_generation import generate_weat
 from src.energy_forecast.data_processing.lod_data_processor import generate_lod_df
 
 
-def generate_weather_features(res: str = "hourly"):
+def generate_weather_features(res: str = "hourly", interpolated: str = ""):
     """Generate weather dfs and save them as .csv files"""
-    generate_weather_dfs(res)
+    generate_weather_dfs(res, interpolated)
 
 def generate_holiday_feature():
     """Generate holidays.csv"""
@@ -16,6 +16,7 @@ def generate_lod_data():
 
 if __name__ == '__main__':
     res = "hourly"
-    generate_weather_features(res=res)
+    interpolated = ""
+    generate_weather_features(res=res, interpolated=interpolated)
     # generate_holiday_feature()
     # generate_lod_data()

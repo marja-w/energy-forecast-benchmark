@@ -58,8 +58,8 @@ from src.energy_forecast.xlstm_tsf.xLSTM import xLSTM
 # learning rate schedule
 def step_decay(epoch):
     initial_lrate = 0.01
-    drop = 0.5
-    epochs_drop = 20.0
+    drop = 0.05
+    epochs_drop = 5.0
     lrate = initial_lrate * math.pow(drop, math.floor((1 + epoch) / epochs_drop))
     return lrate
 
@@ -562,8 +562,8 @@ class NNModel(Model):
                 id_to_metrics.append(b_metrics)
         create_box_plot_predictions(id_to_ind_metrics, "rse", run, log_y=True)
         create_box_plot_predictions(id_to_ind_metrics, "nrse", run, log_y=True)
-        create_box_plot_predictions_by_size(id_to_ind_metrics, "rse", 50, run, log_y=False)
-        create_box_plot_predictions_by_size(id_to_ind_metrics, "rse", 100, run, log_y=False)
+        # create_box_plot_predictions_by_size(id_to_ind_metrics, "rse", 50, run, log_y=False)
+        # create_box_plot_predictions_by_size(id_to_ind_metrics, "rse", 100, run, log_y=False)
 
         metrics_df = pl.DataFrame(id_to_metrics)
         if run:

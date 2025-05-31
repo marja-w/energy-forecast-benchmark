@@ -35,7 +35,7 @@ LAG_FEATURES = [f"diff(t-{i})" for i in range(1, N_LAG + 1)] + [f"diff(t+{i})" f
 
 # allowed length of flat lines per resolution
 THRESHOLD_FLAT_LINES_DAILY = 90
-THRESHOLD_FLAT_LINES_HOURLY = THRESHOLD_FLAT_LINES_DAILY*24
+THRESHOLD_FLAT_LINES_HOURLY = THRESHOLD_FLAT_LINES_DAILY * 24
 
 # gaps for splitting dataseries
 # if the data gap is bigger than this threshold, the data is split into multiple series
@@ -54,7 +54,8 @@ FEATURES = ["diff"] + CATEGORICAL_FEATURES + CONTINUOUS_FEATURES + CATEGORICAL_F
 FEATURES_DAILY = FEATURES + CONTINUOUS_FEATURES_DAILY
 FEATURES_HOURLY = FEATURES + CONTINUOUS_FEATURES_HOURLY
 
-STATIC_COVARIATES = ["daily_avg", "heated_area", "anzahlwhg", "typ", "primary_energy", "building_height", "storeys_above_ground"]
+STATIC_COVARIATES = ["daily_avg", "heated_area", "anzahlwhg", "typ", "primary_energy", "building_height",
+                     "storeys_above_ground"]
 DYNAMIC_COVARIATES = ["hum_avg", "hum_min", "hum_max", "tavg", "tmin", "tmax", "prcp", "snow", "wdir", "wspd", "wpgt",
                       "pres", "tsun"]
 
@@ -64,6 +65,7 @@ FEATURES_WEATHER = ['hum_avg', 'hum_min', 'hum_max', 'tavg', 'tmin', 'tmax', 'pr
                     'wpgt', 'pres', 'tsun']
 FEATURES_WEATHER_NO_SNOW = list(set(FEATURES_WEATHER) - {"snow"})
 FEATURES_WEATHER = FEATURES_WEATHER_NO_SNOW  # snow has lots of missing values
+FEATURES_WEATHER_HOURLY = ["temp", "dwpt", "rhum", "coco", 'prcp', 'snow', 'wdir', 'wspd', 'wpgt', 'pres', 'tsun']
 FEATURES_WEATHER_SIGNIFICANT = ["tmax", "tsun", "wpgt", "hum_avg"]
 FEATURES_BUILDING = ["daily_avg", "heated_area", "anzahlwhg", "typ", "primary_energy"]
 FEATURES_BUILDING_NO_APPARTMENT = list(set(FEATURES_BUILDING) - {"anzahlwhg"})
@@ -85,10 +87,13 @@ FEATURE_SET_11 = FEATURES_DIFF + FEATURES_WEATHER + FEATURES_TIME + FEATURES_DH
 FEATURE_SET_12 = ["diff"]
 FEATURE_SET_13 = ["diff"] + FEATURES_WEATHER + FEATURES_TIME + FEATURES_BUILDING_NO_APPARTMENT
 FEATURE_SET_14 = ["diff"] + FEATURES_WEATHER + FEATURES_TIME + ["primary_energy"]
+FEATURE_SET_15 = ["diff"] + FEATURES_WEATHER_HOURLY + FEATURES_TIME + FEATURES_BUILDING_NO_APPARTMENT
+FEATURE_SET_16 = ["diff"] + FEATURES_WEATHER_HOURLY + FEATURES_TIME + ["primary_energy"]
 
 FEATURE_SETS = {1: FEATURE_SET_1, 2: FEATURE_SET_2, 3: FEATURE_SET_3, 4: FEATURE_SET_4, 5: FEATURE_SET_5,
                 6: FEATURE_SET_6, 7: FEATURE_SET_7, 8: FEATURE_SET_8, 9: FEATURE_SET_9, 10: FEATURE_SET_10,
-                11: FEATURE_SET_11, 12: FEATURE_SET_12, 13: FEATURE_SET_13, 14: FEATURE_SET_14}
+                11: FEATURE_SET_11, 12: FEATURE_SET_12, 13: FEATURE_SET_13, 14: FEATURE_SET_14, 15: FEATURE_SET_15,
+                16: FEATURE_SET_16}
 
 # If tqdm is installed, configure loguru with tqdm.write
 # https://github.com/Delgan/loguru/issues/135

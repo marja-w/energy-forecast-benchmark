@@ -1,6 +1,32 @@
+from statistics import mean
 from typing import Union
 
 import numpy as np
+from permetrics import RegressionMetric
+
+
+def get_metrics(y: np.array, y_hat: np.array) -> tuple:
+    # Get metrics
+    evaluator = RegressionMetric(y, y_hat)
+    mse = evaluator.mean_squared_error()
+    mae = evaluator.mean_absolute_error()
+    mean_target_value = np.mean(y)
+    rse_list = root_squared_error(y, y_hat)
+
+    rmse = root_mean_squared_error(y, y_hat)
+    nrmse = rmse / mean_target_value
+    mape = mean_absolute_percentage_error(y, y_hat)
+
+    return mse, mae, rmse, nrmse, mape, rse_list
+
+
+def get_mean_metrics(mse, mae, rmse, nrmse, mape):
+    mape = mean(mape)
+    nrmse = mean(nrmse)
+    rmse = mean(rmse)
+    mse = mean(mse)
+    mae = mean(mae)
+    return mse, mae, rmse, nrmse, mape
 
 
 def mean_absolute_percentage_error(y_true: np.array, y_pred: np.array) -> float:

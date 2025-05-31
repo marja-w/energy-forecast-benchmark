@@ -7,6 +7,8 @@ from typing_extensions import LiteralString
 from wandb.apis.importers.internals.internal import ROOT_DIR
 
 from src.energy_forecast.config import MODELS_DIR, PROJ_ROOT, FEATURE_SETS
+from src.energy_forecast.model.evaluate import calculate_metrics_per_month, calculate_metrics_per_id, \
+    calculate_metrics_per_hour
 from src.energy_forecast.model.train import prepare_dataset, get_model
 
 
@@ -58,7 +60,12 @@ def get_model_from_path(path_to_model: Path, config: dict):
 def main(run_id: str):
     m, ds, run = get_model_from_wandb(run_id=run_id)
     # evaluate and plot predictions
-    m.evaluate(ds, run, log=False, plot=True)
+    m.evaluate(ds, run, log=False, plot=False)
+    # extended evaluation
+    calculate_metrics_per_id(ds, run, dict(wandb.config), m.name, True)
+    # calculate_metrics_per_month(ds, run, True)
+    calculate_metrics_per_hour(ds, run, True)
+
     run.finish()
 
 
@@ -68,7 +75,7 @@ def main_local(path_to_model: Path, config: dict):
 
 
 if __name__ == '__main__':
-    run_id = "62ne9qky"
+    run_id = "u1dtxz48"
     training_config = {
         "energy": "all",
         "res": "daily",

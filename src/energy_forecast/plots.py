@@ -305,6 +305,38 @@ def create_box_plot_predictions_by_size(id_to_metrics: list, metric_to_plot: str
     else:
         fig.show()
 
+def plot_bar_chart(id_to_metrics: list, metric_to_plot: str, run: Optional[wandb.sdk.wandb_run.Run],
+                                log_y: bool = False, name: str = ""):
+    logger.info(f"Plotting Bar Chart for {name}")
+    df = pd.DataFrame(id_to_metrics)
+    df.rename(columns={"id": name}, inplace=True)
+
+    fig = px.bar(df, x=name, y=metric_to_plot, log_y=log_y, color="avg_diff", custom_data=["avg_diff", "n_entries"],
+                 title=f"Bar Chart for {metric_to_plot} ({name})")
+    fig.update_traces(
+        hovertemplate="<br>".join([
+            name + ": %{x}",
+            metric_to_plot + ": %{y}",
+            "avg_diff: %{customdata[0]}",
+            "number of entries: %{customdata[1]}"
+        ])
+    )
+    fig.update_layout(
+        yaxis=dict(
+            title=dict(
+                text=f"{metric_to_plot} (kwh) {'(log)' if log_y else ''}"
+            )
+        )
+    )
+    if run:
+        if sys.platform == "win32":
+            wandb.log({f"bar_chart_{name}_{metric_to_plot}": wandb.Html(plotly.io.to_html(fig))})
+        else:
+            run.log({f"bar_chart_{name}_{metric_to_plot}": fig})
+    else:
+        fig.show()
+        # fig.write_html(f"{model_folder}/boxplot_{metric_to_plot}.html")
+
 
 if __name__ == "__main__":
     df_daily = pl.read_csv(PROCESSED_DATA_DIR / "dataset_daily.csv").with_columns(pl.col("datetime").str.to_datetime())

@@ -7,6 +7,8 @@ from itertools import product
 from pathlib import Path
 from statistics import mean
 from typing import Union, Optional, List, Dict, Any, Tuple
+
+from numpy import ndarray
 from tqdm import tqdm
 
 import numpy as np
@@ -22,7 +24,7 @@ from networkx.generators import trees
 from overrides import overrides
 from pandas import DataFrame
 from permetrics.regression import RegressionMetric
-from polars import DataFrame
+from polars import DataFrame, Series
 from sklearn import tree
 from sklearn.preprocessing import MinMaxScaler, StandardScaler
 from tensorflow import keras
@@ -34,7 +36,7 @@ from src.energy_forecast.config import MODELS_DIR, CONTINUOUS_FEATURES, REPORTS_
 from src.energy_forecast.dataset import TrainingDataset
 from src.energy_forecast.plots import plot_predictions, create_box_plot_predictions, create_box_plot_predictions_by_size
 from src.energy_forecast.utils.metrics import mean_absolute_percentage_error, root_mean_squared_error, \
-    root_squared_error
+    root_squared_error, get_metrics
 from src.energy_forecast.utils.time_series import series_to_supervised
 
 import torch
@@ -389,7 +391,8 @@ class NNModel(Model):
         X, y = self.split_in_feature_target(df)
         return X, y
 
-    def create_time_series_data_and_id_map(self, df: pl.DataFrame) -> tuple[Any, pl.DataFrame, dict, pl.Series]:
+    def create_time_series_data_and_id_map(self, df: pl.DataFrame) -> tuple[
+        DataFrame | Any, Any, dict[str, tuple[ndarray, ndarray, Series]], Series, Series]:
         """
         Transforms the given DataFrame for time series analysis by preparing supervised learning data and mapping IDs
         to their corresponding data entries.
@@ -412,7 +415,7 @@ class NNModel(Model):
         df = self.transform_series_to_supervised(df)
         X, y = self.split_in_feature_target(df)
         id_to_data = self.create_id_to_data(df)
-        return X, y, id_to_data, df["id"]
+        return X, y, id_to_data, df["id"], df["datetime"]
 
     def create_id_to_data(self, df: pl.DataFrame) -> dict[str, tuple[np.ndarray, np.ndarray, pl.Series]]:
         # per id
@@ -525,19 +528,12 @@ class NNModel(Model):
                 y_hat = y_hat_scaled
 
             y = id_to_test_series[b_id][1].to_numpy()
-            evaluator = RegressionMetric(y, y_hat)
-            # Get metrics
-            test_mse = evaluator.mean_squared_error()
-            test_mae = evaluator.mean_absolute_error()
-            mean_target_value = np.mean(y)
             heated_area = ds.get_heated_area_by_id(b_id)
-            rse_list = root_squared_error(y, y_hat)
+            test_mse, test_mae, test_rmse, test_nrmse, test_mape, rse_list = get_metrics(y, y_hat)
+
+            mean_target_value = np.mean(y)
             id_to_ind_metrics.append(
                 {"id": b_id, "rse": rse_list, "nrse": rse_list / heated_area, "avg_diff": mean_target_value})
-            test_rmse = root_mean_squared_error(y, y_hat)
-
-            test_nrmse = test_rmse / mean_target_value
-            test_mape = mean_absolute_percentage_error(y, y_hat)
 
             if self.config["n_out"] > 1:
                 test_mape = mean(test_mape)
@@ -573,6 +569,23 @@ class NNModel(Model):
                 REPORTS_DIR / "metrics" / f"{self.name}_{self.config['n_out']}.csv")  # overwrites in next run
             logger.info(f"Metrics saved to {REPORTS_DIR}/metrics/{self.name}_{self.config['n_out']}.csv")
 
+    def generate_test_data(self, ds: TrainingDataset) -> TrainingDataset:
+        # get data split either scaled or not
+        test = ds.get_test_df(ds.scale).select(["id", "datetime"] + self.config["features"])
+        ds.X_test_scaled, ds.y_test_scaled, ds.id_to_test_series_scaled, ds.id_column, ds.datetime_column \
+            = self.create_time_series_data_and_id_map(test)
+        if ds.scale:
+            _, y_test, ds.id_to_test_series, _, _ = self.create_time_series_data_and_id_map(
+                ds.get_test_df(scale=False).select(["id", "datetime"] + self.config["features"]))
+            if self.config["scale_mode"] == "all":
+                assert (ds.y_test_scaled["diff"].to_numpy().reshape(-1, 1) == ds.scaler_y.transform(
+                    y_test["diff"].to_numpy().reshape(-1, 1))).all()  # check that this is the same data but scaled
+        else:
+            y_test = ds.y_test_scaled
+            ds.id_to_test_series = ds.id_to_test_series_scaled
+        ds.y_test = y_test
+        return ds
+
     @overrides(check_signature=False)
     def evaluate(self, ds: TrainingDataset, run: Optional[Run], log: bool = True, plot: bool = False) -> tuple:
         """
@@ -582,22 +595,11 @@ class NNModel(Model):
         :param ds: TrainingDataset containing test data and scaler
         :param log: whether to log metrics to console
         """
-        # get data split either scaled or not
-        test = ds.get_test_df(ds.scale).select(["id", "datetime"] + self.config["features"])
-        ds.X_test_scaled, ds.y_test_scaled, ds.id_to_test_series_scaled, id_column = self.create_time_series_data_and_id_map(
-            test)
+        ds = self.generate_test_data(ds)
+        y_test = ds.y_test
         X_test_scaled, y_test_scaled = ds.X_test_scaled, ds.y_test_scaled
-        if ds.scale:
-            _, y_test, ds.id_to_test_series, _ = self.create_time_series_data_and_id_map(
-                ds.get_test_df(scale=False).select(["id", "datetime"] + self.config["features"]))
-            if self.config["scale_mode"] == "all":
-                assert (ds.y_test_scaled["diff"].to_numpy().reshape(-1, 1) == ds.scaler_y.transform(
-                    y_test["diff"].to_numpy().reshape(-1, 1))).all()  # check that this is the same data but scaled
-        else:
-            y_test = y_test_scaled
-            ds.id_to_test_series = ds.id_to_test_series_scaled
 
-        self.calculate_metrics_per_id(ds, run, plot)  # TODO: use metrics calculated here for average metrics
+        # self.calculate_metrics_per_id(ds, run, plot)  # TODO: use metrics calculated here for average metrics
 
         # get predictions
         y_hat_scaled = self.predict(X_test_scaled)
@@ -608,10 +610,11 @@ class NNModel(Model):
             if run:
                 run.log({"test_mse_scaled": test_mse_scaled, "test_mae_scaled": test_mae_scaled})
             # rescale predictions
-            y_hat = ds.rescale_predictions(y_hat_scaled, id_column)
+            y_hat = ds.rescale_predictions(y_hat_scaled, ds.id_column)
         else:
             y_hat = y_hat_scaled
 
+        ds.y_hat = y_hat
         evaluator = RegressionMetric(y_test.to_numpy(), y_hat)
         test_mape = mean_absolute_percentage_error(y_test.to_numpy(), y_hat)
         if self.config["n_out"] > 1:
@@ -732,11 +735,12 @@ class RNNModel(NNModel):
         return X, y
 
     @overrides
-    def create_time_series_data_and_id_map(self, df: pl.DataFrame) -> tuple[Any, pl.DataFrame, dict, pl.Series]:
-        X, y, id_to_data, id_column = super().create_time_series_data_and_id_map(df)
+    def create_time_series_data_and_id_map(self, df: pl.DataFrame) -> tuple[
+        Any, Any, dict[str, tuple[ndarray, ndarray, Series]], Series, Series]:
+        X, y, id_to_data, id_column, datetime_col = super().create_time_series_data_and_id_map(df)
         X = X.to_numpy().reshape(
             (X.shape[0], self.config["n_in"] + self.config["n_future"], len(self.config["features"])))
-        return X, y, id_to_data, id_column
+        return X, y, id_to_data, id_column, datetime_col
 
 
 class RNN1Model(RNNModel):
@@ -1157,6 +1161,7 @@ class xLSTMModel(RNNModel):
         self.optimizer.load_state_dict(checkpoint['optimizer_state_dict'])
 
         logger.info(f"Successfully loaded {self.name} model from {file_path}")
+
 
 class xLSTMTSFModel(xLSTMModel):
     def __init__(self, config):

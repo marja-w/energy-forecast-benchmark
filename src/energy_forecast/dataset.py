@@ -310,6 +310,13 @@ class TrainingDataset(Dataset):
         self.id_to_test_series = dict()
         self.id_to_test_series_scaled = dict()
 
+        # store ids and datetimes to group arrays by id and datetime
+        self.id_column = None
+        self.datetime_column = None
+
+        self.y_hat = None  # predictions for test set
+        self.y_test = None  # true values for test set
+
         self.name = (f"{self.config['dataset']}_{'interpolate' if self.config['interpolate'] else 'no_interpolate'}"
                      f"_{self.res}_lag_{self.config['lag_in']}_{self.config['lag_out']}")
         self.file_path = f"{PROCESSED_DATA_DIR}/null.csv"  # should not exist to trigger create and clean function

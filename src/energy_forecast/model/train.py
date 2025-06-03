@@ -34,7 +34,7 @@ except ModuleNotFoundError:
         from src.energy_forecast.config import REFERENCES_DIR, FEATURE_SETS, PROCESSED_DATA_DIR, REPORTS_DIR, N_CLUSTER
         from src.energy_forecast.dataset import Dataset, TrainingDataset, TrainDataset90, TrainDatasetBuilding
         from src.energy_forecast.model.models import Model, FCNModel, DTModel, LinearRegressorModel, RegressionModel, \
-            NNModel, RNN1Model, FCN2Model, FCN3Model, Baseline, RNN3Model
+            NNModel, RNN1Model, FCN2Model, FCN3Model, Baseline, RNN3Model, LSTMModel
         from src.energy_forecast.utils.train_test_val_split import get_train_test_val_split
         from src.energy_forecast.utils.util import store_df_wandb
     else:

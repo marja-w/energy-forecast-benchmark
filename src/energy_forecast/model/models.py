@@ -34,6 +34,7 @@ from wandb.sdk.wandb_run import Run
 
 from src.energy_forecast.config import MODELS_DIR, CONTINUOUS_FEATURES, REPORTS_DIR, MASKING_VALUE
 from src.energy_forecast.dataset import TrainingDataset
+from src.energy_forecast.model.transformer_torch import TransformerConfig, Transformer
 from src.energy_forecast.plots import plot_predictions, create_box_plot_predictions, create_box_plot_predictions_by_size
 from src.energy_forecast.utils.metrics import mean_absolute_percentage_error, root_mean_squared_error, \
     root_squared_error, get_metrics
@@ -599,11 +600,13 @@ class NNModel(Model):
         y_test = ds.y_test
         X_test_scaled, y_test_scaled = ds.X_test_scaled, ds.y_test_scaled
 
-        # self.calculate_metrics_per_id(ds, run, plot)  # TODO: use metrics calculated here for average metrics
+        # self.calculate_metrics_per_id(ds, run, plot)
 
         # get predictions
         y_hat_scaled = self.predict(X_test_scaled)
         if ds.scaler_y is not None:  # scaler_X might be None, if only diff as feature
+            logger.info(f"y_hat_scaled shape: {y_hat_scaled.shape}")
+            logger.info(f"y_test_scaled shape: {y_test_scaled.to_numpy().shape}")
             scaled_ev = RegressionMetric(y_test_scaled.to_numpy(), y_hat_scaled)
             test_mse_scaled = scaled_ev.mean_squared_error()
             test_mae_scaled = scaled_ev.mean_absolute_error()
@@ -784,7 +787,7 @@ class LSTMModel(RNNModel):
         self.model = keras.Sequential([
             keras.Input(shape=(input_shape[1], input_shape[2])),
             layers.Masking(mask_value=MASKING_VALUE),
-            layers.LSTM(self.config["neurons"]),
+            layers.LSTM(self.config["neurons"]),  # last output
             layers.Dropout(self.config['dropout']),
             layers.Dense(self.config["n_out"], activation="linear")
         ])
@@ -975,32 +978,32 @@ class xLSTMModel(RNNModel):
                 mlstm=mLSTMLayerConfig(
                     conv1d_kernel_size=4,
                     qkv_proj_blocksize=4,
-                    num_heads=1
+                    num_heads=1  # TODO: fails for > 1
                 )
             ),
             slstm_block=sLSTMBlockConfig(
                 slstm=sLSTMLayerConfig(
                     backend="vanilla",
-                    num_heads=1,
+                    num_heads=1,  # TODO: fails for > 1
                     conv1d_kernel_size=4,
                     bias_init="powerlaw_blockdependent",
                 ),
                 feedforward=FeedForwardConfig(proj_factor=1.3, act_fn="gelu"),
             ),
-            context_length=input_dim,
+            context_length=input_dim,  # TODO: n_in is context_length?
             num_blocks=self.config.get("num_blocks", 7),
-            embedding_dim=input_shape[2],  # number of features is embedding dimension?
+            embedding_dim=256,  # TODO: number of features is embedding dimension?
             slstm_at=[1],
         )
 
         # Initialize xLSTM model
-        self.model = xLSTMBlockStack(cfg)
+        self.model = xLSTMBlockStack(cfg, input_shape[2], self.config["n_out"])
 
         # Add final prediction layer to output the right number of values
-        self.model = nn.Sequential(  # TODO: directly set output dimensions in xLSTMBlockStackConfig?
-            self.model,
-            nn.Linear(cfg.embedding_dim, self.config["n_out"])
-        )
+        # self.model = nn.Sequential(  # TODO: directly set output dimensions in xLSTMBlockStackConfig?
+        #     self.model,
+        #     nn.Linear(cfg.embedding_dim, self.config["n_out"])
+        # )
 
         # Move model to the appropriate device
         self.model = self.model.to(self.device)
@@ -1065,7 +1068,8 @@ class xLSTMModel(RNNModel):
             for inputs, targets in tqdm(train_loader, desc="Training batches", position=0, leave=True):
                 self.optimizer.zero_grad()
                 outputs = self.model(inputs)
-                outputs = outputs[:, :, target_feature_idx]  # remove last dimension
+                # logger.info(outputs)
+                # outputs = outputs[:, :self.config["n_out"], target_feature_idx]  # TODO: remove last dimension?
                 loss = self.criterion(outputs, targets)  # only use diff for loss computation
                 loss.backward()
                 self.optimizer.step()
@@ -1085,6 +1089,7 @@ class xLSTMModel(RNNModel):
             with torch.no_grad():
                 for inputs, targets in val_loader:
                     outputs = self.model(inputs)
+                    # outputs = outputs[:, :self.config["n_out"], target_feature_idx]  # TODO: remove last dimension?
                     loss = self.criterion(outputs, targets)
 
                     val_loss += loss.item() * inputs.size(0)
@@ -1116,8 +1121,8 @@ class xLSTMModel(RNNModel):
         X_tensor = torch.tensor(X, dtype=torch.float32).to(self.device)
         self.model.eval()
         with torch.no_grad():
-            predictions, _ = self.model(X_tensor)
-        return predictions.cpu().numpy()[:, :, self.get_target_feature_index()]
+            predictions = self.model(X_tensor)
+        return predictions.detach().numpy() # [:, :, self.get_target_feature_index()]
 
     def save(self):
         """Save model to disk and to wandb"""
@@ -1279,3 +1284,17 @@ class xLSTMTSFModel(xLSTMModel):
 
         logger.success("Model training complete.")
         return run
+
+class TransformerTorchModel(xLSTMModel):
+    def __init__(self, config):
+        super().__init__(config)
+        self.name = "transformer_torch"
+
+    def set_model(self, input_shape):
+        transformer_config = TransformerConfig(dim=64,
+                                               n_layers=4,
+                                               n_heads=1,
+                                               fc_scale=2,
+                                               vocab_size=7,
+                                               context_length=256)
+        self.model = Transformer(transformer_config)

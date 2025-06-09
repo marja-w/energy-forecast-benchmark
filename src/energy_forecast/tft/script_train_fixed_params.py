@@ -265,10 +265,10 @@ if __name__ == "__main__":
     config = ExperimentConfig(name, output_folder)
     extra_config = {
         "quantiles": [1.0],
-        "num_epochs": 25,
+        "num_epochs": 10,
         "early_stopping_patience": 100,
-        "n_in": 7,
-        "n_out": 7
+        "n_in": 72,
+        "n_out": 24
     }
     formatter = config.make_data_formatter()
 

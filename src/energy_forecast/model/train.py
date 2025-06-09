@@ -16,7 +16,8 @@ try:
     from src.energy_forecast.dataset import Dataset, TrainingDataset, TrainDataset90, TrainDatasetBuilding
     from src.energy_forecast.model.models import Model, FCNModel, DTModel, LinearRegressorModel, RegressionModel, \
     NNModel, \
-    RNN1Model, FCN2Model, FCN3Model, Baseline, RNN3Model, TransformerModel, LSTMModel, xLSTMModel, xLSTMTSFModel
+    RNN1Model, FCN2Model, FCN3Model, Baseline, RNN3Model, TransformerModel, LSTMModel, xLSTMModel, xLSTMTSFModel, \
+    TransformerTorchModel
     from src.energy_forecast.utils.train_test_val_split import get_train_test_val_split
     from src.energy_forecast.utils.util import store_df_wandb
 except ModuleNotFoundError:
@@ -34,7 +35,7 @@ except ModuleNotFoundError:
         from src.energy_forecast.config import REFERENCES_DIR, FEATURE_SETS, PROCESSED_DATA_DIR, REPORTS_DIR, N_CLUSTER
         from src.energy_forecast.dataset import Dataset, TrainingDataset, TrainDataset90, TrainDatasetBuilding
         from src.energy_forecast.model.models import Model, FCNModel, DTModel, LinearRegressorModel, RegressionModel, \
-            NNModel, RNN1Model, FCN2Model, FCN3Model, Baseline, RNN3Model, LSTMModel
+            NNModel, RNN1Model, FCN2Model, FCN3Model, Baseline, RNN3Model, LSTMModel, TransformerModel
         from src.energy_forecast.utils.train_test_val_split import get_train_test_val_split
         from src.energy_forecast.utils.util import store_df_wandb
     else:
@@ -54,7 +55,7 @@ def get_model(config: dict) -> Model:
         return RNN1Model(config)
     elif config["model"] == "RNN3":
         return RNN3Model(config)
-    elif config["model"] == "Transformer":
+    elif config["model"] == "transformer":
         return TransformerModel(config)
     elif config["model"] == "lstm":
         return LSTMModel(config)
@@ -62,6 +63,8 @@ def get_model(config: dict) -> Model:
         return xLSTMModel(config)
     elif config["model"] == "xlstm_tsf":
         return xLSTMTSFModel(config)
+    elif config["model"] == "transformer_torch":
+        return TransformerTorchModel(config)
     else:
         raise Exception(f"Unknown model {config['model']}")
 
@@ -152,28 +155,28 @@ if __name__ == '__main__':
     scalers = ["standard"]
     feature_codes = [12, 14, 13]
     neurons_list = [100]
-    n_ins = [3, 7]
+    n_ins = [6, 12, 24, 48, 72]
     n_outs = [1, 7]
     n_futures = [0, 1, 7]
     epochs_list = [40]
     config = {"project": "ma-wahl-forecast",
-              "log": False,  # whether to log to wandb
+              "log": True,  # whether to log to wandb
               "plot": False, # whether to plot predictions
               "energy": "all",
               "res": "hourly",
               "interpolate": 1,
               "dataset": "building",  # building, meta, missing_data_90
-              "model": "RNN1",
+              "model": "xlstm",
               "lag_in": 72,
               "lag_out": 72,
-              "n_in": 12,
-              "n_out": 3,
-              "n_future": 3,
+              "n_in": 72,
+              "n_out": 24,
+              "n_future": 0,
               "scaler": "standard",
               "scale_mode": "individual",  # all, individual
               "feature_code": 15,
               "train_test_split_method": "time",
-              "epochs": 1,
+              "epochs": 10,
               "optimizer": "adam",
               "loss": "mean_squared_error",
               "metrics": ["mae"],
@@ -182,7 +185,9 @@ if __name__ == '__main__':
               "neurons": 100,
               "lr_scheduler": "none",  # none, step_decay
               "weight_initializer": "glorot",
-              "activation": "relu"}  # ReLU, Linear
+              "activation": "relu",  # ReLU, Linear
+              "transformer_blocks": 2,
+              "num_heads": 4}
     # config = None
     all_models = False
     if config is None:
@@ -199,8 +204,6 @@ if __name__ == '__main__':
         for model, feature_code, n_in, n_out, n_f, epochs, neurons, scaler in itertools.product(models, feature_codes, n_ins, n_outs, n_futures, epochs_list, neurons_list, scalers):
             if n_f != n_out: continue
             if feature_code == 12 and n_f > 0: continue  # only feature is diff
-            if model == "FCN3" and n_in == 1 and neurons != 120 and n_out == 1: continue
-            if model == "FCN3" and feature_code == 12: continue
             logger.info(f"Training combination: feature code {feature_code}, n_in {n_in}, n_out {n_out}, n_future {n_f}, epochs {epochs}, neurons {neurons}, scaler {scaler}")
             config["model"] = model
             config["feature_code"] = feature_code

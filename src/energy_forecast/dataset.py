@@ -588,7 +588,7 @@ class TrainingDataset(Dataset):
         self.remove_corrupt_buildings()
         self.encode_cyclic_features()
         logger.info(f"Training Features: {self.config['features']}")
-        # self.save(PROCESSED_DATA_DIR / f"{self.config['dataset']}_{self.config['lag_in']}_{self.config['lag_out']}.csv")
+        # self.save(PROCESSED_DATA_DIR / f"{self.config['dataset']}_{self.config['res']}_{self.config['lag_in']}_{self.config['lag_out']}.csv")
         return self.df, self.config
 
     def compute_clusters(self) -> dict:
@@ -682,9 +682,9 @@ if __name__ == '__main__':
 
     logger.info("Finish data loading")
 
-    ds = InterpolatedDataset(res="hourly")
+    # ds = InterpolatedDataset(res="hourly")
     # ds.create_and_clean(plot=True)
-    ds.create_clean_and_add_feat()
+    # ds.create_clean_and_add_feat()
     # #
     # ds = Dataset(res="hourly")
     # ds.create_and_clean(plot=True)
@@ -714,5 +714,5 @@ if __name__ == '__main__':
                      "feature_code": 13,
                      "train_test_split_method": "time"}  # ReLU, Linear
 
-    # ds = TrainDatasetBuilding(freeze_config)
+    ds = TrainDatasetBuilding(freeze_config)
     # ds.create_clean_and_add_feat()

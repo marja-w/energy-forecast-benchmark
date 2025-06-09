@@ -168,7 +168,10 @@ class Model:
 
         # Handle multiple outputs
         if self.config["n_out"] > 1:
-            if run: run.log(data={"test_nrmse_ind": test_nrmse, "test_mse_ind": test_mse, "test_mae_ind": test_mae})
+            if run:
+                if run.summary.get("test_rmse_ind", None) is None:
+                    run.log(data={"test_rmse_ind": test_rmse, "test_nrmse_ind": test_nrmse, "test_mse_ind": test_mse,
+                              "test_mae_ind": test_mae})
             if log:
                 logger.info(f"MSE Loss on test data per index: {test_mse}")
                 logger.info(f"MAE Loss on test data per index: {test_mae}")
@@ -181,7 +184,8 @@ class Model:
 
         # Log metrics
         if run:
-            run.log(data={"test_data_length": len_y_test,
+            if run.summary.get("test_mse", None) is None:
+                run.log(data={"test_data_length": len_y_test,
                           "test_mse": test_mse,
                           "test_mae": test_mae,
                           "test_rmse": test_rmse,
@@ -611,7 +615,8 @@ class NNModel(Model):
             test_mse_scaled = scaled_ev.mean_squared_error()
             test_mae_scaled = scaled_ev.mean_absolute_error()
             if run:
-                run.log({"test_mse_scaled": test_mse_scaled, "test_mae_scaled": test_mae_scaled})
+                if run.summary.get("test_mse_scaled", None) is None:
+                    run.log({"test_mse_scaled": test_mse_scaled, "test_mae_scaled": test_mae_scaled})
             # rescale predictions
             y_hat = ds.rescale_predictions(y_hat_scaled, ds.id_column)
         else:
@@ -621,11 +626,15 @@ class NNModel(Model):
         evaluator = RegressionMetric(y_test.to_numpy(), y_hat)
         test_mape = mean_absolute_percentage_error(y_test.to_numpy(), y_hat)
         if self.config["n_out"] > 1:
-            if run: run.log({"test_mape_ind": test_mape})
+            if run:
+                if run.summary.get("test_mape_ind", None) is None:
+                    run.log({"test_mape_ind": test_mape})
             if log: logger.info(f"MAPE on individual test data: {test_mape}")
             test_mape = mean(test_mape)
 
-        if run: run.log({"test_mape": test_mape})
+        if run:
+            if run.summary.get("test_mape", None) is None:
+                run.log({"test_mape": test_mape})
         if log: logger.info(f"MAPE on test data: {test_mape}")
         return self.log_eval_results(evaluator, run, len(y_test))
 
@@ -833,20 +842,20 @@ class LSTMModel(RNNModel):
 class TransformerModel(RNNModel):
     def __init__(self, config):
         super().__init__(config)
-        self.name = "Transformer"
+        self.name = "transformer"
 
     def transformer_encoder(self, inputs, head_size, num_heads, ff_dim):
+        dropout = self.config.get("dropout", 0.1)
         # Attention and Normalization
         x = layers.MultiHeadAttention(
-            key_dim=head_size, num_heads=num_heads, dropout=self.config["dropout"]
-        )(inputs, inputs)
-        x = layers.Dropout(self.config["dropout"])(x)
+            key_dim=head_size, num_heads=num_heads, dropout=dropout)(inputs, inputs)
+        x = layers.Dropout(dropout)(x)
         x = layers.LayerNormalization(epsilon=1e-6)(x)
         res = x + inputs
 
         # Feed Forward Part
         x = layers.Conv1D(filters=ff_dim, kernel_size=1, activation="relu")(res)
-        x = layers.Dropout(self.config["dropout"])(x)
+        x = layers.Dropout(dropout)(x)
         x = layers.Conv1D(filters=inputs.shape[-1], kernel_size=1)(x)
         x = layers.LayerNormalization(epsilon=1e-6)(x)
         return x + res
@@ -856,15 +865,23 @@ class TransformerModel(RNNModel):
         x = inputs
 
         # TODO put in config
-        num_transformer_blocks = 4
+        num_transformer_blocks = self.config.get("transformer_blocks", 4)
+        head_size = self.config.get("head_size", 256)
         mlp_units = [128]
         mlp_dropout = 0.1
-        head_size = 256
-        num_heads = 8
+        num_heads = self.config.get("num_heads", 8)
         ff_dim = 4
 
         # masking layer
         x = layers.Masking(mask_value=MASKING_VALUE)(x)
+
+        # up projection layer
+        x = layers.Dense(head_size, activation="relu")(x)
+
+        # learnable positional embeddings
+        positions = tf.range(start=0, limit=input_shape[1], delta=1)
+        positional_embedding = layers.Embedding(input_dim=input_shape[1], output_dim=head_size)(positions)
+        x += positional_embedding
 
         for _ in range(num_transformer_blocks):
             x = self.transformer_encoder(x, head_size, num_heads, ff_dim)
@@ -1122,7 +1139,7 @@ class xLSTMModel(RNNModel):
         self.model.eval()
         with torch.no_grad():
             predictions = self.model(X_tensor)
-        return predictions.detach().numpy() # [:, :, self.get_target_feature_index()]
+        return predictions.detach().numpy()  # [:, :, self.get_target_feature_index()]
 
     def save(self):
         """Save model to disk and to wandb"""
@@ -1159,11 +1176,11 @@ class xLSTMModel(RNNModel):
 
         # Initialize model with the saved config
         self.config = checkpoint['config']
-        self.set_model((None, len(self.config["features"]) * self.config["n_in"]))
+        self.set_model((None, self.config["n_in"], len(self.config["features"])))
 
         # Load state dictionaries
         self.model.load_state_dict(checkpoint['model_state_dict'])
-        self.optimizer.load_state_dict(checkpoint['optimizer_state_dict'])
+        # self.optimizer.load_state_dict(checkpoint['optimizer_state_dict'])
 
         logger.info(f"Successfully loaded {self.name} model from {file_path}")
 
@@ -1285,6 +1302,7 @@ class xLSTMTSFModel(xLSTMModel):
         logger.success("Model training complete.")
         return run
 
+
 class TransformerTorchModel(xLSTMModel):
     def __init__(self, config):
         super().__init__(config)
@@ -1292,7 +1310,7 @@ class TransformerTorchModel(xLSTMModel):
 
     def set_model(self, input_shape):
         transformer_config = TransformerConfig(dim=64,
-                                               n_layers=4,
+                                               n_layers=1,
                                                n_heads=1,
                                                fc_scale=2,
                                                vocab_size=7,

@@ -13,6 +13,8 @@ from matplotlib import pyplot as plt
 import seaborn as sns
 import os
 import plotly.express as px
+import plotly.graph_objects as go
+from plotly.subplots import make_subplots
 
 from src.energy_forecast.config import PROCESSED_DATA_DIR, FIGURES_DIR, REPORTS_DIR
 from src.energy_forecast.utils.util import find_time_spans, get_missing_dates, store_plot_wandb
@@ -336,6 +338,99 @@ def plot_bar_chart(id_to_metrics: list, metric_to_plot: str, run: Optional[wandb
     else:
         fig.show()
         # fig.write_html(f"{model_folder}/boxplot_{metric_to_plot}.html")
+
+def plot_multiple_model_metrics(metrics: list[dict]):
+    """
+        Create a bar chart for model metrics where each value in the list gets its own bar.
+
+        Args:
+            df: A Polars DataFrame with columns 'model', 'metric', and 'val' where 'val' contains lists.
+
+        Returns:
+            A Plotly figure object with the bar chart.
+        """
+    # Validate input DataFrame
+    df = pd.DataFrame(metrics)
+    required_cols = ["model", "metric", "val"]
+    if not all(col in df.columns for col in required_cols):
+        missing = [col for col in required_cols if col not in df.columns]
+        raise ValueError(f"DataFrame missing required columns: {missing}")
+
+    # Check if 'val' contains lists
+    if not isinstance(df["val"].iloc[0], (list, np.ndarray)):
+        raise ValueError("The 'val' column must contain lists or arrays")
+
+    # Get the length of the lists
+    list_lengths = df["val"].apply(len)
+    if len(list_lengths) == 0:
+        raise ValueError("DataFrame is empty or contains no valid lists")
+
+    # Ensure all lists have the same length
+    if not (list_lengths == list_lengths.iloc[0]).all():
+        raise ValueError("All lists in 'val' must have the same length")
+
+    # Create an exploded DataFrame
+    exploded_df = pd.DataFrame()
+
+    for idx, row in df.iterrows():
+        for step, val in enumerate(row["val"]):
+            new_row = {
+                "model": row["model"],
+                "metric": row["metric"],
+                "val": val,
+                "step": step
+            }
+            exploded_df = pd.concat([exploded_df, pd.DataFrame([new_row])], ignore_index=True)
+
+    # Get unique models and metrics
+    models = exploded_df["model"].unique()
+    metrics = exploded_df["metric"].unique()
+    steps = exploded_df["step"].unique()
+
+    # Create figure with subplots (one per metric)
+    fig = make_subplots(
+        rows=len(metrics),
+        cols=1,
+        subplot_titles=[f"Metric: {metric}" for metric in metrics],
+        vertical_spacing=0.1
+    )
+
+    df = exploded_df
+    # Add traces for each model and metric
+    for i, metric in enumerate(metrics):
+        metric_df = df[df["metric"] == metric]
+
+        for model in models:
+            model_data = metric_df[metric_df["model"] == model]
+
+            fig.add_trace(
+                go.Bar(
+                    x=model_data["step"],
+                    y=model_data["val"],
+                    name=model,
+                    legendgroup=model,
+                    showlegend=(i == 0),  # Only show in legend once
+                ),
+                row=i + 1,
+                col=1
+            )
+
+    # Update layout
+    fig.update_layout(
+        title="Model Metrics Comparison",
+        barmode="group",
+        height=300 * len(metrics),
+        legend_title="Models",
+        xaxis_title="Step",
+    )
+
+    # Update y-axes titles
+    for i in range(len(metrics)):
+        fig.update_yaxes(title_text="Value", row=i + 1, col=1)
+        fig.update_xaxes(title_text="Step", row=i + 1, col=1)
+
+    return fig
+
 
 
 if __name__ == "__main__":

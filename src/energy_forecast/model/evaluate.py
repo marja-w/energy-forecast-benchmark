@@ -8,7 +8,8 @@ from wandb.sdk.wandb_run import Run
 
 from src.energy_forecast.config import DATA_DIR, PROCESSED_DATA_DIR, REPORTS_DIR
 from src.energy_forecast.dataset import TrainingDataset
-from src.energy_forecast.plots import plot_bar_chart, plot_predictions, create_box_plot_predictions
+from src.energy_forecast.plots import plot_bar_chart, plot_predictions, create_box_plot_predictions, \
+    plot_box_plot_hours, plot_box_plot
 from src.energy_forecast.utils.metrics import get_metrics, get_mean_metrics
 
 
@@ -89,6 +90,68 @@ def calculate_metrics_per_id(ds: TrainingDataset, run: Optional[Run], config: di
         logger.info(f"Metrics saved to {REPORTS_DIR}/metrics/{model_name}_{config['n_out']}.csv")
 
 
+def calculate_metrics_per_id_and_hour(ds: TrainingDataset, run: Optional[Run], config: dict, model_name: str,
+                             plot: bool = False) -> None:
+    id_to_metrics = list()
+    id_to_ind_metrics = list()
+    if run:
+        table_cols = ["id", "mape", "mse", "mae", "nrmse", "rmse", "avg_diff"]
+        if plot:
+            table_cols = ["id", "predictions", "mape", "mse", "mae", "nrmse", "rmse", "avg_diff"]
+        wandb_table = wandb.Table(columns=table_cols)
+
+    hours_array = ds.datetime_column.dt.hour().to_numpy()
+    b_id_array = ds.id_column
+    y_test = ds.y_test.to_numpy()
+    for b_id in ds.id_column.unique():
+        id_mask = b_id_array == b_id
+        date_mask = ds.id_column == b_id
+        y_hat = ds.y_hat[id_mask]
+        y = y_test[id_mask]
+        hours_id = hours_array[id_mask]
+        heated_area = ds.get_heated_area_by_id(b_id)
+
+        test_mse, test_mae, test_rmse, test_nrmse, test_mape, rse_list = get_metrics(y, y_hat)
+        mean_target_value = np.mean(y)
+
+        plot_box_plot_hours(rse_list, hours_id, b_id, run, log_y=False)
+
+        id_to_ind_metrics.append(
+            {"id": b_id, "rse": rse_list, "nrse": rse_list / heated_area, "avg_diff": mean_target_value})
+
+        # mean over metrics if output length > 1
+        if y.shape[1] > 1:
+            test_mse, test_mae, test_rmse, test_nrmse, test_mape = get_mean_metrics(test_mse, test_mae, test_rmse,
+                                                                                    test_nrmse, test_mape)
+
+        if plot:
+            plt = plot_predictions(ds, y, b_id, y_hat, ds.datetime_column.filter(date_mask), config["lag_in"],
+                                   config["n_out"],
+                                   config["lag_out"], run, model_name)
+        if run and plot:
+            wandb_table.add_data(b_id, wandb.Image(plt), test_mape, test_mse, test_mae, test_nrmse, test_rmse,
+                                 mean_target_value)
+            plt.close()
+        elif run:
+            wandb_table.add_data(b_id, test_mape, test_mse, test_mae, test_nrmse, test_rmse,
+                                 mean_target_value)
+        elif not run:
+            b_metrics = {"id": b_id, "mape": test_mape, "mse": test_mse, "mae": test_mae, "nrmse": test_nrmse,
+                         "rmse": test_rmse, "avg_diff": mean_target_value}
+            id_to_metrics.append(b_metrics)
+    create_box_plot_predictions(id_to_ind_metrics, "rse", run, log_y=True)
+    create_box_plot_predictions(id_to_ind_metrics, "nrse", run, log_y=True)
+    # create_box_plot_predictions_by_size(id_to_ind_metrics, "rse", 50, run, log_y=False)
+    # create_box_plot_predictions_by_size(id_to_ind_metrics, "rse", 100, run, log_y=False)
+
+    metrics_df = pl.DataFrame(id_to_metrics)
+    if run:
+        run.log({"building_metrics": wandb_table})
+    else:
+        metrics_df.write_csv(
+            REPORTS_DIR / "metrics" / f"{model_name}_{config['n_out']}.csv")  # overwrites in next run
+        logger.info(f"Metrics saved to {REPORTS_DIR}/metrics/{model_name}_{config['n_out']}.csv")
+
 def calculate_metrics_per_month(ds: TrainingDataset, run=None, plot: bool = False) -> None:
     id_to_metrics = list()
     id_to_ind_metrics = list()
@@ -126,8 +189,6 @@ def calculate_metrics_per_month(ds: TrainingDataset, run=None, plot: bool = Fals
     plot_bar_chart(id_to_metrics, "rmse", run, log_y=False, name="month")
 
 def calculate_metrics_per_hour(ds: TrainingDataset, run=None, plot: bool = False) -> None:
-    id_to_metrics = list()
-    id_to_ind_metrics = list()
     meta_df = pl.read_csv(
         PROCESSED_DATA_DIR / f"dataset_interpolate_{ds.config['res']}_feat.csv")  # for retrieving heated area
     if run:
@@ -136,6 +197,8 @@ def calculate_metrics_per_hour(ds: TrainingDataset, run=None, plot: bool = False
 
     hours_array = ds.datetime_column.dt.hour().to_numpy()
     y_test = ds.y_test.to_numpy()
+    id_to_metrics = list()
+    id_to_ind_metrics = list()
     for hour in range(1, 25):
         hour_mask = hours_array == hour
         y_hat = ds.y_hat[hour_mask]
@@ -160,6 +223,7 @@ def calculate_metrics_per_hour(ds: TrainingDataset, run=None, plot: bool = False
         id_to_metrics.append(curr_metrics)
 
     plot_bar_chart(id_to_metrics, "rmse", run, log_y=False, name="hour")
+    plot_box_plot(id_to_ind_metrics, "rse", run, log_y=False, name="hour")
 
 
 if __name__ == '__main__':

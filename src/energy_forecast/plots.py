@@ -307,8 +307,36 @@ def create_box_plot_predictions_by_size(id_to_metrics: list, metric_to_plot: str
     else:
         fig.show()
 
+
+def plot_box_plot_hours(rse_list: list, hour_col: list, b_id: str, run: Optional[wandb.sdk.wandb_run.Run],
+                                log_y: bool = False):
+    df = pd.DataFrame({"rse": rse_list, "hour": hour_col})
+
+    fig = px.box(df, x="hour", y="rse", log_y=log_y, title=f"Boxplot of RSE for {b_id} per Hour")
+    fig.update_traces(
+        hovertemplate="<br>".join([
+            "hour: %{x}",
+            "rse: %{y}"
+        ])
+    )
+    fig.update_layout(
+        yaxis=dict(
+            title=dict(
+                text=f"RSE (kwh) {'(log)' if log_y else ''}"
+            )
+        )
+    )
+    if run:
+        if sys.platform == "win32":
+            wandb.log({"boxplot_hours": wandb.Html(plotly.io.to_html(fig))})
+        else:
+            run.log({f"boxplot_hours": fig})
+    else:
+        fig.show()
+
+
 def plot_bar_chart(id_to_metrics: list, metric_to_plot: str, run: Optional[wandb.sdk.wandb_run.Run],
-                                log_y: bool = False, name: str = ""):
+                   log_y: bool = False, name: str = ""):
     logger.info(f"Plotting Bar Chart for {name}")
     df = pd.DataFrame(id_to_metrics)
     df.rename(columns={"id": name}, inplace=True)
@@ -338,6 +366,39 @@ def plot_bar_chart(id_to_metrics: list, metric_to_plot: str, run: Optional[wandb
     else:
         fig.show()
         # fig.write_html(f"{model_folder}/boxplot_{metric_to_plot}.html")
+
+def plot_box_plot(id_to_ind_metrics: list, metric_to_plot: str, run: Optional[wandb.sdk.wandb_run.Run],
+                  log_y: bool = False, name: str = ""):
+    logger.info(f"Plotting Box Plot for {name}")
+    df = pd.DataFrame(id_to_ind_metrics).explode(metric_to_plot)
+    df[metric_to_plot] = df[metric_to_plot].astype(float)
+    df = df.sort_values("avg_diff")
+
+    df.rename(columns={"id": name}, inplace=True)
+
+    fig = px.box(df, x=name, y=metric_to_plot, log_y=log_y, custom_data=["avg_diff"],
+                 title=f"Boxplot of Prediction {metric_to_plot}")
+    fig.update_traces(
+        hovertemplate="<br>".join([
+            "id: %{x}",
+            metric_to_plot + ": %{y}",
+            "avg_diff: %{customdata[0]}"
+        ])
+    )
+    fig.update_layout(
+        yaxis=dict(
+            title=dict(
+                text=f"{metric_to_plot} (kwh) {'(log)' if log_y else ''}"
+            )
+        )
+    )
+    if run:
+        if sys.platform == "win32":
+            wandb.log({f"box_plot_{name}_{metric_to_plot}": wandb.Html(plotly.io.to_html(fig))})
+        else:
+            run.log({f"box_plot_{name}_{metric_to_plot}": fig})
+    else:
+        fig.show()
 
 def plot_multiple_model_metrics(metrics: list[dict]):
     """
@@ -431,6 +492,41 @@ def plot_multiple_model_metrics(metrics: list[dict]):
 
     return fig
 
+
+def plot_filtered_data_points(df, column, filtered_df):
+    """Plot scatter plot comparing data points between two DataFrames.
+
+    Args:
+        df: Main DataFrame
+        column: Column name to plot
+        filtered_df: Filtered DataFrame to compare against
+    """
+    fig, ax = plt.subplots(figsize=(10, 6))
+
+    # Get points present in both DataFrames
+    common_points = df.filter(pl.col("datetime").is_in(filtered_df["datetime"]))
+
+    # Get points only in df
+    unique_points = df.filter(~pl.col("datetime").is_in(filtered_df["datetime"]))
+
+    # Plot points
+    ax.scatter(common_points["datetime"], common_points[column],
+               color='blue', label='Data Points')
+    ax.scatter(unique_points["datetime"], unique_points[column],
+               color='red', label='Outlier')
+
+    plt.xlabel('DateTime')
+    plt.ylabel(column)
+    sensor_id = df.get_column("id").unique()[0]
+    plt.title(f'Outlier IQR Method - {sensor_id}')
+    plt.legend()
+    plt.xticks(rotation=45)
+    plt.tight_layout()
+    plot_dir = REPORTS_DIR / "figures" / f"outlier" / "daily"
+    os.makedirs(plot_dir, exist_ok=True)
+    plot_save_path = plot_dir / f"{sensor_id}.png"
+    save_plot(plot_save_path)
+    logger.info(f"Plotted outlier for ID {sensor_id}")
 
 
 if __name__ == "__main__":

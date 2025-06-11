@@ -9,7 +9,7 @@ from wandb.apis.importers.internals.internal import ROOT_DIR
 
 from src.energy_forecast.config import MODELS_DIR, PROJ_ROOT, FEATURE_SETS
 from src.energy_forecast.model.evaluate import calculate_metrics_per_month, calculate_metrics_per_id, \
-    calculate_metrics_per_hour
+    calculate_metrics_per_hour, calculate_metrics_per_id_and_hour
 from src.energy_forecast.model.train import prepare_dataset, get_model
 from src.energy_forecast.plots import plot_multiple_model_metrics
 
@@ -69,10 +69,10 @@ def main(run_id: str):
     # evaluate and plot predictions
     m.evaluate(ds, run, log=False, plot=False)
     # extended evaluation
-    calculate_metrics_per_id(ds, run, dict(wandb.config), m.name, True)
+    # calculate_metrics_per_id(ds, run, dict(wandb.config), m.name, True)
     # calculate_metrics_per_month(ds, run, True)
-    calculate_metrics_per_hour(ds, run, True)
-
+    calculate_metrics_per_hour(ds, None, True)
+    # calculate_metrics_per_id_and_hour(ds, run, dict(wandb.config), m.name, True)
     run.finish()
 
 def main_multiple(run_ids: list[str], metric_name: str):
@@ -125,7 +125,7 @@ if __name__ == '__main__':
     }
     model_path = MODELS_DIR / "heat" / "fixed"
     # main_local(model_path, training_config)
-    # main(run_id)
+    main(run_id)
 
     wandb_run_ids = ["bdq9efyy", "l2zri11o", "h2bik7m7"]
-    main_multiple(wandb_run_ids, "mae")
+    # main_multiple(wandb_run_ids, "mae")

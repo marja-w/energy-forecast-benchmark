@@ -29,7 +29,7 @@ def train_test_split_group_based(ds: TrainingDataset, train_per: float) -> tuple
     return train_data, val_data, test_data
 
 
-def train_test_split_time_based(ds: TrainingDataset, train_per: float) -> tuple[
+def train_test_split_time_based(ds: TrainingDataset, train_per: float, remove_per: float=0.0) -> tuple[
     pl.DataFrame, pl.DataFrame, pl.DataFrame]:
     df = ds.df
     df = df.sort([pl.col("id"), pl.col("datetime")])
@@ -48,7 +48,12 @@ def train_test_split_time_based(ds: TrainingDataset, train_per: float) -> tuple[
         split_idx = int(len(b_df) * train_per)
         split_idx_two = int(len(b_df) * (((1 - train_per) / 2) + train_per))
 
-        train_b_df = b_df.filter(pl.col("b_idx") <= split_idx).drop(["b_idx"])
+        train_b_df = b_df.filter(pl.col("b_idx") <= split_idx)
+        if remove_per != 0:
+            # remove remove_per values of training data from beginning of series
+            train_b_df = train_b_df.tail(int(len(train_b_df) * (1-remove_per)))
+        train_b_df = train_b_df.drop(["b_idx"])
+
         try:
             lag_in, lag_out = ds.config["lag_in"], ds.config["lag_out"]
         except KeyError:
@@ -86,8 +91,9 @@ def train_test_split_time_based(ds: TrainingDataset, train_per: float) -> tuple[
     ds.test_idxs = sorted(ds.test_idxs)
     ds.val_idxs = sorted(ds.val_idxs)
 
-    assert len(set(ds.df.filter(~(pl.col("id").is_in(ds.discarded_ids)))["index"].to_list()).symmetric_difference(
-        set((ds.train_idxs + ds.test_idxs + ds.val_idxs)))) == 0  # check that all indexes that are used are present
+    if remove_per == 0:  # only assert when no removals took place
+        assert len(set(ds.df.filter(~(pl.col("id").is_in(ds.discarded_ids)))["index"].to_list()).symmetric_difference(
+            set((ds.train_idxs + ds.test_idxs + ds.val_idxs)))) == 0  # check that all indexes that are used are present
 
     # Concatenate results
     train_df = pl.concat(train_dfs).drop("index")
@@ -98,7 +104,7 @@ def train_test_split_time_based(ds: TrainingDataset, train_per: float) -> tuple[
     return train_df, val_df, test_df
 
 
-def train_test_split_date_based(ds: TrainingDataset, split_date: datetime.date) -> tuple[
+def train_test_split_date_based(ds: TrainingDataset, split_date: datetime.date, remove_per: float = 0.0) -> tuple[
     pl.DataFrame, pl.DataFrame, pl.DataFrame]:
     """
     Splits a given training dataset into training, validation,
@@ -109,6 +115,7 @@ def train_test_split_date_based(ds: TrainingDataset, split_date: datetime.date) 
     The function also sets the indexes of belonging to each split in the TrainingDataset and
     discards series if they are too short.
 
+    :param remove_per: Percentage of train series that is discarded.
     :param ds: The dataset that needs to be split.
     :param split_date: A date indicating the point at which the data is split.
     :return: A tuple containing the training, validation, and testing
@@ -136,7 +143,11 @@ def train_test_split_date_based(ds: TrainingDataset, split_date: datetime.date) 
 
         min_len = ds.config["n_in"] + ds.config["n_out"]  # length needed for constructing one pair
         if len(train_val_b_df) != 0:  # might be zero if everything after date
-            train_b_df = train_val_b_df.filter(pl.col("b_idx") <= split_idx).drop(["b_idx"])
+            train_b_df = train_val_b_df.filter(pl.col("b_idx") <= split_idx)
+            if remove_per != 0:
+                train_b_df = train_b_df.filter(pl.col("b_idx") < int(len(train_b_df) * remove_per)).drop(["b_idx"])
+            else:
+                train_b_df = train_b_df.drop(["b_idx"])
             if split_idx_two is not None:
                 val_b_df = train_val_b_df.filter((pl.col("b_idx") > split_idx).and_(pl.col("b_idx") < split_idx_two)).drop(["b_idx"])
             else:
@@ -199,9 +210,9 @@ def get_train_test_val_split(ds: TrainingDataset) -> TrainingDataset:
         case "group":
             train_data, val_data, test_data = train_test_split_group_based(ds, train_per)
         case "time":
-            train_data, val_data, test_data = train_test_split_time_based(ds, train_per)
+            train_data, val_data, test_data = train_test_split_time_based(ds, train_per, remove_per=config["remove_per"])
         case "date":
-            train_data, val_data, test_data = train_test_split_date_based(ds, datetime.date(2024, 1, 30))
+            train_data, val_data, test_data = train_test_split_date_based(ds, datetime.date(2024, 1, 30), remove_per=config["remove_per"])
 
     # transform to pandas DataFrame input
     target_vars = ["diff"]

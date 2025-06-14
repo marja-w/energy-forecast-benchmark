@@ -4,10 +4,11 @@ from datetime import timedelta
 import darts
 import polars as pl
 from darts.utils.missing_values import fill_missing_values, extract_subseries
+from loguru import logger
 from matplotlib import pyplot as plt
 
 from src.energy_forecast.config import FIGURES_DIR, MIN_GAP_SIZE_DAILY
-from src.energy_forecast.plots import plot_dataframe
+from src.energy_forecast.plots import plot_dataframe, plot_filtered_data_points
 from src.energy_forecast.utils.util import get_missing_dates, find_time_spans
 
 
@@ -47,6 +48,8 @@ def filter_outliers_iqr(df, column):
 
     filtered_df = df.filter(pl.col(column) <= upper_bound)
     filtered_count = len(df) - len(filtered_df)
+
+    # plot_filtered_data_points(df, column, filtered_df)
 
     # logger.info(f"Filtered {filtered_count} rows for column {column} for ID {df['id'][0]}")
 

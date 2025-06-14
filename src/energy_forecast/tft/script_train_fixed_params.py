@@ -32,21 +32,35 @@ import argparse
 import datetime
 import datetime as dte
 import os
-from statistics import mean
+
+import numpy as np
+import pandas as pd
+import tensorflow.compat.v1 as tf
+
+from tensorflow.python.keras.backend import get_session
+from permetrics.regression import RegressionMetric
+
+try:
+    from src.energy_forecast.tft.data_formatters import base
+    from src.energy_forecast.utils.metrics import root_mean_squared_error
+except ModuleNotFoundError:
+    import sys
+    import os
+    import inspect
+
+    curr_frame = inspect.currentframe()
+    if curr_frame:
+        curr_dir = os.path.dirname(os.path.abspath(inspect.getfile(curr_frame)))
+        par_dir = os.path.dirname(os.path.dirname(os.path.dirname(curr_dir)))
+        sys.path.insert(0, par_dir)
+
+    from src.energy_forecast.tft.data_formatters import base
+    from src.energy_forecast.utils.metrics import root_mean_squared_error
 
 import expt_settings.configs
 import libs.hyperparam_opt
 import libs.tft_model
 import libs.utils as utils
-import numpy as np
-import pandas as pd
-import tensorflow.compat.v1 as tf
-
-from src.energy_forecast.tft.data_formatters import base
-from tensorflow.python.keras.backend import get_session
-from permetrics.regression import RegressionMetric
-
-from src.energy_forecast.utils.metrics import root_mean_squared_error
 
 ExperimentConfig = expt_settings.configs.ExperimentConfig
 HyperparamOptManager = libs.hyperparam_opt.HyperparamOptManager

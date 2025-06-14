@@ -1,14 +1,14 @@
+import argparse
 import itertools
+import json
 
 import jsonlines
-import pandas as pd
 import polars as pl
 import wandb
 from loguru import logger
 from tensorflow import keras
 from tensorflow.keras import layers
 from tqdm import tqdm
-import os
 
 try:
     from src.energy_forecast.plots import plot_means, plot_std
@@ -16,8 +16,7 @@ try:
     from src.energy_forecast.dataset import Dataset, TrainingDataset, TrainDataset90, TrainDatasetBuilding
     from src.energy_forecast.model.models import Model, FCNModel, DTModel, LinearRegressorModel, RegressionModel, \
     NNModel, \
-    RNN1Model, FCN2Model, FCN3Model, Baseline, RNN3Model, TransformerModel, LSTMModel, xLSTMModel, xLSTMTSFModel, \
-    TransformerTorchModel
+    RNN1Model, FCN2Model, FCN3Model, Baseline, RNN3Model, TransformerModel, LSTMModel, xLSTMModel
     from src.energy_forecast.utils.train_test_val_split import get_train_test_val_split
     from src.energy_forecast.utils.util import store_df_wandb
 except ModuleNotFoundError:
@@ -30,12 +29,13 @@ except ModuleNotFoundError:
         curr_dir = os.path.dirname(os.path.abspath(inspect.getfile(curr_frame)))
         par_dir = os.path.dirname(os.path.dirname(os.path.dirname(curr_dir)))
         sys.path.insert(0, par_dir)
+        logger.info(par_dir)
 
         from src.energy_forecast.plots import plot_means, plot_std, plot_train_val_test_split
         from src.energy_forecast.config import REFERENCES_DIR, FEATURE_SETS, PROCESSED_DATA_DIR, REPORTS_DIR, N_CLUSTER
         from src.energy_forecast.dataset import Dataset, TrainingDataset, TrainDataset90, TrainDatasetBuilding
         from src.energy_forecast.model.models import Model, FCNModel, DTModel, LinearRegressorModel, RegressionModel, \
-            NNModel, RNN1Model, FCN2Model, FCN3Model, Baseline, RNN3Model, LSTMModel, TransformerModel
+            NNModel, RNN1Model, FCN2Model, FCN3Model, Baseline, RNN3Model, LSTMModel, TransformerModel, xLSTMModel
         from src.energy_forecast.utils.train_test_val_split import get_train_test_val_split
         from src.energy_forecast.utils.util import store_df_wandb
     else:
@@ -61,10 +61,6 @@ def get_model(config: dict) -> Model:
         return LSTMModel(config)
     elif config["model"] == "xlstm":
         return xLSTMModel(config)
-    elif config["model"] == "xlstm_tsf":
-        return xLSTMTSFModel(config)
-    elif config["model"] == "transformer_torch":
-        return TransformerTorchModel(config)
     else:
         raise Exception(f"Unknown model {config['model']}")
 
@@ -150,75 +146,97 @@ def train(run_config: dict):
 
 
 if __name__ == '__main__':
-    configs_path = REFERENCES_DIR / "configs.jsonl"
-    models = ["Transformer"]
-    scalers = ["standard"]
-    feature_codes = [12, 14, 13]
-    neurons_list = [100]
-    n_ins = [6, 12, 24, 48, 72]
-    n_outs = [1, 7]
-    n_futures = [0, 1, 7]
-    epochs_list = [40]
-    config = {"project": "ma-wahl-forecast",
-              "log": True,  # whether to log to wandb
-              "plot": False, # whether to plot predictions
-              "energy": "all",
-              "res": "hourly",
-              "interpolate": 1,
-              "dataset": "building",  # building, meta, missing_data_90
-              "model": "xlstm",
-              "lag_in": 72,
-              "lag_out": 72,
-              "n_in": 72,
-              "n_out": 24,
-              "n_future": 0,
-              "scaler": "standard",
-              "scale_mode": "individual",  # all, individual
-              "feature_code": 15,
-              "train_test_split_method": "time",
-              "epochs": 10,
-              "optimizer": "adam",
-              "loss": "mean_squared_error",
-              "metrics": ["mae"],
-              "batch_size": 64,
-              "dropout": 0.1,
-              "neurons": 100,
-              "lr_scheduler": "none",  # none, step_decay
-              "weight_initializer": "glorot",
-              "activation": "relu",  # ReLU, Linear
-              "transformer_blocks": 2,
-              "num_heads": 4}
-    # config = None
-    all_models = False
-    if config is None:
-        # Read in configs from .jsonl file
-        configs = list()
-        with jsonlines.open(configs_path) as reader:
-            for config_dict in reader.iter():
-                configs.append(config_dict)
+    # Create an ArgumentParser object
+    parser = argparse.ArgumentParser(description='Process a config file specified via command line.')
 
-        for config_dict in tqdm(configs):  # start one training for each config
-            wandb_run = train(config_dict)
-            wandb_run.finish()  # finish run to start new run with next config
-    elif all_models:
-        for model, feature_code, n_in, n_out, n_f, epochs, neurons, scaler in itertools.product(models, feature_codes, n_ins, n_outs, n_futures, epochs_list, neurons_list, scalers):
-            if n_f != n_out: continue
-            if feature_code == 12 and n_f > 0: continue  # only feature is diff
-            logger.info(f"Training combination: feature code {feature_code}, n_in {n_in}, n_out {n_out}, n_future {n_f}, epochs {epochs}, neurons {neurons}, scaler {scaler}")
-            config["model"] = model
-            config["feature_code"] = feature_code
-            config["n_in"] = n_in
-            config["n_out"] = n_out
-            config["n_future"] = n_f
-            config["epochs"] = epochs
-            config["neurons"] = neurons
-            config["scaler"] = scaler
-            try:
-                del config["features"]  # delete feature names if set in previous run
-            except KeyError:
-                pass
-            wandb_run = train(config)
-            wandb_run.finish()
-    else:
+    # Add the batch_file argument
+    parser.add_argument('--config_file', type=str, required=False,
+                        help='Path to the batch file to be processed')
+
+    # Parse the command line arguments
+    args = parser.parse_args()
+
+    # Access the batch_file parameter
+    config_file_name = args.config_file
+
+    if config_file_name is not None:
+        logger.info(f"The specified batch file is: {config_file_name}")
+        configs_path = REFERENCES_DIR / f"{config_file_name}.json"
+        with open(configs_path, "r") as f:
+            config = json.load(f)
         wandb_run = train(config)
-        if wandb_run: wandb_run.finish()
+        wandb_run.finish()
+    else:
+        configs_path = REFERENCES_DIR / "configs.jsonl"
+        models = ["Transformer"]
+        scalers = ["standard"]
+        feature_codes = [12, 14, 13]
+        neurons_list = [100]
+        n_ins = [6, 12, 24, 48, 72]
+        n_outs = [1, 7]
+        n_futures = [0, 1, 7]
+        epochs_list = [40]
+        config = {"project": "ma-wahl-forecast",
+                  "log": False,  # whether to log to wandb
+                  "plot": False, # whether to plot predictions
+                  "energy": "all",
+                  "res": "hourly",
+                  "interpolate": 1,
+                  "dataset": "building",  # building, meta, missing_data_90
+                  "model": "FCN3",
+                  "lag_in": 72,
+                  "lag_out": 72,
+                  "n_in": 72,
+                  "n_out": 24,
+                  "n_future": 24,
+                  "scaler": "standard",
+                  "scale_mode": "individual",  # all, individual
+                  "feature_code": 15,
+                  "train_test_split_method": "time",
+                  "epochs": 1,
+                  "optimizer": "adam",
+                  "loss": "mean_squared_error",
+                  "metrics": ["mae"],
+                  "batch_size": 64,
+                  "dropout": 0.1,
+                  "neurons": 100,
+                  "lr_scheduler": "none",  # none, step_decay
+                  "weight_initializer": "glorot",
+                  "activation": "relu",  # ReLU, Linear
+                  "transformer_blocks": 2,
+                  "num_heads": 4,
+                  "remove_per": 0.2}
+        # config = None
+        all_models = False
+        if config is None:
+            # Read in configs from .jsonl file
+            configs = list()
+            with jsonlines.open(configs_path) as reader:
+                for config_dict in reader.iter():
+                    configs.append(config_dict)
+
+            for config_dict in tqdm(configs):  # start one training for each config
+                wandb_run = train(config_dict)
+                wandb_run.finish()  # finish run to start new run with next config
+        elif all_models:
+            for model, feature_code, n_in, n_out, n_f, epochs, neurons, scaler in itertools.product(models, feature_codes, n_ins, n_outs, n_futures, epochs_list, neurons_list, scalers):
+                if n_f != n_out: continue
+                if feature_code == 12 and n_f > 0: continue  # only feature is diff
+                logger.info(f"Training combination: feature code {feature_code}, n_in {n_in}, n_out {n_out}, n_future {n_f}, epochs {epochs}, neurons {neurons}, scaler {scaler}")
+                config["model"] = model
+                config["feature_code"] = feature_code
+                config["n_in"] = n_in
+                config["n_out"] = n_out
+                config["n_future"] = n_f
+                config["epochs"] = epochs
+                config["neurons"] = neurons
+                config["scaler"] = scaler
+                try:
+                    del config["features"]  # delete feature names if set in previous run
+                except KeyError:
+                    pass
+                wandb_run = train(config)
+                wandb_run.finish()
+        else:
+            wandb_run = train(config)
+            if wandb_run: wandb_run.finish()

@@ -8,12 +8,22 @@ dotenv
 overrides
 jsonlines
 
+# logging experiments
 wandb
+
+# data handling
 polars
 pandas
+darts
+
+# machine learning
 tensorflow
 keras
+scikit-learn
 
+# plotting
 matplotlib
 plotly
 seaborn
+
+Ninja  # for running xlstm on GPU

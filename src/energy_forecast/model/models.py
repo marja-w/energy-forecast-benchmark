@@ -34,7 +34,6 @@ from wandb.sdk.wandb_run import Run
 
 from src.energy_forecast.config import MODELS_DIR, CONTINUOUS_FEATURES, REPORTS_DIR, MASKING_VALUE
 from src.energy_forecast.dataset import TrainingDataset
-from src.energy_forecast.model.transformer_torch import TransformerConfig, Transformer
 from src.energy_forecast.plots import plot_predictions, create_box_plot_predictions, create_box_plot_predictions_by_size
 from src.energy_forecast.utils.metrics import mean_absolute_percentage_error, root_mean_squared_error, \
     root_squared_error, get_metrics
@@ -55,7 +54,6 @@ from src.energy_forecast.xlstm.xlstm import (
     sLSTMLayerConfig,
     FeedForwardConfig,
 )
-from src.energy_forecast.xlstm_tsf.xLSTM import xLSTM
 
 
 # learning rate schedule
@@ -80,6 +78,7 @@ class Model:
 
     def init_wandb(self, X_train: DataFrame, X_val: Optional[DataFrame] = None) -> Tuple[Dict[str, Any], Run]:
         """Initialize wandb run and logging"""
+        # wandb.login(key="9e2182838c99ac5fd84c4ecb1c9e5aad4d7220b9")
         config = self.config
         config["train_data_length"] = len(X_train)
         if X_val is not None:
@@ -171,7 +170,7 @@ class Model:
             if run:
                 if run.summary.get("test_rmse_ind", None) is None:
                     run.log(data={"test_rmse_ind": test_rmse, "test_nrmse_ind": test_nrmse, "test_mse_ind": test_mse,
-                              "test_mae_ind": test_mae})
+                                  "test_mae_ind": test_mae})
             if log:
                 logger.info(f"MSE Loss on test data per index: {test_mse}")
                 logger.info(f"MAE Loss on test data per index: {test_mae}")
@@ -186,11 +185,11 @@ class Model:
         if run:
             if run.summary.get("test_mse", None) is None:
                 run.log(data={"test_data_length": len_y_test,
-                          "test_mse": test_mse,
-                          "test_mae": test_mae,
-                          "test_rmse": test_rmse,
-                          "test_nrmse": test_nrmse
-                          })
+                              "test_mse": test_mse,
+                              "test_mae": test_mae,
+                              "test_rmse": test_rmse,
+                              "test_nrmse": test_nrmse
+                              })
         if log:
             logger.info(f"MSE Loss on test data: {test_mse}")
             logger.info(f"MAE Loss on test data: {test_mae}")
@@ -972,6 +971,7 @@ class xLSTMModel(RNNModel):
         self.name = "xLSTM"
         self.model = None
         self.device = torch.device("cuda:0" if torch.cuda.is_available() else "cpu")
+        logger.info(f"Using device: {self.device}")
         self.optimizer = None
         self.criterion = None
         self.scaler_X = None
@@ -1000,7 +1000,7 @@ class xLSTMModel(RNNModel):
             ),
             slstm_block=sLSTMBlockConfig(
                 slstm=sLSTMLayerConfig(
-                    backend="vanilla",
+                    backend="cuda",
                     num_heads=1,  # TODO: fails for > 1
                     conv1d_kernel_size=4,
                     bias_init="powerlaw_blockdependent",
@@ -1139,7 +1139,7 @@ class xLSTMModel(RNNModel):
         self.model.eval()
         with torch.no_grad():
             predictions = self.model(X_tensor)
-        return predictions.detach().numpy()  # [:, :, self.get_target_feature_index()]
+        return predictions.cpu().detach().numpy()  # [:, :, self.get_target_feature_index()]
 
     def save(self):
         """Save model to disk and to wandb"""
@@ -1183,136 +1183,3 @@ class xLSTMModel(RNNModel):
         # self.optimizer.load_state_dict(checkpoint['optimizer_state_dict'])
 
         logger.info(f"Successfully loaded {self.name} model from {file_path}")
-
-
-class xLSTMTSFModel(xLSTMModel):
-    def __init__(self, config):
-        super().__init__(config)
-        self.name = "xlstm_tsf"
-
-    def set_model(self, input_shape):
-        """Set model architecture"""
-        self.model = xLSTM(input_size=input_shape[2], head_size=32, num_heads=4, batch_first=True, layers='msmsl')
-
-    def train(self, X_train, y_train, X_val, y_val, log=False):
-        """Train the model"""
-        # Initialize wandb if logging is enabled
-        if log:
-            config, run = self.init_wandb(X_train, X_val)
-        else:
-            run = None
-            config = self.config
-
-        # Convert data to PyTorch tensors
-        X_train_tensor = torch.tensor(X_train, dtype=torch.float32).to(self.device)
-        y_train_tensor = torch.tensor(y_train.to_numpy(), dtype=torch.float32).to(self.device)
-        X_val_tensor = torch.tensor(X_val, dtype=torch.float32).to(self.device)
-        y_val_tensor = torch.tensor(y_val.to_numpy(), dtype=torch.float32).to(self.device)
-
-        # Create DataLoader
-        batch_size = self.config["batch_size"]
-        train_dataset = torch.utils.data.TensorDataset(X_train_tensor, y_train_tensor)
-        train_loader = torch.utils.data.DataLoader(
-            train_dataset, batch_size=batch_size, shuffle=True
-        )
-
-        val_dataset = torch.utils.data.TensorDataset(X_val_tensor, y_val_tensor)
-        val_loader = torch.utils.data.DataLoader(
-            val_dataset, batch_size=batch_size, shuffle=False
-        )
-
-        # Set optimizer and loss function
-        if self.config["optimizer"] == "adam":
-            self.optimizer = optim.Adam(
-                self.model.parameters(),
-                lr=self.config.get("learning_rate", 0.001),
-                weight_decay=self.config.get("weight_decay", 0)
-            )
-        else:
-            self.optimizer = optim.SGD(
-                self.model.parameters(),
-                lr=self.config.get("learning_rate", 0.01)
-            )
-
-        if self.config["loss"] == "mean_squared_error":
-            self.criterion = nn.MSELoss()
-        elif self.config["loss"] == "mean_absolute_error":
-            self.criterion = nn.L1Loss()
-        else:
-            self.criterion = nn.MSELoss()  # Default to MSE
-
-        target_feature_idx = self.get_target_feature_index()
-        # Training loop
-        epochs = self.config["epochs"]
-        for epoch in tqdm(range(epochs), desc="Training epochs"):
-            # Training phase
-            self.model.train()
-            train_loss = 0.0
-            train_mae = 0.0
-
-            for inputs, targets in tqdm(train_loader, desc="Training batches", position=0, leave=True):
-                self.optimizer.zero_grad()
-                outputs, _ = self.model(inputs)  # returns tuple (outputs, weights)
-                # print(outputs)
-                # print(outputs.shape)
-                outputs = outputs[:, :, target_feature_idx]  # remove last dimension
-                loss = self.criterion(outputs, targets)  # only use diff for loss computation
-                loss.backward()
-                self.optimizer.step()
-
-                train_loss += loss.item() * inputs.size(0)
-                mae = torch.nn.functional.l1_loss(outputs, targets)
-                train_mae += mae.item() * inputs.size(0)
-
-            train_loss = train_loss / len(train_loader.dataset)
-            train_mae = train_mae / len(train_loader.dataset)
-
-            # Validation phase
-            self.model.eval()
-            val_loss = 0.0
-            val_mae = 0.0
-
-            with torch.no_grad():
-                for inputs, targets in val_loader:
-                    outputs, _ = self.model(inputs)
-                    outputs = outputs[:, :, target_feature_idx]
-                    loss = self.criterion(outputs, targets)
-
-                    val_loss += loss.item() * inputs.size(0)
-                    mae = torch.nn.functional.l1_loss(outputs, targets)
-                    val_mae += mae.item() * inputs.size(0)
-
-            val_loss = val_loss / len(val_loader.dataset)
-            val_mae = val_mae / len(val_loader.dataset)
-
-            # Log metrics
-            if log:
-                run.log({
-                    "epoch": epoch + 1,
-                    "train_loss": train_loss,
-                    "train_mae": train_mae,
-                    "val_loss": val_loss,
-                    "val_mae": val_mae
-                })
-
-            logger.info(f"Epoch {epoch + 1}/{epochs} - "
-                        f"Train Loss: {train_loss:.4f}, Train MAE: {train_mae:.4f}, "
-                        f"Val Loss: {val_loss:.4f}, Val MAE: {val_mae:.4f}")
-
-        logger.success("Model training complete.")
-        return run
-
-
-class TransformerTorchModel(xLSTMModel):
-    def __init__(self, config):
-        super().__init__(config)
-        self.name = "transformer_torch"
-
-    def set_model(self, input_shape):
-        transformer_config = TransformerConfig(dim=64,
-                                               n_layers=1,
-                                               n_heads=1,
-                                               fc_scale=2,
-                                               vocab_size=7,
-                                               context_length=256)
-        self.model = Transformer(transformer_config)

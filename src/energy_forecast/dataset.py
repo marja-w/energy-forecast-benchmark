@@ -16,7 +16,7 @@ from src.energy_forecast.config import DATA_DIR, PROCESSED_DATA_DIR, CATEGORICAL
     FEATURES_DIR, META_DIR, INTERIM_DATA_DIR, N_CLUSTER, REPORTS_DIR, CONTINUOUS_FEATURES_CYCLIC, CONTINUOUS_FEATURES, \
     RAW_DATA_DIR, FEATURE_SET_8, FEATURE_SET_10, N_LAG, FEATURE_SETS, FEATURES_HOURLY, FEATURES_DAILY, \
     THRESHOLD_FLAT_LINES_DAILY, THRESHOLD_FLAT_LINES_HOURLY, MIN_GAP_SIZE_DAILY, MIN_GAP_SIZE_HOURLY, FEATURE_SET_15
-from src.energy_forecast.data_processing.data_loader import DHDataLoader, KinergyDataLoader
+from src.energy_forecast.data_processing.data_loader import DHDataLoader, KinergyDataLoader, LegacyDataLoader
 from src.energy_forecast.plots import plot_missing_dates_per_building, plot_clusters
 from src.energy_forecast.utils.cluster import hierarchical_clustering_on_meta_data
 from src.energy_forecast.utils.data_processing import remove_neg_diff_vals, filter_connection_errors_by_id, \
@@ -682,12 +682,16 @@ if __name__ == '__main__':
 
     logger.info("Finish data loading")
 
-    # ds = InterpolatedDataset(res="hourly")
+    # ds = InterpolatedDataset(res="daily")
     # ds.create_and_clean(plot=True)
     # ds.create_clean_and_add_feat()
     # #
+    ds = Dataset(res="daily")
+    ds.create_and_clean(plot=False)
+    # ds.create_clean_and_add_feat()
+
     # ds = Dataset(res="hourly")
-    # ds.create_and_clean(plot=True)
+    # ds.create_and_clean(plot=False)
     # ds.create_clean_and_add_feat()
 
     # ds.load_feat_data()

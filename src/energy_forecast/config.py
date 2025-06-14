@@ -44,7 +44,7 @@ MIN_GAP_SIZE_HOURLY = 24
 
 CATEGORICAL_FEATURES = ["typ", "primary_energy"]  # one-hot encoded
 CATEGORICAL_FEATURES_BINARY = ["weekend", "holiday"]
-CONTINUOUS_FEATURES_DAILY = ['hum_avg', 'hum_min', 'hum_max', 'tavg', 'tmin', 'tmax', 'pres', 'tsun']
+CONTINUOUS_FEATURES_DAILY = ['hum_avg', 'hum_min', 'hum_max', 'tavg', 'tmin', 'tmax']
 CONTINUOUS_FEATURES = ['prcp', 'snow', 'wdir', 'wspd', 'wpgt', 'pres', 'tsun', "daily_avg", "heated_area",
                        "heated_area_lod", "anzahlwhg", "ground_surface", "building_height", "storeys_above_ground"]
 CONTINUOUS_FEATURES_HOURLY = ["temp", "dwpt", "rhum", "coco"]

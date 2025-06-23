@@ -404,8 +404,9 @@ class TrainingDataset(Dataset):
         fs = list(set(self.config["features"]) & set(CONTINUOUS_FEATURES_CYCLIC))
         if len(fs) > 0:
             for f in fs:
-                self.df = self.df.with_columns(((2 * math.pi * pl.col(f)) / 24).sin().alias(f"{f}_sin"),
-                                               ((2 * math.pi * pl.col(f)) / 24).cos().alias(f"{f}_cos"))
+                max_value = self.df[f].max()
+                self.df = self.df.with_columns(((2 * math.pi * pl.col(f)) / max_value).sin().alias(f"{f}_sin"),
+                                               ((2 * math.pi * pl.col(f)) / max_value).cos().alias(f"{f}_cos"))
                 self.df = self.df.drop(f)
             cyclic_encoded_features = (list(set(self.config["features"]) - set(fs)) + [f"{f}_sin" for f in fs] + [f"{f}_cos" for f in fs])
             try:

@@ -98,6 +98,7 @@ def main(expt_name,
     default_keras_session = get_session()
 
     if use_gpu:
+        print("*** Using GPU ***")
         tf_config = utils.get_default_tensorflow_config(tf_device="gpu", gpu_id=0)
 
     else:
@@ -202,7 +203,7 @@ def main(expt_name,
             losses = [root_mean_squared_error(extract_numerical_data(targets).to_numpy(),
                                               extract_numerical_data(predictions[0]).to_numpy())]
             evaluator = RegressionMetric(extract_numerical_data(targets).to_numpy(),
-                                              extract_numerical_data(predictions[0]).to_numpy())
+                                         extract_numerical_data(predictions[0]).to_numpy())
 
             test_mse = evaluator.mean_squared_error()
             test_mae = evaluator.mean_absolute_error()
@@ -272,6 +273,7 @@ if __name__ == "__main__":
 
         return args.expt_name, root_folder, args.use_gpu == "yes"
 
+
     name, output_folder, use_tensorflow_with_gpu = get_args()
 
     print("Using output folder {}".format(output_folder))
@@ -279,15 +281,15 @@ if __name__ == "__main__":
     config = ExperimentConfig(name, output_folder)
     extra_config = {
         "quantiles": [1.0],
-        "num_epochs": 10,
+        "num_epochs": 25,
         "early_stopping_patience": 100,
-        "n_in": 72,
-        "n_out": 24
+        "n_in": 7,
+        "n_out": 7
     }
     formatter = config.make_data_formatter()
 
     model_folder = os.path.join(config.model_folder,
-                                  f"fixed_{extra_config['n_in']}_{extra_config['n_out']}_{datetime.datetime.now().strftime('%Y%m%d_%H%M%S')}")
+                                f"fixed_{extra_config['n_in']}_{extra_config['n_out']}_{datetime.datetime.now().strftime('%Y%m%d_%H%M%S')}")
 
     # Customise inputs to main() for new datasets.
     main(

@@ -1,3 +1,4 @@
+import ast
 import sys
 from datetime import timedelta, datetime
 from pathlib import Path
@@ -529,8 +530,129 @@ def plot_filtered_data_points(df, column, filtered_df):
     logger.info(f"Plotted outlier for ID {sensor_id}")
 
 
+def plot_reduced_data_eval():
+    df = pd.read_csv(REPORTS_DIR / "reduced_data_eval_1_day_forecast.csv")
+
+    # Create the line plot
+    plt.figure(figsize=(10, 6))
+    sns.lineplot(data=df, x='remove_per', y='test_rmse', hue='model', marker='o')
+
+    # Add labels and title
+    plt.xlabel('Percentage of Data Removed (%)')
+    plt.ylabel('Test RMSE')
+    plt.title('Model Performance vs. Data Removal')
+    plt.grid(True, linestyle='--', alpha=0.7)
+    plt.legend(title='Models')
+
+    # Show the plot
+    plt.tight_layout()
+    # plt.show()
+
+    plt.savefig(REPORTS_DIR / "figures" / "reduced_data_eval_1_day_forecast.png")
+
+
+def plot_metrics_per_step():
+    save_path = FIGURES_DIR / "metrics_per_step_box_plot.png"
+    df = pd.read_csv(REPORTS_DIR / "best_models_7_day_forecast.csv")
+
+    plt.figure(figsize=(10, 6))
+
+    for _, row in df.iterrows():
+        name = row['name']
+        mae_values = ast.literal_eval(row['summary']).get('test_mae_ind', [])
+        avg_mae = np.mean(mae_values)
+
+        if not mae_values:
+            print(f"Warning: No 'test_mae_ind' data found for {name}")
+            continue
+        steps = np.arange(len(mae_values))
+        line, = plt.plot(steps, mae_values, label=f"{name} (avg: {avg_mae:.4f})",
+                         marker='o', markersize=3)
+
+        # Add annotation at the end of the line with the average value
+        last_x = steps[-1]
+        last_y = mae_values[-1]
+
+        # Slight offset for better visibility
+        plt.annotate(
+            f"avg: {avg_mae:.4f}",
+            xy=(last_x, last_y),
+            xytext=(last_x + 0.2, last_y),
+            fontsize=9,
+            color=line.get_color(),
+            bbox=dict(boxstyle="round,pad=0.3", fc="white", alpha=0.8, ec=line.get_color()),
+            arrowprops=dict(arrowstyle="->", color=line.get_color())
+        )
+
+    plt.xlabel('Step')
+    plt.ylabel('MAE')
+    plt.title("Per-Step Metric Evaluation of Best Models")
+    plt.grid(True, linestyle='--', alpha=0.7)
+    plt.legend()
+
+    if save_path:
+        plt.savefig(save_path, dpi=300, bbox_inches='tight')
+
+    plt.show()
+
+def plot_box_plot_per_step():
+    # save_path = None
+    save_path = FIGURES_DIR / "metrics_per_step.png"
+    df = pd.read_csv(REPORTS_DIR / "best_models_7_day_forecast.csv")
+    # Prepare data for boxplot
+    box_data = []
+    labels = []
+    avg_values = []
+
+    for _, row in df.iterrows():
+        name = row['name']
+        mae_values = ast.literal_eval(row['summary']).get('test_mae_ind', [])
+
+        if not mae_values:
+            print(f"Warning: No 'test_mae_ind' data found for {name}")
+            continue
+
+        box_data.append(mae_values)
+        labels.append(name)
+        avg_values.append(np.mean(mae_values))
+
+    # Create the boxplot
+    box_plot = plt.boxplot(box_data, patch_artist=True, labels=labels)
+
+    # Customize boxplot appearance
+    colors = plt.cm.viridis(np.linspace(0, 0.8, len(box_data)))
+
+    for i, (box, color) in enumerate(zip(box_plot['boxes'], colors)):
+        box.set(facecolor=color, alpha=0.7)
+
+        # Add average value annotation above each box
+        avg = avg_values[i]
+        plt.annotate(
+            f"avg: {avg:.4f}",
+            xy=(i + 1, box_plot['caps'][i * 2].get_ydata()[0]),  # Position above the upper cap
+            xytext=(0, 10),  # Offset text 10 points above
+            textcoords='offset points',
+            ha='center',
+            fontsize=9,
+            bbox=dict(boxstyle="round,pad=0.3", fc="white", alpha=0.8, ec='gray'),
+        )
+
+    plt.xlabel('Model')
+    plt.ylabel('MAE')
+    plt.title("Box Plot of Per-Step Metric Evaluation of Best Models")
+    plt.grid(True, axis='y', linestyle='--', alpha=0.7)
+
+    # Add some padding to y-axis to accommodate annotations
+    y_min, y_max = plt.ylim()
+    plt.ylim(y_min, y_max * 1.1)
+
+    if save_path:
+        plt.savefig(save_path, dpi=300, bbox_inches='tight')
+
+    plt.show()
+
 if __name__ == "__main__":
-    df_daily = pl.read_csv(PROCESSED_DATA_DIR / "dataset_daily.csv").with_columns(pl.col("datetime").str.to_datetime())
+    # df_daily = pl.read_csv(PROCESSED_DATA_DIR / "dataset_daily.csv").with_columns(pl.col("datetime").str.to_datetime())
     # ids = df["id"].unique()
     corrupt_sensors = ["""d566a120-d232-489a-aa42-850e5a44dbee""",
                        """7dd30c54-3be7-4a3c-b5e0-9841bb3ffddb""",
@@ -554,5 +676,7 @@ if __name__ == "__main__":
                        """573a7d1e-de3f-49e1-828b-07d463d1fa4d"""
                        ]
     # df_daily_dh = df_daily.filter(pl.col("source") == "dh")
-    for id in df_daily["id"].unique():
-        plot_missing_dates(df_daily, id)
+    # for id in df_daily["id"].unique():
+        # plot_missing_dates(df_daily, id)
+    # plot_reduced_data_eval()
+    plot_box_plot_per_step()

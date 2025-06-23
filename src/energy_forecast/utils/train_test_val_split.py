@@ -210,7 +210,7 @@ def get_train_test_val_split(ds: TrainingDataset) -> TrainingDataset:
         case "group":
             train_data, val_data, test_data = train_test_split_group_based(ds, train_per)
         case "time":
-            train_data, val_data, test_data = train_test_split_time_based(ds, train_per, remove_per=config["remove_per"])
+            train_data, val_data, test_data = train_test_split_time_based(ds, train_per, remove_per=config.get("remove_per", 0.0))
         case "date":
             train_data, val_data, test_data = train_test_split_date_based(ds, datetime.date(2024, 1, 30), remove_per=config["remove_per"])
 

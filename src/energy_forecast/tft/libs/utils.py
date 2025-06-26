@@ -154,6 +154,10 @@ def get_default_tensorflow_config(tf_device='gpu', gpu_id=0):
         tf_config = tf.ConfigProto(log_device_placement=False)
         tf_config.gpu_options.allow_growth = True
 
+        # physical_devices = tf.config.list_physical_devices('GPU')
+        # for device in physical_devices:
+        #     tf.config.experimental.set_memory_growth(device, True)
+
     return tf_config
 
 

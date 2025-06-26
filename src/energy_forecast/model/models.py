@@ -1000,7 +1000,7 @@ class xLSTMModel(RNNModel):
             ),
             slstm_block=sLSTMBlockConfig(
                 slstm=sLSTMLayerConfig(
-                    backend="cuda",
+                    backend="vanilla",
                     num_heads=1,  # TODO: fails for > 1
                     conv1d_kernel_size=4,
                     bias_init="powerlaw_blockdependent",

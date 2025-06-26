@@ -71,8 +71,8 @@ def main(run_id: str):
     # extended evaluation
     # calculate_metrics_per_id(ds, run, dict(wandb.config), m.name, True)
     # calculate_metrics_per_month(ds, run, True)
-    calculate_metrics_per_hour(ds, None, True)
-    # calculate_metrics_per_id_and_hour(ds, run, dict(wandb.config), m.name, True)
+    # calculate_metrics_per_hour(ds, None, True)
+    calculate_metrics_per_id_and_hour(ds, run, dict(wandb.config), m.name, True)
     run.finish()
 
 def main_multiple(run_ids: list[str], metric_name: str):
@@ -97,7 +97,7 @@ def main_local(path_to_model: Path, config: dict):
 
 
 if __name__ == '__main__':
-    run_id = "u1dtxz48"
+    run_id = "ekq3j97j"
     training_config = {
         "energy": "all",
         "res": "daily",

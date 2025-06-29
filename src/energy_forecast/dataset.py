@@ -17,7 +17,7 @@ from src.energy_forecast.config import DATA_DIR, PROCESSED_DATA_DIR, CATEGORICAL
     FEATURES_DIR, META_DIR, INTERIM_DATA_DIR, N_CLUSTER, REPORTS_DIR, CONTINUOUS_FEATURES_CYCLIC, CONTINUOUS_FEATURES, \
     RAW_DATA_DIR, FEATURE_SET_8, FEATURE_SET_10, N_LAG, FEATURE_SETS, FEATURES_HOURLY, FEATURES_DAILY, \
     THRESHOLD_FLAT_LINES_DAILY, THRESHOLD_FLAT_LINES_HOURLY, MIN_GAP_SIZE_DAILY, MIN_GAP_SIZE_HOURLY, FEATURE_SET_15, \
-    FEATURES_WEATHER, FEATURES_WEATHER_HOURLY
+    FEATURES_WEATHER, FEATURES_WEATHER_HOURLY, CONTINUOUS_FEATURES_HOURLY, CONTINUOUS_FEATURES_DAILY
 from src.energy_forecast.data_processing.data_loader import DHDataLoader, KinergyDataLoader, LegacyDataLoader
 from src.energy_forecast.data_processing.ou_process import ou_process
 from src.energy_forecast.plots import plot_missing_dates_per_building, plot_clusters
@@ -462,7 +462,7 @@ class TrainingDataset(Dataset):
             self.scaler_X, self.scaler_y = self._create_scaler_pair()
             if self.scaler_X and self.cont_features:
                 # continuous features are used in training
-                self.scaler_X.fit(self.X_train[self.cont_features])
+                self.scaler_X.fit(self.X_train[self.cont_features + self.get_noise_feature_names()])
             train_df = self.get_train_df()
             for s_id in self.s_ids:
                 df_filter = train_df.filter(pl.col("id").str.starts_with(s_id))
@@ -498,7 +498,8 @@ class TrainingDataset(Dataset):
 
     def _set_features(self):
         """Set continuous features used for training and static features."""
-        cont_features = list(set(self.config["features"]) & set(CONTINUOUS_FEATURES))
+        format_c_features = CONTINUOUS_FEATURES_DAILY if self.res == "daily" else CONTINUOUS_FEATURES_HOURLY
+        cont_features = list(set(self.config["features"]) & set(CONTINUOUS_FEATURES + format_c_features))
         self.cont_features = cont_features
         self.static_features = list(set(self.config["features"]) - set(["diff"] + cont_features))
 
@@ -543,7 +544,11 @@ class TrainingDataset(Dataset):
             df_filter = df[df["id"].str.startswith(s_id)].copy()
             if len(df_filter) > 0:
                 if self.scaler_X and self.cont_features:
-                    df_filter[self.cont_features] = self.scaler_X.transform(df_filter[self.cont_features])
+                    nf = self.get_noise_feature_names()
+                    try:
+                        df_filter[self.cont_features + nf] = self.scaler_X.transform(df_filter[self.cont_features + nf])
+                    except ValueError as e:
+                        raise e
                 df_filter["diff"] = scaler.transform(df_filter["diff"].to_numpy().reshape(-1, 1))
                 scaled_dfs.append(pl.DataFrame(df_filter))
 

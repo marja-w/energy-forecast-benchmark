@@ -13,10 +13,11 @@ from tqdm import tqdm
 try:
     from src.energy_forecast.plots import plot_means, plot_std
     from src.energy_forecast.config import REFERENCES_DIR, FEATURE_SETS, PROCESSED_DATA_DIR, REPORTS_DIR, N_CLUSTER
-    from src.energy_forecast.dataset import Dataset, TrainingDataset, TrainDataset90, TrainDatasetBuilding
+    from src.energy_forecast.dataset import Dataset, TrainingDataset, TrainDataset90, TrainDatasetBuilding, \
+        TrainDatasetNoise
     from src.energy_forecast.model.models import Model, FCNModel, DTModel, LinearRegressorModel, RegressionModel, \
-    NNModel, \
-    RNN1Model, FCN2Model, FCN3Model, Baseline, RNN3Model, TransformerModel, LSTMModel, xLSTMModel
+        NNModel, \
+        RNN1Model, FCN2Model, FCN3Model, Baseline, RNN3Model, TransformerModel, LSTMModel, xLSTMModel
     from src.energy_forecast.utils.train_test_val_split import get_train_test_val_split
     from src.energy_forecast.utils.util import store_df_wandb
 except ModuleNotFoundError:
@@ -33,7 +34,8 @@ except ModuleNotFoundError:
 
         from src.energy_forecast.plots import plot_means, plot_std, plot_train_val_test_split
         from src.energy_forecast.config import REFERENCES_DIR, FEATURE_SETS, PROCESSED_DATA_DIR, REPORTS_DIR, N_CLUSTER
-        from src.energy_forecast.dataset import Dataset, TrainingDataset, TrainDataset90, TrainDatasetBuilding
+        from src.energy_forecast.dataset import Dataset, TrainingDataset, TrainDataset90, TrainDatasetBuilding, \
+            TrainDatasetNoise
         from src.energy_forecast.model.models import Model, FCNModel, DTModel, LinearRegressorModel, RegressionModel, \
             NNModel, RNN1Model, FCN2Model, FCN3Model, Baseline, RNN3Model, LSTMModel, TransformerModel, xLSTMModel
         from src.energy_forecast.utils.train_test_val_split import get_train_test_val_split
@@ -82,6 +84,8 @@ def get_data(config: dict) -> TrainingDataset:
             ds = TrainingDataset(config)
         case "missing_data_90":
             ds = TrainDataset90(config)
+        case "building_noise":
+            ds = TrainDatasetNoise(config)
         case _:
             logger.warning(f"Unknown dataset {config['dataset']}. Using default dataset TrainingDataset.")
             ds = TrainingDataset(config)
@@ -178,20 +182,20 @@ if __name__ == '__main__':
         epochs_list = [40]
         config = {"project": "ma-wahl-forecast",
                   "log": False,  # whether to log to wandb
-                  "plot": False, # whether to plot predictions
+                  "plot": False,  # whether to plot predictions
                   "energy": "all",
-                  "res": "hourly",
+                  "res": "daily",
                   "interpolate": 1,
-                  "dataset": "building",  # building, meta, missing_data_90
-                  "model": "FCN3",
-                  "lag_in": 72,
-                  "lag_out": 72,
-                  "n_in": 72,
-                  "n_out": 24,
-                  "n_future": 24,
+                  "dataset": "building_noise",  # building, meta, missing_data_90
+                  "model": "lstm",
+                  "lag_in": 7,
+                  "lag_out": 7,
+                  "n_in": 7,
+                  "n_out": 7,
+                  "n_future": 3,
                   "scaler": "standard",
                   "scale_mode": "individual",  # all, individual
-                  "feature_code": 15,
+                  "feature_code": 14,
                   "train_test_split_method": "time",
                   "epochs": 1,
                   "optimizer": "adam",
@@ -205,7 +209,7 @@ if __name__ == '__main__':
                   "activation": "relu",  # ReLU, Linear
                   "transformer_blocks": 2,
                   "num_heads": 4,
-                  "remove_per": 0.2}
+                  "remove_per": 0.0}
         # config = None
         all_models = False
         if config is None:
@@ -219,10 +223,17 @@ if __name__ == '__main__':
                 wandb_run = train(config_dict)
                 wandb_run.finish()  # finish run to start new run with next config
         elif all_models:
-            for model, feature_code, n_in, n_out, n_f, epochs, neurons, scaler in itertools.product(models, feature_codes, n_ins, n_outs, n_futures, epochs_list, neurons_list, scalers):
+            for model, feature_code, n_in, n_out, n_f, epochs, neurons, scaler in itertools.product(models,
+                                                                                                    feature_codes,
+                                                                                                    n_ins, n_outs,
+                                                                                                    n_futures,
+                                                                                                    epochs_list,
+                                                                                                    neurons_list,
+                                                                                                    scalers):
                 if n_f != n_out: continue
                 if feature_code == 12 and n_f > 0: continue  # only feature is diff
-                logger.info(f"Training combination: feature code {feature_code}, n_in {n_in}, n_out {n_out}, n_future {n_f}, epochs {epochs}, neurons {neurons}, scaler {scaler}")
+                logger.info(
+                    f"Training combination: feature code {feature_code}, n_in {n_in}, n_out {n_out}, n_future {n_f}, epochs {epochs}, neurons {neurons}, scaler {scaler}")
                 config["model"] = model
                 config["feature_code"] = feature_code
                 config["n_in"] = n_in

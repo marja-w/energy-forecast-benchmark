@@ -223,11 +223,11 @@ def get_train_test_val_split(ds: TrainingDataset) -> TrainingDataset:
     test_data = test_data.sort([pl.col("id"), pl.col("datetime")])
     val_data = val_data.sort([pl.col("id"), pl.col("datetime")])
     # selects only features and target variable
-    ds.X_train = train_data.to_pandas()[list(set(config["features"]) - set(target_vars))]
+    ds.X_train = train_data.to_pandas()[list(set(config["features"] + ds.get_noise_feature_names()) - set(target_vars))]
     ds.y_train = train_data.to_pandas()[target_vars]
-    ds.X_val = val_data.to_pandas()[list(set(config["features"]) - set(target_vars))]
+    ds.X_val = val_data.to_pandas()[list(set(config["features"] + ds.get_noise_feature_names()) - set(target_vars))]
     ds.y_val = val_data.to_pandas()[target_vars]
-    ds.X_test = test_data.to_pandas()[list(set(config["features"]) - set(target_vars))]
+    ds.X_test = test_data.to_pandas()[list(set(config["features"] + ds.get_noise_feature_names()) - set(target_vars))]
     ds.y_test = test_data.to_pandas()[target_vars]
 
     # plot_means(X_train, y_train, X_val, y_val, X_test, y_test)
@@ -236,4 +236,5 @@ def get_train_test_val_split(ds: TrainingDataset) -> TrainingDataset:
     logger.info(f"Train data shape: {ds.X_train.shape}")  # TODO: fix shape output for one feature "diff"
     logger.info(f"Test data shape: {ds.X_test.shape}")
     logger.info(f"Validation data shape: {ds.X_val.shape}")
+    logger.info(f"Training on {len(config['features'])} features")
     return ds

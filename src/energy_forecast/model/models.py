@@ -32,7 +32,8 @@ from tensorflow.keras import layers, optimizers
 from wandb.integration.keras import WandbMetricsLogger
 from wandb.sdk.wandb_run import Run
 
-from src.energy_forecast.config import MODELS_DIR, CONTINUOUS_FEATURES, REPORTS_DIR, MASKING_VALUE
+from src.energy_forecast.config import MODELS_DIR, CONTINUOUS_FEATURES, REPORTS_DIR, MASKING_VALUE, FEATURES_WEATHER, \
+    FEATURES_HOURLY, FEATURES_WEATHER_HOURLY
 from src.energy_forecast.dataset import TrainingDataset
 from src.energy_forecast.plots import plot_predictions, create_box_plot_predictions, create_box_plot_predictions_by_size
 from src.energy_forecast.utils.metrics import mean_absolute_percentage_error, root_mean_squared_error, \
@@ -363,7 +364,21 @@ class NNModel(Model):
         features = ["id"] + self.config["features"]
         return ds.get_train_df(ds.scale).select(features), ds.get_val_df(ds.scale).select(features)
 
-    def transform_series_to_supervised(self, df) -> pl.DataFrame:
+    def transform_series_to_supervised(self, df, dropnan: bool = True) -> pl.DataFrame:
+        dropnan = True
+        df = df.sort(["id"])
+        noise = (self.config["dataset"] == "building_noise")
+
+        # extract noise values from df if they exist
+        if noise:
+            noise_f = list()
+            weather_names = FEATURES_WEATHER if self.config["res"] == "daily" else FEATURES_WEATHER_HOURLY
+            for name in weather_names:
+                noise_f.extend([f"{name}_n" if i == 0 else f"{name}(t+{i})_n" for i in range(self.config["n_future"])])
+            df_noise = df[noise_f]
+            df = df.drop(noise_f)
+            dropnan = False
+
         try:
             lag_in, lag_out = self.config["lag_in"], self.config["lag_out"]
             assert lag_in >= self.config["n_in"] and lag_out >= self.config["n_out"]
@@ -371,8 +386,17 @@ class NNModel(Model):
             lag_in, lag_out = self.config["n_in"], self.config["n_out"]
         n_in, n_out = self.config["n_in"], self.config["n_out"]
         if not lag_out >= self.config["n_future"]: raise ValueError("n_future can not be larger than lag out")
-        df = df.group_by("id").map_groups(lambda group: series_to_supervised(group, n_in, n_out, lag_in, lag_out))
+        df = df.group_by("id").map_groups(
+            lambda group: series_to_supervised(group, n_in, n_out, lag_in, lag_out, dropnan=dropnan))
         df = df.sort(["id"])
+
+        # change actual recorded data with noise
+        if noise:
+            logger.info("Updating time-series data with noise.")
+            for name in noise_f:
+                df = df.replace_column(df.get_column_index(name[:-2]), df_noise[name])
+                df = df.rename({name: name[:-2]})
+            df = df.drop_nulls()
         return df
 
     def handle_future_covs(self, df: pl.DataFrame) -> pl.DataFrame:
@@ -441,8 +465,9 @@ class NNModel(Model):
     @overrides
     def train_ds(self, ds: TrainingDataset, log: bool = False) -> Run:
         # get data split either scaled or not
-        train = ds.get_train_df(ds.scale).select(["id"] + self.config["features"])
-        val = ds.get_val_df(ds.scale).select(["id"] + self.config["features"])
+        noise_f = ds.get_noise_feature_names()
+        train = ds.get_train_df(ds.scale).select(["id"] + self.config["features"] + noise_f)
+        val = ds.get_val_df(ds.scale).select(["id"] + self.config["features"] + noise_f)
 
         # create time series data from training and validation data
         X_train, y_train = self.create_time_series_data(train)
@@ -575,12 +600,13 @@ class NNModel(Model):
 
     def generate_test_data(self, ds: TrainingDataset) -> TrainingDataset:
         # get data split either scaled or not
-        test = ds.get_test_df(ds.scale).select(["id", "datetime"] + self.config["features"])
+        test = ds.get_test_df(ds.scale).select(
+            ["id", "datetime"] + self.config["features"] + ds.get_noise_feature_names())
         ds.X_test_scaled, ds.y_test_scaled, ds.id_to_test_series_scaled, ds.id_column, ds.datetime_column \
             = self.create_time_series_data_and_id_map(test)
         if ds.scale:
             _, y_test, ds.id_to_test_series, _, _ = self.create_time_series_data_and_id_map(
-                ds.get_test_df(scale=False).select(["id", "datetime"] + self.config["features"]))
+                ds.get_test_df(scale=False).select(["id", "datetime"] + self.config["features"] + ds.get_noise_feature_names()))
             if self.config["scale_mode"] == "all":
                 assert (ds.y_test_scaled["diff"].to_numpy().reshape(-1, 1) == ds.scaler_y.transform(
                     y_test["diff"].to_numpy().reshape(-1, 1))).all()  # check that this is the same data but scaled

@@ -85,7 +85,7 @@ class HeatDataFormatter(GenericDataFormatter):
 
         self.config = None
 
-    def split_data(self, df, train_percentage=0.8):
+    def split_data(self, df, train_percentage=0.8, remove_per=0.0):
         """Splits data frame into training-validation-test data frames based on the time-based split logic.
 
         This implements the same logic as train_test_split_time_based() function from
@@ -128,7 +128,13 @@ class HeatDataFormatter(GenericDataFormatter):
             split_idx_two = int(len(b_df) * (((1 - train_percentage) / 2) + train_percentage))
 
             # Split into train, validation, and test
-            train_b_df = b_df[b_df['b_idx'] <= split_idx].drop(columns=['b_idx'])
+            train_b_df = b_df[b_df['b_idx'] <= split_idx]
+
+            # remove part of training if remove_per > 0
+            if remove_per != 0:
+                # remove remove_per values of training data from beginning of series
+                train_b_df = train_b_df.tail(int(len(train_b_df) * (1 - remove_per)))
+            train_b_df = train_b_df.drop(columns=["b_idx"])
 
             # Get the minimum required length for input/output sequence
             try:

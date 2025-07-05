@@ -2,6 +2,7 @@ import datetime
 import math
 import os
 import re
+from statistics import mean
 
 import numpy as np
 import pandas as pd
@@ -15,8 +16,10 @@ from sklearn.preprocessing import LabelEncoder, OneHotEncoder, MinMaxScaler, Sta
 from src.energy_forecast.config import DATA_DIR, PROCESSED_DATA_DIR, CATEGORICAL_FEATURES, FEATURES, \
     FEATURES_DIR, META_DIR, INTERIM_DATA_DIR, N_CLUSTER, REPORTS_DIR, CONTINUOUS_FEATURES_CYCLIC, CONTINUOUS_FEATURES, \
     RAW_DATA_DIR, FEATURE_SET_8, FEATURE_SET_10, N_LAG, FEATURE_SETS, FEATURES_HOURLY, FEATURES_DAILY, \
-    THRESHOLD_FLAT_LINES_DAILY, THRESHOLD_FLAT_LINES_HOURLY, MIN_GAP_SIZE_DAILY, MIN_GAP_SIZE_HOURLY, FEATURE_SET_15
+    THRESHOLD_FLAT_LINES_DAILY, THRESHOLD_FLAT_LINES_HOURLY, MIN_GAP_SIZE_DAILY, MIN_GAP_SIZE_HOURLY, FEATURE_SET_15, \
+    FEATURES_WEATHER, FEATURES_WEATHER_HOURLY, CONTINUOUS_FEATURES_HOURLY, CONTINUOUS_FEATURES_DAILY
 from src.energy_forecast.data_processing.data_loader import DHDataLoader, KinergyDataLoader, LegacyDataLoader
+from src.energy_forecast.data_processing.ou_process import ou_process
 from src.energy_forecast.plots import plot_missing_dates_per_building, plot_clusters
 from src.energy_forecast.utils.cluster import hierarchical_clustering_on_meta_data
 from src.energy_forecast.utils.data_processing import remove_neg_diff_vals, filter_connection_errors_by_id, \
@@ -151,7 +154,7 @@ class Dataset:
             enc = LabelEncoder()
             # join data with meta data
             # create new id, needed if data series was split, but belongs to same building
-            df = df.with_columns(pl.col("id").str.replace("(-\d+)?-\d+$", "").alias("meta_id")) # TODO
+            df = df.with_columns(pl.col("id").str.replace("(-\d+)?-\d+$", "").alias("meta_id"))  # TODO
             df = df.join(df_meta.rename({"id": "meta_id"}), on="meta_id", how="left")
             df = (df.join(df_weather.with_columns(pl.col("datetime").dt.cast_time_unit("ns")), on=["datetime", "plz"],
                           how="left")
@@ -234,7 +237,8 @@ class InterpolatedDataset(Dataset):
         logger.info("Split series with long series of missing values")
         df = df.with_columns(pl.col("datetime").dt.cast_time_unit("ns"))
         min_gap_size_periods = MIN_GAP_SIZE_DAILY if self.res == "daily" else MIN_GAP_SIZE_HOURLY
-        df = split_series_by_id_list(df, min_gap_size_periods, res=self.res, plot=False)  # split series if there are long missing periods
+        df = split_series_by_id_list(df, min_gap_size_periods, res=self.res,
+                                     plot=False)  # split series if there are long missing periods
         logger.info("Interpolating values")
         freq = "D" if self.res == "daily" else "h"
         df = interpolate_values_by_id(df, freq)  # interpolate missing dates/hours
@@ -242,7 +246,8 @@ class InterpolatedDataset(Dataset):
         df = remove_neg_diff_vals(df)  # interpolation might create new negative diff values, remove them
         df = remove_positive_jumps(df)  # remove too high diff values
         logger.info("Split series with long series of missing values")
-        df = split_series_by_id(df, 1, self.res, plot)  # split series if there were holes created by removing neg diff values
+        df = split_series_by_id(df, 1, self.res,
+                                plot)  # split series if there were holes created by removing neg diff values
         logger.info(f"Number of rows after interpolating: {len(df)}")
 
         df_info = df.group_by("id").agg(pl.len()).to_pandas()
@@ -252,7 +257,7 @@ class InterpolatedDataset(Dataset):
         output_path_info = REPORTS_DIR / f"dataset_{self.name}_{min_gap_size_periods}_series_info.csv"
         df_info.to_csv(output_path_info)
         logger.info(f"Saved series info to {output_path_info}")
-        logger.info(f"Number of series after splitting: {len(df_info)-1}")
+        logger.info(f"Number of series after splitting: {len(df_info) - 1}")
 
         assert len(df.filter(pl.col("diff") < 0)) == 0  # no negative diff values should be present
         self.df = df
@@ -390,7 +395,9 @@ class TrainingDataset(Dataset):
             try:
                 config["features"] = list(set(config["features"]) - set(cat_features)) + list(cat_features_names)
             except wandb.sdk.lib.config_util.ConfigError:
-                wandb.config.update({"features": list(set(config["features"]) - set(cat_features)) + list(cat_features_names)}, allow_val_change=True)
+                wandb.config.update(
+                    {"features": list(set(config["features"]) - set(cat_features)) + list(cat_features_names)},
+                    allow_val_change=True)
                 config = wandb.config
         self.config = config
 
@@ -408,7 +415,9 @@ class TrainingDataset(Dataset):
                 self.df = self.df.with_columns(((2 * math.pi * pl.col(f)) / max_value).sin().alias(f"{f}_sin"),
                                                ((2 * math.pi * pl.col(f)) / max_value).cos().alias(f"{f}_cos"))
                 self.df = self.df.drop(f)
-            cyclic_encoded_features = (list(set(self.config["features"]) - set(fs)) + [f"{f}_sin" for f in fs] + [f"{f}_cos" for f in fs])
+            cyclic_encoded_features = (
+                        list(set(self.config["features"]) - set(fs)) + [f"{f}_sin" for f in fs] + [f"{f}_cos" for f in
+                                                                                                   fs])
             try:
                 self.config["features"] = cyclic_encoded_features
             except:
@@ -453,7 +462,7 @@ class TrainingDataset(Dataset):
             self.scaler_X, self.scaler_y = self._create_scaler_pair()
             if self.scaler_X and self.cont_features:
                 # continuous features are used in training
-                self.scaler_X.fit(self.X_train[self.cont_features])
+                self.scaler_X.fit(self.X_train[self.cont_features + self.get_noise_feature_names()])
             train_df = self.get_train_df()
             for s_id in self.s_ids:
                 df_filter = train_df.filter(pl.col("id").str.starts_with(s_id))
@@ -489,7 +498,8 @@ class TrainingDataset(Dataset):
 
     def _set_features(self):
         """Set continuous features used for training and static features."""
-        cont_features = list(set(self.config["features"]) & set(CONTINUOUS_FEATURES))
+        format_c_features = CONTINUOUS_FEATURES_DAILY if self.res == "daily" else CONTINUOUS_FEATURES_HOURLY
+        cont_features = list(set(self.config["features"]) & set(CONTINUOUS_FEATURES + format_c_features))
         self.cont_features = cont_features
         self.static_features = list(set(self.config["features"]) - set(["diff"] + cont_features))
 
@@ -534,7 +544,11 @@ class TrainingDataset(Dataset):
             df_filter = df[df["id"].str.startswith(s_id)].copy()
             if len(df_filter) > 0:
                 if self.scaler_X and self.cont_features:
-                    df_filter[self.cont_features] = self.scaler_X.transform(df_filter[self.cont_features])
+                    nf = self.get_noise_feature_names()
+                    try:
+                        df_filter[self.cont_features + nf] = self.scaler_X.transform(df_filter[self.cont_features + nf])
+                    except ValueError as e:
+                        raise e
                 df_filter["diff"] = scaler.transform(df_filter["diff"].to_numpy().reshape(-1, 1))
                 scaled_dfs.append(pl.DataFrame(df_filter))
 
@@ -630,6 +644,9 @@ class TrainingDataset(Dataset):
             y_hat = rescaled_df.sort(by=["index"]).drop(["id", "index"]).to_numpy()
             return y_hat
 
+    def get_noise_feature_names(self):
+        return list()
+
 
 class TrainDataset90(TrainingDataset):
     def __init__(self, config: dict):
@@ -663,7 +680,46 @@ class TrainDatasetBuilding(TrainingDataset):
             self.meta_features = FEATURE_SET_15  # same as 10 but with hourly weather features
 
 
+class TrainDatasetNoise(TrainDatasetBuilding):
+    def __init__(self, config: dict):
+        super().__init__(config)
+        self.name += "_noise"
+        self.weather_feature_names = FEATURES_WEATHER if self.res == "daily" else FEATURES_WEATHER_HOURLY
 
+    def get_noise_feature_names(self):
+        noise_f = list()
+        for name in self.weather_feature_names:
+            noise_f.extend([f"{name}_n" if i == 0 else f"{name}(t+{i})_n" for i in range(self.config["n_future"])])
+        return noise_f
+
+    def add_noise(self):
+        logger.info("Adding noise to the future weather features")
+        for name in self.weather_feature_names:
+            mu = mean(self.df[name])
+            X0 = self.df[name]
+            T = self.config["n_future"]
+            dt = 1.0
+            # the first row is empty because we dont now the last step
+            noise_f = [[np.nan for i in range(self.config["n_future"])]]
+
+            # for each time step simulate n_future steps
+            for x in X0:
+                X = ou_process(X0=x, mu=mu, T=T, dt=dt)
+                noise_f.append(X)
+
+            # remove last array to make it fit with original data
+            noise_f = noise_f[:-1]
+            noise_f = np.array(noise_f)
+            for i in range(self.config["n_future"]):
+                col_name = f"{name}_n" if i == 0 else f"{name}(t+{i})_n"
+                col = pl.Series(col_name, noise_f[:, i])
+                self.df = self.df.insert_column(len(self.df.columns), col)
+
+    def preprocess(self):
+        super().preprocess()
+        # add noisy weather forecast column
+        self.add_noise()
+        return self.df, self.config
 
 
 if __name__ == '__main__':
@@ -683,12 +739,12 @@ if __name__ == '__main__':
 
     logger.info("Finish data loading")
 
-    # ds = InterpolatedDataset(res="daily")
-    # ds.create_and_clean(plot=True)
-    # ds.create_clean_and_add_feat()
-    # #
-    ds = Dataset(res="daily")
+    ds = InterpolatedDataset(res="daily")
     ds.create_and_clean(plot=False)
+    ds.create_clean_and_add_feat()
+    # #
+    # ds = Dataset(res="hourly")
+    # ds.create_and_clean(plot=False)
     # ds.create_clean_and_add_feat()
 
     # ds = Dataset(res="hourly")
@@ -719,5 +775,5 @@ if __name__ == '__main__':
                      "feature_code": 13,
                      "train_test_split_method": "time"}  # ReLU, Linear
 
-    ds = TrainDatasetBuilding(freeze_config)
+    # ds = TrainDatasetBuilding(freeze_config)
     # ds.create_clean_and_add_feat()

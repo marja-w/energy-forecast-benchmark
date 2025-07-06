@@ -96,6 +96,11 @@ def main_local(path_to_model: Path, config: dict):
     m.evaluate(ds, None, log=True, plot=False)
 
 
+def compare_multiple_models_predictions(model_names, config):
+    config, ds = get_dataset(config)
+    plot_predictions_multiple_models(model_names, ds, config)
+
+
 if __name__ == '__main__':
     run_id = "ekq3j97j"
     training_config = {

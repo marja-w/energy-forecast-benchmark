@@ -170,7 +170,9 @@ class Model:
         if self.config["n_out"] > 1:
             if run:
                 if run.summary.get("test_rmse_ind", None) is None:
-                    run.log(data={"test_rmse_ind": test_rmse, "test_nrmse_ind": test_nrmse, "test_mse_ind": test_mse,
+                    run.log(data={"test_rmse_ind": test_rmse})
+                if run.summary.get("test_mse_ind", None) is None:
+                    run.log(data={"test_nrmse_ind": test_nrmse, "test_mse_ind": test_mse,
                                   "test_mae_ind": test_mae})
             if log:
                 logger.info(f"MSE Loss on test data per index: {test_mse}")
@@ -232,6 +234,7 @@ class Baseline(Model):
     def evaluate(self, ds: TrainingDataset, run: Optional[Run], cluster_idxs=None, log: bool = True) -> tuple:
         target_vars = ["diff"] + [f"diff(t+{i})" for i in range(1, self.config["n_out"])]
         y_test = ds.get_test_df().select(["index", "datetime", "id"] + target_vars).to_pandas()
+        logger.info(f"Length of test dataset: {len(y_test)} for baseline model.")
         if cluster_idxs is not None:
             y_test = y_test.iloc[cluster_idxs].sort_values(
                 by=["id", "datetime"])  # TODO: does clustering work, are those the right indexes?
@@ -364,13 +367,13 @@ class NNModel(Model):
         features = ["id"] + self.config["features"]
         return ds.get_train_df(ds.scale).select(features), ds.get_val_df(ds.scale).select(features)
 
-    def transform_series_to_supervised(self, df, dropnan: bool = True) -> pl.DataFrame:
+    def transform_series_to_supervised(self, df, dropnan: bool = True, split="train") -> pl.DataFrame:
         dropnan = True
         df = df.sort(["id"])
         noise = (self.config["dataset"] == "building_noise")
 
         # extract noise values from df if they exist
-        if noise:
+        if noise and split == "test":  # only add noise to test data
             noise_f = list()
             weather_names = FEATURES_WEATHER if self.config["res"] == "daily" else FEATURES_WEATHER_HOURLY
             for name in weather_names:
@@ -391,8 +394,8 @@ class NNModel(Model):
         df = df.sort(["id"])
 
         # change actual recorded data with noise
-        if noise:
-            logger.info("Updating time-series data with noise.")
+        if noise and split == "test":
+            logger.info(f"Updating time-series {split} data with noise.")
             for name in noise_f:
                 df = df.replace_column(df.get_column_index(name[:-2]), df_noise[name])
                 df = df.rename({name: name[:-2]})
@@ -419,7 +422,7 @@ class NNModel(Model):
         X, y = self.split_in_feature_target(df)
         return X, y
 
-    def create_time_series_data_and_id_map(self, df: pl.DataFrame) -> tuple[
+    def create_time_series_data_and_id_map(self, df: pl.DataFrame, split="train") -> tuple[
         DataFrame | Any, Any, dict[str, tuple[ndarray, ndarray, Series]], Series, Series]:
         """
         Transforms the given DataFrame for time series analysis by preparing supervised learning data and mapping IDs
@@ -440,7 +443,7 @@ class NNModel(Model):
             - A dictionary mapping IDs to specific data entries for later use.
             - A Series object containing IDs derived from the input data.
         """
-        df = self.transform_series_to_supervised(df)
+        df = self.transform_series_to_supervised(df, split=split)
         X, y = self.split_in_feature_target(df)
         id_to_data = self.create_id_to_data(df)
         return X, y, id_to_data, df["id"], df["datetime"]
@@ -603,10 +606,11 @@ class NNModel(Model):
         test = ds.get_test_df(ds.scale).select(
             ["id", "datetime"] + self.config["features"] + ds.get_noise_feature_names())
         ds.X_test_scaled, ds.y_test_scaled, ds.id_to_test_series_scaled, ds.id_column, ds.datetime_column \
-            = self.create_time_series_data_and_id_map(test)
+            = self.create_time_series_data_and_id_map(test, split="test")
         if ds.scale:
             _, y_test, ds.id_to_test_series, _, _ = self.create_time_series_data_and_id_map(
-                ds.get_test_df(scale=False).select(["id", "datetime"] + self.config["features"] + ds.get_noise_feature_names()))
+                ds.get_test_df(scale=False).select(
+                    ["id", "datetime"] + self.config["features"] + ds.get_noise_feature_names()), split="test")
             if self.config["scale_mode"] == "all":
                 assert (ds.y_test_scaled["diff"].to_numpy().reshape(-1, 1) == ds.scaler_y.transform(
                     y_test["diff"].to_numpy().reshape(-1, 1))).all()  # check that this is the same data but scaled
@@ -772,9 +776,9 @@ class RNNModel(NNModel):
         return X, y
 
     @overrides
-    def create_time_series_data_and_id_map(self, df: pl.DataFrame) -> tuple[
+    def create_time_series_data_and_id_map(self, df: pl.DataFrame, split = "train") -> tuple[
         Any, Any, dict[str, tuple[ndarray, ndarray, Series]], Series, Series]:
-        X, y, id_to_data, id_column, datetime_col = super().create_time_series_data_and_id_map(df)
+        X, y, id_to_data, id_column, datetime_col = super().create_time_series_data_and_id_map(df, split=split)
         X = X.to_numpy().reshape(
             (X.shape[0], self.config["n_in"] + self.config["n_future"], len(self.config["features"])))
         return X, y, id_to_data, id_column, datetime_col
@@ -1052,6 +1056,7 @@ class xLSTMModel(RNNModel):
         self.model = self.model.to(self.device)
 
         print(self.model)
+        logger.info(f"Number of parameters: {sum([param.nelement() for param in self.model.parameters()])}")
 
     def train(self, X_train, y_train, X_val, y_val, log=False):
         """Train the model"""
@@ -1198,7 +1203,7 @@ class xLSTMModel(RNNModel):
 
     def load_model_from_file(self, file_path):
         """Load model from a file"""
-        checkpoint = torch.load(file_path)
+        checkpoint = torch.load(file_path, map_location=self.device)
 
         # Initialize model with the saved config
         self.config = checkpoint['config']

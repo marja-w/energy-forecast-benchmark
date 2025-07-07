@@ -9,12 +9,12 @@ from wandb.apis.importers.internals.internal import ROOT_DIR
 
 from src.energy_forecast.config import MODELS_DIR, PROJ_ROOT, FEATURE_SETS
 from src.energy_forecast.model.evaluate import calculate_metrics_per_month, calculate_metrics_per_id, \
-    calculate_metrics_per_hour, calculate_metrics_per_id_and_hour
+    calculate_metrics_per_hour, calculate_metrics_per_id_and_hour, calculate_metrics_per_day
 from src.energy_forecast.model.train import prepare_dataset, get_model
-from src.energy_forecast.plots import plot_multiple_model_metrics
+from src.energy_forecast.plots import plot_multiple_model_metrics, plot_predictions_multiple_models
 
 
-def get_wandb_run(run_id:str):
+def get_wandb_run(run_id: str):
     # Initialize the API
     api = wandb.Api()
     # Get the run details
@@ -55,10 +55,15 @@ def get_model_from_wandb(run_id: str):
     return m, ds, run
 
 
-def get_model_from_path(path_to_model: Path, config: dict):
+def get_dataset(config):
     # get dataset
     config["features"] = FEATURE_SETS[config["feature_code"]]
     ds, config = prepare_dataset(config)
+    return config, ds
+
+
+def get_model_from_path(path_to_model: Path, config: dict):
+    config, ds = get_dataset(config)
     m = get_model(config)
     m.load_model_from_file(path_to_model)
     return m, ds
@@ -71,9 +76,11 @@ def main(run_id: str):
     # extended evaluation
     # calculate_metrics_per_id(ds, run, dict(wandb.config), m.name, True)
     # calculate_metrics_per_month(ds, run, True)
-    # calculate_metrics_per_hour(ds, None, True)
-    calculate_metrics_per_id_and_hour(ds, run, dict(wandb.config), m.name, True)
+    calculate_metrics_per_hour(ds, None, True)
+    # calculate_metrics_per_day(ds, None, True)
+    # calculate_metrics_per_id_and_hour(ds, run, dict(wandb.config), m.name, True)
     run.finish()
+
 
 def main_multiple(run_ids: list[str], metric_name: str):
     metrics = list()
@@ -90,7 +97,6 @@ def main_multiple(run_ids: list[str], metric_name: str):
     fig.show()
 
 
-
 def main_local(path_to_model: Path, config: dict):
     m, ds = get_model_from_path(path_to_model, config)
     m.evaluate(ds, None, log=True, plot=False)
@@ -102,35 +108,42 @@ def compare_multiple_models_predictions(model_names, config):
 
 
 if __name__ == '__main__':
-    run_id = "ekq3j97j"
-    training_config = {
-        "energy": "all",
-        "res": "daily",
-        "interpolate": 1,
-        "dataset": "transformer",  # building, meta, missing_data_90
-        "model": "tft",
-        "lag_in": 72,
-        "lag_out": 72,
-        "n_in": 72,
-        "n_out": 3,
-        "n_future": 3,
-        "scaler": "standard",
-        "scale_mode": "individual",  # all, individual
-        "feature_code": 15,
-        "train_test_split_method": "time",
-        "optimizer": "adam",
-        "loss": "mean_squared_error",
-        "metrics": ["mae"],
-        "batch_size": 64,
-        "dropout": 0.1,
-        "neurons": 100,
-        "lr_scheduler": "none",
-        "weight_initializer": "glorot",
-        "activation": "relu"
-    }
+    run_id = "b0p27vcs"
+    training_config = {"project": "ma-wahl-forecast",
+                       "log": False,  # whether to log to wandb
+                       "plot": False,  # whether to plot predictions
+                       "energy": "all",
+                       "res": "daily",
+                       "interpolate": 1,
+                       "dataset": "building",  # building, meta, missing_data_90
+                       "model": "FCN3",
+                       "lag_in": 72,
+                       "lag_out": 72,
+                       "n_in": 72,
+                       "n_out": 24,
+                       "n_future": 0,
+                       "scaler": "standard",
+                       "scale_mode": "individual",  # all, individual
+                       "feature_code": 15,
+                       "train_test_split_method": "time",
+                       "epochs": 1,
+                       "optimizer": "adam",
+                       "loss": "mean_squared_error",
+                       "metrics": ["mae"],
+                       "batch_size": 64,
+                       "dropout": 0.1,
+                       "neurons": 100,
+                       "lr_scheduler": "none",  # none, step_decay
+                       "weight_initializer": "glorot",
+                       "activation": "relu",  # ReLU, Linear
+                       "transformer_blocks": 2,
+                       "num_heads": 4,
+                       "remove_per": 0.0}
     model_path = MODELS_DIR / "heat" / "fixed"
+    model_path = MODELS_DIR / "FCN3.keras"
     # main_local(model_path, training_config)
     main(run_id)
-
+    model_names = ["FCN3_1_yl7k0lrd", "LSTM1_1_9dtljkbk", "TFT_1_best", "transformer_1_b8u5ibw5", "xLSTM_1_71rkhcwf"]
+    # compare_multiple_models_predictions(model_names, training_config)
     wandb_run_ids = ["bdq9efyy", "l2zri11o", "h2bik7m7"]
     # main_multiple(wandb_run_ids, "mae")

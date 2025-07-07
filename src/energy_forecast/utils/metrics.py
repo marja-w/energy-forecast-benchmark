@@ -64,6 +64,8 @@ def root_mean_squared_error(y_true: np.array, y_pred: np.array) -> Union[float, 
     """
 
     rmse = np.sqrt(mean_squared_error(y_true, y_pred))
+    if isinstance(rmse, np.float64):
+        return rmse.item()
     if len(rmse) == 1:
         return rmse[0]
     return rmse

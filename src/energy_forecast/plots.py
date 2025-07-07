@@ -1,9 +1,11 @@
 import ast
+import re
 import sys
 from datetime import timedelta, datetime
 from pathlib import Path
-from typing import Optional
+from typing import Optional, Union, Dict, Any
 
+import matplotlib
 import numpy as np
 import pandas as pd
 import plotly.io
@@ -194,7 +196,7 @@ def plot_per_step_metrics(per_step_metrics: np.ndarray):
 
 def save_plot(plot_save_path: Path):
     # Save the plot as a PNG file
-    plt.savefig(plot_save_path, format='png', bbox_inches='tight')
+    plt.savefig(plot_save_path, format='png', bbox_inches='tight', dpi=300)
     logger.info(f"Saved plot to {plot_save_path}")
     plt.close()
 
@@ -202,55 +204,65 @@ def save_plot(plot_save_path: Path):
 def plot_predictions(ds, y: np.ndarray, b_id: str, y_hat: np.ndarray, dates: pl.Series, lag_in: int, n_out: int,
                      lag_out: int, run: Optional[wandb.sdk.wandb_run.Run], model_name: str):
     test_df = ds.get_test_df().filter(pl.col("id") == b_id)
-    plt.figure(figsize=(10, 6))
+    plt.figure(figsize=(15, 6))
+
+    params = {'axes.labelsize': 16, 'axes.titlesize': 16, 'font.size': 12, 'legend.fontsize': 14,
+              'xtick.labelsize': 14, 'ytick.labelsize': 16}
+    matplotlib.rcParams.update(params)
 
     if y_hat.shape[1] == 1:
         plt.plot(dates, y, label='Test')
         y_hat = y_hat.squeeze(1)
         plt.scatter(dates, y_hat, linewidth=2, color='red')
     else:
-        plt.plot(test_df["datetime"], test_df["diff"], label='Test')
+        plt.plot(test_df["datetime"], test_df["diff"], label='Actual')
         test_dates = test_df[lag_in:]["datetime"]
         for row_id, row in enumerate(y_hat):
             plt.plot(test_dates[row_id:row_id + n_out], row, linewidth=2, color='red')
 
-    plt.xlabel('Time (Day)')
-    plt.ylabel('Value')
-    plt.title('Time Series Forecast vs Actual Series')
-    plt.legend()
+    plt.xlabel('Datetime')
+    plt.ylabel('Energy Consumption (kWh)')
+    # plt.title('Time Series Forecast vs Actual Series')
+    # plt.legend()
     plt.grid(True)
 
-    if run:
-        return plt  # store plot to wandb.Table
-    else:
-        plot_dir = REPORTS_DIR / "predictions" / f"{model_name}_{n_out}"
-        os.makedirs(plot_dir, exist_ok=True)
-        plot_save_path = plot_dir / f"{b_id}.png"
-        save_plot(plot_save_path)
-        logger.info(f"Plotted predictions for ID {b_id}")
+    # if run:
+    #     return plt  # store plot to wandb.Table
+
+    plot_dir = REPORTS_DIR / "predictions" / f"{model_name}_{n_out}_{wandb.run.id}_plots"
+    os.makedirs(plot_dir, exist_ok=True)
+    plot_save_path = plot_dir / f"{b_id}.png"
+    save_plot(plot_save_path)
+    logger.info(f"Plotted predictions for ID {b_id}")
 
 
 def create_box_plot_predictions(id_to_metrics: list, metric_to_plot: str, run: Optional[wandb.sdk.wandb_run.Run],
-                                log_y: bool = False, model_folder: str = ""):
+                                log_y: bool = False, model: str = ""):
     df = pd.DataFrame(id_to_metrics).explode(metric_to_plot)
     df[metric_to_plot] = df[metric_to_plot].astype(float)
     df = df.sort_values("avg_diff")
 
-    fig = px.box(df, x="id", y=metric_to_plot, log_y=log_y, custom_data=["avg_diff"],
-                 title=f"Boxplot of Prediction {metric_to_plot}")
+    fig = px.box(df, x="id", y=metric_to_plot, log_y=log_y, custom_data=["avg_diff"], width=1200, height=400)
+    metric_to_plot = "RSE" if metric_to_plot == "rse" else "nRSE"
     fig.update_traces(
         hovertemplate="<br>".join([
-            "id: %{x}",
+            "ID: %{x}",
             metric_to_plot + ": %{y}",
             "avg_diff: %{customdata[0]}"
         ])
     )
+    fig.update_xaxes(showticklabels=False)
     fig.update_layout(
         yaxis=dict(
             title=dict(
-                text=f"{metric_to_plot} (kwh) {'(log)' if log_y else ''}"
+                text=f"{metric_to_plot} {'(log)' if log_y else ''}"
             )
-        )
+        ),
+        xaxis=dict(
+            title=None
+        ),
+        font_size=16,
+        margin=dict(l=20, r=0, t=0, b=0)
     )
     if run:
         if sys.platform == "win32":
@@ -259,7 +271,11 @@ def create_box_plot_predictions(id_to_metrics: list, metric_to_plot: str, run: O
             run.log({f"boxplot_predictions": fig})
     else:
         fig.show()
-        # fig.write_html(f"{model_folder}/boxplot_{metric_to_plot}.html")
+    output_dir = REPORTS_DIR / "figures" / "boxplot_predictions" / f"{run.name}_{run.config.n_out}_{run.id}"
+    os.makedirs(output_dir, exist_ok=True)
+    fig.write_image(output_dir / f"boxplot_{metric_to_plot}.png", scale=2)
+    logger.info(f"Saved boxplot predictions for {run.name} to {output_dir}")
+    # fig.write_html(f"{model_folder}/boxplot_{metric_to_plot}.html")
 
 
 def create_box_plot_predictions_by_size(id_to_metrics: list, metric_to_plot: str, entry_threshold: int,
@@ -310,7 +326,7 @@ def create_box_plot_predictions_by_size(id_to_metrics: list, metric_to_plot: str
 
 
 def plot_box_plot_hours(rse_list: list, hour_col: list, b_id: str, run: Optional[wandb.sdk.wandb_run.Run],
-                                log_y: bool = False):
+                        log_y: bool = False):
     df = pd.DataFrame({"rse": rse_list, "hour": hour_col})
 
     fig = px.box(df, x="hour", y="rse", log_y=log_y, title=f"Boxplot of RSE for {b_id} per Hour")
@@ -340,10 +356,10 @@ def plot_bar_chart(id_to_metrics: list, metric_to_plot: str, run: Optional[wandb
                    log_y: bool = False, name: str = ""):
     logger.info(f"Plotting Bar Chart for {name}")
     df = pd.DataFrame(id_to_metrics)
-    df.rename(columns={"id": name}, inplace=True)
+    len_n = len(df["id"].unique())
+    df.rename(columns={"id": name, "avg_diff": "Avg"}, inplace=True)
 
-    fig = px.bar(df, x=name, y=metric_to_plot, log_y=log_y, color="avg_diff", custom_data=["avg_diff", "n_entries"],
-                 title=f"Bar Chart for {metric_to_plot} ({name})")
+    fig = px.bar(df, x=name, y=metric_to_plot, log_y=log_y, color="Avg", custom_data=["Avg", "n_entries"])
     fig.update_traces(
         hovertemplate="<br>".join([
             name + ": %{x}",
@@ -352,12 +368,17 @@ def plot_bar_chart(id_to_metrics: list, metric_to_plot: str, run: Optional[wandb
             "number of entries: %{customdata[1]}"
         ])
     )
+    if metric_to_plot == "rmse":
+        metric_to_plot = "RMSE"
+    if metric_to_plot == "nrmse":
+        metric_to_plot = "nRMSE"
     fig.update_layout(
         yaxis=dict(
             title=dict(
-                text=f"{metric_to_plot} (kwh) {'(log)' if log_y else ''}"
+                text=f"{metric_to_plot} (kWh) {'(log)' if log_y else ''}"
             )
-        )
+        ),
+        font_size=18
     )
     if run:
         if sys.platform == "win32":
@@ -366,7 +387,9 @@ def plot_bar_chart(id_to_metrics: list, metric_to_plot: str, run: Optional[wandb
             run.log({f"bar_chart_{name}_{metric_to_plot}": fig})
     else:
         fig.show()
+        fig.write_image(f"{REPORTS_DIR}/figures/bar_chart_{len_n}_{name}_{metric_to_plot}.png", scale=2)
         # fig.write_html(f"{model_folder}/boxplot_{metric_to_plot}.html")
+
 
 def plot_box_plot(id_to_ind_metrics: list, metric_to_plot: str, run: Optional[wandb.sdk.wandb_run.Run],
                   log_y: bool = False, name: str = ""):
@@ -376,9 +399,9 @@ def plot_box_plot(id_to_ind_metrics: list, metric_to_plot: str, run: Optional[wa
     df = df.sort_values("avg_diff")
 
     df.rename(columns={"id": name}, inplace=True)
+    len_n = len(df[name].unique())
 
-    fig = px.box(df, x=name, y=metric_to_plot, log_y=log_y, custom_data=["avg_diff"],
-                 title=f"Boxplot of Prediction {metric_to_plot}")
+    fig = px.box(df, x=name, y=metric_to_plot, log_y=log_y, custom_data=["avg_diff"])
     fig.update_traces(
         hovertemplate="<br>".join([
             "id: %{x}",
@@ -386,12 +409,17 @@ def plot_box_plot(id_to_ind_metrics: list, metric_to_plot: str, run: Optional[wa
             "avg_diff: %{customdata[0]}"
         ])
     )
+    if metric_to_plot == "rse":
+        metric_to_plot = "RSE"
+    if metric_to_plot == "nrse":
+        metric_to_plot = "nRSE"
     fig.update_layout(
         yaxis=dict(
             title=dict(
-                text=f"{metric_to_plot} (kwh) {'(log)' if log_y else ''}"
+                text=f"{metric_to_plot} {'(log)' if log_y else ''}"
             )
-        )
+        ),
+        font_size=18
     )
     if run:
         if sys.platform == "win32":
@@ -400,6 +428,8 @@ def plot_box_plot(id_to_ind_metrics: list, metric_to_plot: str, run: Optional[wa
             run.log({f"box_plot_{name}_{metric_to_plot}": fig})
     else:
         fig.show()
+        fig.write_image(f"{REPORTS_DIR}/figures/box_plot_{len_n}_{name}_{metric_to_plot}.png", scale=2)
+
 
 def plot_multiple_model_metrics(metrics: list[dict]):
     """
@@ -531,16 +561,36 @@ def plot_filtered_data_points(df, column, filtered_df):
 
 
 def plot_reduced_data_eval():
-    df = pd.read_csv(REPORTS_DIR / "reduced_data_eval_1_day_forecast.csv")
+    n_forecast = "24_hour"
+    df = pd.read_csv(REPORTS_DIR / f"reduced_data_eval_{n_forecast}_forecast.csv")
+
+    params = {'axes.labelsize': 16, 'axes.titlesize': 16, 'font.size': 14, 'legend.fontsize': 14,
+              'xtick.labelsize': 14, 'ytick.labelsize': 14}
+    matplotlib.rcParams.update(params)
 
     # Create the line plot
-    plt.figure(figsize=(10, 6))
-    sns.lineplot(data=df, x='remove_per', y='test_rmse', hue='model', marker='o')
+    plt.figure(figsize=(12, 6))
+    color_map = {""}
+    pal = [get_color_from_model_hex(n) for n in df["model"].unique()]
+
+    name_mapping = {
+        "xlstm": "xLSTM",
+        "transformer": "Transformer Encoder",
+        "lstm": "LSTM",
+        "tft": "TFT",
+        "FCN3": "FCN",
+        "baseline": "Baseline"
+    }
+    df["model"] = df["model"].map(name_mapping)
+    df["remove_per"] = df["remove_per"]*100
+    # Add a style column
+    df['line_style'] = df['model'].apply(lambda x: 'dashed' if x == 'Baseline' else 'solid')
+    sns.lineplot(data=df, x='remove_per', y='test_rmse', hue='model', marker='o', palette=pal)
 
     # Add labels and title
     plt.xlabel('Percentage of Data Removed (%)')
-    plt.ylabel('Test RMSE')
-    plt.title('Model Performance vs. Data Removal')
+    plt.ylabel('RMSE')
+    # plt.title('Model Performance vs. Data Removal')
     plt.grid(True, linestyle='--', alpha=0.7)
     plt.legend(title='Models')
 
@@ -548,65 +598,112 @@ def plot_reduced_data_eval():
     plt.tight_layout()
     # plt.show()
 
-    plt.savefig(REPORTS_DIR / "figures" / "reduced_data_eval_1_day_forecast.png")
+    plt.savefig(REPORTS_DIR / "figures" / f"reduced_data_eval_{n_forecast}.png", dpi=300, bbox_inches='tight')
 
 
-def plot_metrics_per_step():
-    save_path = FIGURES_DIR / "metrics_per_step_box_plot.png"
-    df = pd.read_csv(REPORTS_DIR / "best_models_7_day_forecast.csv")
+def plot_metrics_per_step(res="24_hour"):
+    metric = "test_rmse_ind"
+    save_path = FIGURES_DIR / f"metrics_per_step_{res}_forecast_line_plot_{metric}.png"
+    # input_file = f"best_models_7_day_forecast_step_metrics_{metric}.csv"
+    input_file = f"best_models_{res}_forecast_metrics_{metric}.csv"
+    df = pd.read_csv(REPORTS_DIR / input_file)
 
     plt.figure(figsize=(10, 6))
 
     for _, row in df.iterrows():
-        name = row['name']
-        mae_values = ast.literal_eval(row['summary']).get('test_mae_ind', [])
+        name = row['model']
+        # if name == "baseline":
+        #     continue
+        # Identify step columns using regex pattern
+        step_columns = [col for col in df.columns if re.match(r'step_\d+', col)]
+
+        # Sort step columns numerically
+        step_columns.sort(key=lambda x: int(x.split('_')[1]))
+
+        # Extract step values into lists
+        mae_values = row[step_columns].values.tolist()
         avg_mae = np.mean(mae_values)
+
+        try:
+            model_size = row['model_size']
+        except KeyError:
+            model_size = "-"
 
         if not mae_values:
             print(f"Warning: No 'test_mae_ind' data found for {name}")
             continue
-        steps = np.arange(len(mae_values))
-        line, = plt.plot(steps, mae_values, label=f"{name} (avg: {avg_mae:.4f})",
-                         marker='o', markersize=3)
+        steps = np.arange(1, len(mae_values)+1)
+
+        params = {'axes.labelsize': 14, 'axes.titlesize': 14, 'font.size': 14, 'legend.fontsize': 14,
+                  'xtick.labelsize': 14, 'ytick.labelsize': 14}
+        matplotlib.rcParams.update(params)
+
+        line, = plt.plot(steps, mae_values, label=get_name_from_id(name),
+                         marker='o', markersize=3, color=get_color_from_model(name))
+
+        # add new line indicating average
+        if name != "baseline":
+            line, = plt.plot(steps, [avg_mae] * len(steps), linestyle='--', color=line.get_color(), alpha=0.5)
 
         # Add annotation at the end of the line with the average value
         last_x = steps[-1]
-        last_y = mae_values[-1]
-
+        last_y = avg_mae
+        y_offset = -1 if get_name_from_id(name) == "TFT" else 0
         # Slight offset for better visibility
-        plt.annotate(
-            f"avg: {avg_mae:.4f}",
-            xy=(last_x, last_y),
-            xytext=(last_x + 0.2, last_y),
-            fontsize=9,
-            color=line.get_color(),
-            bbox=dict(boxstyle="round,pad=0.3", fc="white", alpha=0.8, ec=line.get_color()),
-            arrowprops=dict(arrowstyle="->", color=line.get_color())
-        )
+        # plt.annotate(
+        #     f"avg: {avg_mae:.4f}",
+        #     xy=(last_x, last_y),
+        #     xytext=(last_x + 0.2, last_y + y_offset),
+        #     fontsize=12,
+        #     color=line.get_color(),
+        #     bbox=dict(boxstyle="round,pad=0.3", fc="white", alpha=0.8, ec=line.get_color()),
+        #     arrowprops=dict(arrowstyle="->", color=line.get_color())
+        # )
+
+        if name == "baseline":
+            plt.annotate(
+                f"baseline",
+                xy=(last_x, last_y),
+                xytext=(last_x + 0.5, last_y + y_offset),
+                fontsize=14,
+                color=line.get_color(),
+                bbox=dict(boxstyle="round,pad=0.3", fc="white", alpha=0.8, ec=line.get_color()),
+                arrowprops=dict(arrowstyle="->", color=line.get_color())
+            )
 
     plt.xlabel('Step')
-    plt.ylabel('MAE')
-    plt.title("Per-Step Metric Evaluation of Best Models")
+    plt.ylabel('RMSE')
+    # plt.title("Per-Step Metric Evaluation of Best Models")
     plt.grid(True, linestyle='--', alpha=0.7)
-    plt.legend()
+    plt.legend(loc="upper left")
 
     if save_path:
         plt.savefig(save_path, dpi=300, bbox_inches='tight')
 
     plt.show()
 
+
 def plot_box_plot_per_step():
     # save_path = None
-    save_path = FIGURES_DIR / "metrics_per_step.png"
-    df = pd.read_csv(REPORTS_DIR / "best_models_7_day_forecast.csv")
+    save_path = FIGURES_DIR / "metrics_per_step_24_hour_forecast_rmse.png"
+    df = pd.read_csv(REPORTS_DIR / "best_models_24_hour_forecast_metrics_test_rmse_ind.csv")
     # Prepare data for boxplot
     box_data = []
     labels = []
     avg_values = []
 
     for _, row in df.iterrows():
-        name = row['name']
-        mae_values = ast.literal_eval(row['summary']).get('test_mae_ind', [])
+        name = row['model']
+        # Identify step columns using regex pattern
+        step_columns = [col for col in df.columns if re.match(r'step_\d+', col)]
+
+        # Sort step columns numerically
+        step_columns.sort(key=lambda x: int(x.split('_')[1]))
+
+        # Extract step values into lists
+        mae_values = row[step_columns].values.tolist()
+        if len(mae_values) == 0:
+            continue
 
         if not mae_values:
             print(f"Warning: No 'test_mae_ind' data found for {name}")
@@ -630,7 +727,7 @@ def plot_box_plot_per_step():
         plt.annotate(
             f"avg: {avg:.4f}",
             xy=(i + 1, box_plot['caps'][i * 2].get_ydata()[0]),  # Position above the upper cap
-            xytext=(0, 10),  # Offset text 10 points above
+            xytext=(0, 40),  # Offset text 10 points above
             textcoords='offset points',
             ha='center',
             fontsize=9,
@@ -650,6 +747,205 @@ def plot_box_plot_per_step():
         plt.savefig(save_path, dpi=300, bbox_inches='tight')
 
     plt.show()
+
+
+def plot_model_sizes(
+        file_path: Union[str, Path],
+        figsize: tuple[int, int] = (10, 6),
+        title: str = "Model Size Comparison",
+        save_path: Optional[str] = None,
+        **kwargs: Dict[str, Any]
+) -> pd.DataFrame:
+    """
+    Read a CSV file into a pandas DataFrame and create a bar chart for model sizes.
+
+    Args:
+        file_path: Path to the CSV file
+        figsize: Figure size as (width, height) in inches
+        title: Title for the plot
+        save_path: Optional path to save the figure
+        **kwargs: Additional keyword arguments to pass to pd.read_csv()
+
+    Returns:
+        pd.DataFrame: The loaded DataFrame
+
+    Raises:
+        FileNotFoundError: If the CSV file doesn't exist
+        KeyError: If required columns 'model' or 'model_size' are missing
+    """
+    # Read CSV into DataFrame
+    df = pd.read_csv(file_path, **kwargs)
+
+    # Verify required columns exist
+    if 'model' not in df.columns or 'model_size' not in df.columns:
+        raise KeyError("CSV must contain 'model' and 'model_size' columns")
+
+    # Create the plot
+    plt.figure(figsize=figsize)
+
+    # Create bar plot
+    bars = plt.bar(df['model'], df['model_size'].astype("int"))
+
+    # Add value labels on top of bars
+    for bar in bars:
+        height = bar.get_height()
+        plt.text(
+            bar.get_x() + bar.get_width() / 2,
+            height + 0.01 * max(df['model_size']),  # Small offset above bar
+            f'{height}',
+            ha='center',
+            va='bottom',
+            fontweight='bold'
+        )
+
+    # Add labels and title
+    plt.xlabel('Model')
+    plt.ylabel('Trainable Parameters')
+    plt.title(title)
+    plt.xticks(rotation=45, ha='right')  # Rotate labels if needed
+    plt.tight_layout()
+
+    # Save figure if path provided
+    if save_path:
+        plt.savefig(save_path, dpi=300, bbox_inches='tight')
+
+    plt.show()
+
+    return df
+
+
+def get_color_from_model(model_name):
+    if "FCN" in model_name:
+        return "tab:blue"
+    elif "xLSTM" in model_name:
+        return "tab:green"
+    elif "LSTM" in model_name:
+        return "tab:olive"
+    elif "TFT" in model_name:
+        return "tab:cyan"
+    elif "transformer" in model_name:
+        return "tab:brown"
+    elif "baseline" in model_name:
+        return "tab:gray"
+    elif "actual" in model_name:
+        return "tab:red"
+    return None
+
+def get_color_from_model_hex(model_name):
+    if "FCN3" in model_name:
+        return "#1f77b4"
+    elif "xlstm" in model_name:
+        return "#2ca02c"
+    elif "lstm" in model_name:
+        return "#bcbd22"
+    elif "tft" in model_name:
+        return "#17becf"
+    elif "transformer" in model_name:
+        return "#8c564b"
+    elif "baseline" in model_name:
+        return "#7f7f7f"
+    elif "actual" in model_name:
+        return "#d62728"
+    return None
+
+
+def get_name_from_id(id):
+    if "FCN" in id or "FCN" in id.capitalize():
+        return "FCN"
+    elif "xLSTM" in id or "XLSTM" in id.capitalize():
+        return "xLSTM"
+    elif "LSTM" in id or "LSTM" in id.capitalize():
+        return "LSTM"
+    elif "TFT" in id or "TFT" in id.capitalize():
+        return "TFT"
+    elif "transformer" in id:
+        return "Transformer Encoder"
+    elif "baseline" in id:
+        return "Baseline"
+    return None
+
+
+def plot_predictions_multiple_models(model_names, ds, config):
+    sensor_id = "400073PVG-0"
+    input_folder = REPORTS_DIR / "predictions"
+
+    test_df = ds.get_test_df().filter(pl.col("id") == sensor_id)
+    dates = test_df["datetime"]
+    x_values = dates.to_list()[config["lag_in"]:-config["lag_out"] + 1]  # x-axis values
+
+    # get y_hats from file
+    y_hat_list = list()
+    for name in model_names:
+        pred_df = pd.read_csv(input_folder / name / "predictions.csv")
+        p = pred_df[pred_df["id"] == sensor_id]["predictions"].to_list()[0]
+        numbers = re.findall(r'-?\d+\.?\d*', p)
+        p = [float(i) for i in numbers]
+        if len(p) > len(x_values):
+            p = p[:-config["lag_out"] + 1]
+        y_hat_list.append((get_name_from_id(name), p))
+
+    # add baseline
+    target_vars = ["diff"] + [f"diff(t+{i})" for i in range(1, config["n_out"])]
+    y_test = ds.get_test_df().select(["index", "datetime", "id"] + target_vars).to_pandas()
+    y_test = y_test[y_test["id"] == sensor_id]
+    y_hat = y_test.groupby("id")[target_vars].shift(config["n_out"],
+                                                    # shift by number of predictions to be made
+                                                    fill_value=0)
+    y_hat_list.append(("baseline", y_hat["diff"].to_list()[config["lag_in"]:-config["lag_out"] + 1]))
+
+    # add actual values
+    y_hat_list.append(("actual", test_df["diff"].to_list()[config["lag_in"]:-config["lag_out"] + 1]))
+
+    # Create plot for this ID
+    params = {'axes.labelsize': 14, 'axes.titlesize': 14, 'font.size': 14, 'legend.fontsize': 20,
+              'xtick.labelsize': 14, 'ytick.labelsize': 20}
+    matplotlib.rcParams.update(params)
+
+    # Set default line styles and colors if not provided
+    line_styles = ['-', '--', '-.', ':'] * (len(dates) // 4 + 1)
+    colors = plt.cm.tab10(np.linspace(0, 1, len(dates)))
+    show_markers = True
+
+    # Create figure and axis
+    fig, ax = plt.subplots(figsize=(16, 8))
+    for i, (id_name, values) in enumerate(y_hat_list):
+        # Use custom x_values or generate indices
+        if x_values is not None:
+            if len(x_values) != len(values):
+                print(f"Warning: x_values length ({len(x_values)}) doesn't match "
+                      f"values length ({len(values)}) for '{id_name}'. Using indices.")
+                x_data = range(len(values))
+            else:
+                x_data = x_values
+        else:
+            x_data = range(len(values))
+
+        line_style = ":" if id_name == "baseline" else "-"
+
+        # Plot the line
+        line_kwargs = {
+            'label': id_name,
+            'linestyle': line_style,
+            'color': get_color_from_model(id_name),
+            'linewidth': 3
+        }
+
+        if show_markers:
+            line_kwargs['marker'] = 'o'
+            line_kwargs['markersize'] = 4
+
+        ax.plot(x_data, values, **line_kwargs)
+
+    ax.set_xlabel("Datetime", fontsize=20)
+    ax.set_ylabel("Energy Consumption (kWh)", fontsize=20)
+
+    plt.legend(loc="upper left")
+    plt.grid(True)
+    output_folder_path = FIGURES_DIR / "predictions" / f'model_comparison_{config["res"]}_{config["n_out"]}.png'
+    os.makedirs(os.path.dirname(output_folder_path), exist_ok=True)
+    plt.savefig(output_folder_path, dpi=300)
+    plt.close()
+
 
 if __name__ == "__main__":
     # df_daily = pl.read_csv(PROCESSED_DATA_DIR / "dataset_daily.csv").with_columns(pl.col("datetime").str.to_datetime())
@@ -677,6 +973,10 @@ if __name__ == "__main__":
                        ]
     # df_daily_dh = df_daily.filter(pl.col("source") == "dh")
     # for id in df_daily["id"].unique():
-        # plot_missing_dates(df_daily, id)
-    # plot_reduced_data_eval()
-    plot_box_plot_per_step()
+    # plot_missing_dates(df_daily, id)
+    plot_reduced_data_eval()
+    # plot_metrics_per_step()
+    # plot_box_plot_per_step()
+    # plot_model_sizes(REPORTS_DIR / "best_models_24_hour_forecast_metrics_test_mae_ind.csv")
+    model_names = ["FCN3_1_yl7k0lrd", "LSTM1_1_9dtljkbk", "TFT_1_best"]
+    # plot_predictions_multiple_models(model_names)

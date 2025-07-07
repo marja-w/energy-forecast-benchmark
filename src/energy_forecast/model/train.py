@@ -137,6 +137,7 @@ def train(run_config: dict):
 
     # train
     run = m.train_ds(ds, log=run_config["log"])
+    ds.compute_rmse_noisy_features()
 
     # Evaluate the models
     m.evaluate(ds, run, log=run_config["log"], plot=run_config["plot"])
@@ -181,18 +182,18 @@ if __name__ == '__main__':
         n_futures = [0, 1, 7]
         epochs_list = [40]
         config = {"project": "ma-wahl-forecast",
-                  "log": False,  # whether to log to wandb
+                  "log": True,  # whether to log to wandb
                   "plot": False,  # whether to plot predictions
                   "energy": "all",
                   "res": "daily",
                   "interpolate": 1,
                   "dataset": "building_noise",  # building, meta, missing_data_90
-                  "model": "lstm",
+                  "model": "FCN3",
                   "lag_in": 7,
                   "lag_out": 7,
                   "n_in": 7,
                   "n_out": 7,
-                  "n_future": 3,
+                  "n_future": 7,
                   "scaler": "standard",
                   "scale_mode": "individual",  # all, individual
                   "feature_code": 14,

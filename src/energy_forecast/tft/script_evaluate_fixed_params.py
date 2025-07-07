@@ -33,7 +33,9 @@ import datetime as dte
 import os
 from statistics import mean
 
+import matplotlib
 import matplotlib.pyplot as plt
+import plotly.graph_objects as go
 import pandas as pd
 import plotly.express as px
 import tensorflow.compat.v1 as tf
@@ -143,6 +145,7 @@ def main(expt_name,
             metrics_by_id = {}
             id_to_ind_metrics = list()
 
+            prediction_list = list()
             for identifier in targets['identifier'].unique():
                 target_id = targets[targets['identifier'] == identifier]
                 pred_id = predictions[0][predictions[0]['identifier'] == identifier]
@@ -150,6 +153,7 @@ def main(expt_name,
                 # Calculate metrics for this ID
                 target_values = extract_numerical_data(target_id).to_numpy()
                 pred_values = extract_numerical_data(pred_id).to_numpy()
+                prediction_list.append({"id": identifier, "predictions": pred_values})
 
                 evaluator = RegressionMetric(target_values, pred_values)
 
@@ -187,6 +191,10 @@ def main(expt_name,
                     freq='D'
                 )
 
+                params = {'axes.labelsize': 12, 'axes.titlesize': 14, 'font.size': 12, 'legend.fontsize': 12,
+                          'xtick.labelsize': 10, 'ytick.labelsize': 12}
+                matplotlib.rcParams.update(params)
+
                 plt.figure(figsize=(12, 6))
                 plt.plot(date_range[:len(target_values)], target_values[:, 0], label='Actual', marker='o')
                 if forecast_length > 1:
@@ -195,13 +203,32 @@ def main(expt_name,
                                  marker='x')
                 else:
                     plt.plot(date_range[:len(pred_values)], pred_values, label='Forecast', marker='x')
-                plt.title(f'Forecast vs Actual for ID: {identifier}')
+                # plt.title(f'Forecast vs Actual for ID: {identifier}')
+
+                # SMALL_SIZE = 12
+                # MEDIUM_SIZE = 14
+                # BIGGER_SIZE = 16
+                #
+                # plt.rc('font', size=SMALL_SIZE)  # controls default text sizes
+                # plt.rc('axes', titlesize=SMALL_SIZE)  # fontsize of the axes title
+                # plt.rc('axes', labelsize=MEDIUM_SIZE)  # fontsize of the x and y labels
+                # plt.rc('xtick', labelsize=SMALL_SIZE)  # fontsize of the tick labels
+                # plt.rc('ytick', labelsize=SMALL_SIZE)  # fontsize of the tick labels
+                # plt.rc('legend', fontsize=SMALL_SIZE)  # legend fontsize
+                # plt.rc('figure', titlesize=BIGGER_SIZE)  # fontsize of the figure title
+
+                plt.xlabel("Timestamp")
+                plt.ylabel("Energy Consumption (kWh)")
+
                 plt.legend()
                 plt.grid(True)
                 output_folder_path = f'{output_folder}/predictions/forecast_id_{identifier}.png'
                 os.makedirs(os.path.dirname(output_folder_path), exist_ok=True)
-                plt.savefig(output_folder_path)
+                plt.savefig(output_folder_path, dpi=300)
                 plt.close()
+
+            df_predictions = pd.DataFrame(prediction_list)
+            df_predictions.to_csv(f"{model_folder}/predictions.csv", index=False)
 
             def create_box_plot_predictions(id_to_metrics: list, metric_to_plot: str,
                                             log_y: bool = False, model_folder: str = ""):
@@ -209,26 +236,38 @@ def main(expt_name,
                 df[metric_to_plot] = df[metric_to_plot].astype(float)
                 df = df.sort_values("avg_diff")
 
-                fig = px.box(df, x="id", y=metric_to_plot, log_y=log_y, custom_data=["avg_diff"],
-                             title=f"Boxplot of Prediction {metric_to_plot}")
+                fig = px.box(df, x="id", y=metric_to_plot, log_y=log_y, custom_data=["avg_diff"], width=1200, height=400)
+                metric_to_plot = "RSE" if metric_to_plot == "rse" else "nRSE"
                 fig.update_traces(
                     hovertemplate="<br>".join([
-                        "id: %{x}",
+                        "ID: %{x}",
                         metric_to_plot + ": %{y}",
                         "avg_diff: %{customdata[0]}"
                     ])
                 )
+                fig.update_xaxes(showticklabels=False)
                 fig.update_layout(
                     yaxis=dict(
                         title=dict(
-                            text=f"{metric_to_plot} (kwh) {'(log)' if log_y else ''}"
+                            text=f"{metric_to_plot} {'(log)' if log_y else ''}"
                         )
-                    )
+                    ),
+                    xaxis=dict(
+                        title=None
+                    ),
+                    font_size=16,
+                    margin=dict(l=20, r=0, t=0, b=0)
                 )
-                fig.write_html(f"{model_folder}/boxplot_{metric_to_plot}.html")
+                # fig.update_yaxes(automargin=True)
+                print("Writing box plot...")
+                output_name = f"{model_folder}/boxplot_{metric_to_plot}_t"
+                fig.write_image(f"{output_name}.png", scale=2)
+                print(f"Wrote box plot to {output_name}")
+                fig.write_html(f"{output_name}.html")
 
             create_box_plot_predictions(id_to_ind_metrics, "rse", log_y=True, model_folder=output_folder)
             create_box_plot_predictions(id_to_ind_metrics, "rse_n", log_y=True, model_folder=output_folder)
+            # create_box_plot_predictions(id_to_ind_metrics, ["rse", "rse_n"], log_y=True, model_folder=output_folder)
 
             # Save metrics by ID
             metrics_df = pd.DataFrame.from_dict(metrics_by_id, orient='index')

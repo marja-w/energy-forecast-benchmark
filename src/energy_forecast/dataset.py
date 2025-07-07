@@ -25,6 +25,7 @@ from src.energy_forecast.utils.cluster import hierarchical_clustering_on_meta_da
 from src.energy_forecast.utils.data_processing import remove_neg_diff_vals, filter_connection_errors_by_id, \
     filter_outliers_by_id, filter_flat_lines_by_id, split_series_by_id_list, interpolate_values_by_id, \
     remove_positive_jumps, split_series_by_id, remove_null_series_by_id
+from src.energy_forecast.utils.metrics import root_mean_squared_error
 from src.energy_forecast.utils.time_series import series_to_supervised
 from src.energy_forecast.utils.util import get_missing_dates
 
@@ -416,8 +417,8 @@ class TrainingDataset(Dataset):
                                                ((2 * math.pi * pl.col(f)) / max_value).cos().alias(f"{f}_cos"))
                 self.df = self.df.drop(f)
             cyclic_encoded_features = (
-                        list(set(self.config["features"]) - set(fs)) + [f"{f}_sin" for f in fs] + [f"{f}_cos" for f in
-                                                                                                   fs])
+                    list(set(self.config["features"]) - set(fs)) + [f"{f}_sin" for f in fs] + [f"{f}_cos" for f in
+                                                                                               fs])
             try:
                 self.config["features"] = cyclic_encoded_features
             except:
@@ -647,6 +648,12 @@ class TrainingDataset(Dataset):
     def get_noise_feature_names(self):
         return list()
 
+    def compute_rmse_noisy_features(self):
+        pass
+
+    def save_rmse_noise(self, run):
+        pass
+
 
 class TrainDataset90(TrainingDataset):
     def __init__(self, config: dict):
@@ -685,6 +692,8 @@ class TrainDatasetNoise(TrainDatasetBuilding):
         super().__init__(config)
         self.name += "_noise"
         self.weather_feature_names = FEATURES_WEATHER if self.res == "daily" else FEATURES_WEATHER_HOURLY
+        self.sigma = 0.3  # volatility of randomness in OU process
+        self.rmse_noise_df = None
 
     def get_noise_feature_names(self):
         noise_f = list()
@@ -701,11 +710,12 @@ class TrainDatasetNoise(TrainDatasetBuilding):
             dt = 1.0
             # the first row is empty because we dont now the last step
             noise_f = [[np.nan for i in range(self.config["n_future"])]]
+            # noise_f = []
 
             # for each time step simulate n_future steps
             for x in X0:
-                X = ou_process(X0=x, mu=mu, T=T, dt=dt)
-                noise_f.append(X)
+                X = ou_process(X0=x, mu=mu, T=T+1, dt=dt, sigma=self.sigma)  # generate T predictions from initial value
+                noise_f.append(X[1:])  # remove first actually recorded value
 
             # remove last array to make it fit with original data
             noise_f = noise_f[:-1]
@@ -714,6 +724,37 @@ class TrainDatasetNoise(TrainDatasetBuilding):
                 col_name = f"{name}_n" if i == 0 else f"{name}(t+{i})_n"
                 col = pl.Series(col_name, noise_f[:, i])
                 self.df = self.df.insert_column(len(self.df.columns), col)
+
+    def compute_rmse_noisy_features(self):
+        rmse_list = list()
+        noisy_feature_names = [name if not "t+" in name else None for name in self.get_noise_feature_names()]
+        for noisy_f in noisy_feature_names:
+            if not noisy_f:
+                continue
+            noise = self.X_test[noisy_f].to_numpy()
+            name = noisy_f[:-2]
+            actual = self.X_test[name].to_numpy()
+            # calculate RMSE between actual and noisy features
+            rmse = root_mean_squared_error(actual, noise)
+            rmse_list.append({"feature": name, "rmse": rmse})
+        out_path = REPORTS_DIR / f"noise_rmse_{self.config['n_out']}_{self.sigma}.csv"
+        df = pd.DataFrame(rmse_list)
+        df.loc["mean"] = [None, df["rmse"].mean()]
+        df.to_csv(out_path)
+        logger.info(f"Saved RMSE of noisy time series data in {out_path}")
+        if wandb.run:
+            os.makedirs(os.path.join(wandb.run.dir, "reports"), exist_ok=True)
+            wandb_run_dir_file = os.path.join(wandb.run.dir, os.path.join("reports", os.path.basename(out_path)))
+            df.to_csv(wandb_run_dir_file)
+            wandb.save(wandb_run_dir_file)
+            wandb.log({"noise_rmse": df["rmse"].mean(), "noise_sigma": self.sigma})
+
+    def save_rmse_noise(self, run):
+        # os.makedirs(os.path.join(wandb.run.dir, "reports"), exist_ok=True)
+        # wandb_run_dir_file = os.path.join(wandb.run.dir, os.path.join("models", os.path.basename(model_path)))
+        # self.rmse_noise_df.to_csv(wandb_run_dir_file)
+        # wandb.save(wandb_run_dir_file)
+        pass
 
     def preprocess(self):
         super().preprocess()

@@ -17,7 +17,7 @@ try:
         TrainDatasetNoise
     from src.energy_forecast.model.models import Model, FCNModel, DTModel, LinearRegressorModel, RegressionModel, \
         NNModel, \
-        RNN1Model, FCN2Model, FCN3Model, Baseline, RNN3Model, TransformerModel, LSTMModel, xLSTMModel
+        RNN1Model, FCN2Model, FCN3Model, Baseline, RNN3Model, TransformerModel, LSTMModel, xLSTMModel, xLSTMModel_v2
     from src.energy_forecast.utils.train_test_val_split import get_train_test_val_split
     from src.energy_forecast.utils.util import store_df_wandb
 except ModuleNotFoundError:
@@ -37,7 +37,8 @@ except ModuleNotFoundError:
         from src.energy_forecast.dataset import Dataset, TrainingDataset, TrainDataset90, TrainDatasetBuilding, \
             TrainDatasetNoise
         from src.energy_forecast.model.models import Model, FCNModel, DTModel, LinearRegressorModel, RegressionModel, \
-            NNModel, RNN1Model, FCN2Model, FCN3Model, Baseline, RNN3Model, LSTMModel, TransformerModel, xLSTMModel
+            NNModel, RNN1Model, FCN2Model, FCN3Model, Baseline, RNN3Model, LSTMModel, TransformerModel, xLSTMModel, \
+            xLSTMModel_v2
         from src.energy_forecast.utils.train_test_val_split import get_train_test_val_split
         from src.energy_forecast.utils.util import store_df_wandb
     else:
@@ -63,6 +64,8 @@ def get_model(config: dict) -> Model:
         return LSTMModel(config)
     elif config["model"] == "xlstm":
         return xLSTMModel(config)
+    elif config["model"] == "xlstm-tft":
+        return xLSTMModel_v2(config)
     else:
         raise Exception(f"Unknown model {config['model']}")
 
@@ -187,18 +190,18 @@ if __name__ == '__main__':
                   "energy": "all",
                   "res": "daily",
                   "interpolate": 1,
-                  "dataset": "building_noise",  # building, meta, missing_data_90
-                  "model": "FCN3",
+                  "dataset": "building",  # building, meta, missing_data_90
+                  "model": "xlstm-tft",
                   "lag_in": 7,
                   "lag_out": 7,
                   "n_in": 7,
-                  "n_out": 7,
-                  "n_future": 7,
+                  "n_out": 1,
+                  "n_future": 1,
                   "scaler": "standard",
                   "scale_mode": "individual",  # all, individual
                   "feature_code": 14,
                   "train_test_split_method": "time",
-                  "epochs": 1,
+                  "epochs": 10,
                   "optimizer": "adam",
                   "loss": "mean_squared_error",
                   "metrics": ["mae"],

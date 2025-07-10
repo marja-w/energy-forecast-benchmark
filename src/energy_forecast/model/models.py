@@ -35,6 +35,7 @@ from wandb.sdk.wandb_run import Run
 from src.energy_forecast.config import MODELS_DIR, CONTINUOUS_FEATURES, REPORTS_DIR, MASKING_VALUE, FEATURES_WEATHER, \
     FEATURES_HOURLY, FEATURES_WEATHER_HOURLY
 from src.energy_forecast.dataset import TrainingDataset
+from src.energy_forecast.model.tft_xlstm_fusion import TFTxLSTMConfig, TFTxLSTMModel
 from src.energy_forecast.plots import plot_predictions, create_box_plot_predictions, create_box_plot_predictions_by_size
 from src.energy_forecast.utils.metrics import mean_absolute_percentage_error, root_mean_squared_error, \
     root_squared_error, get_metrics
@@ -776,7 +777,7 @@ class RNNModel(NNModel):
         return X, y
 
     @overrides
-    def create_time_series_data_and_id_map(self, df: pl.DataFrame, split = "train") -> tuple[
+    def create_time_series_data_and_id_map(self, df: pl.DataFrame, split="train") -> tuple[
         Any, Any, dict[str, tuple[ndarray, ndarray, Series]], Series, Series]:
         X, y, id_to_data, id_column, datetime_col = super().create_time_series_data_and_id_map(df, split=split)
         X = X.to_numpy().reshape(
@@ -1020,6 +1021,7 @@ class xLSTMModel(RNNModel):
         input_dim = input_shape[1]
 
         # Configure xLSTM model based on config parameters
+        backend = "vanilla" if self.device == "cpu" else "cuda"
         cfg = xLSTMBlockStackConfig(
             mlstm_block=mLSTMBlockConfig(
                 mlstm=mLSTMLayerConfig(
@@ -1030,7 +1032,7 @@ class xLSTMModel(RNNModel):
             ),
             slstm_block=sLSTMBlockConfig(
                 slstm=sLSTMLayerConfig(
-                    backend="vanilla",
+                    backend=backend,
                     num_heads=1,  # TODO: fails for > 1
                     conv1d_kernel_size=4,
                     bias_init="powerlaw_blockdependent",
@@ -1214,3 +1216,315 @@ class xLSTMModel(RNNModel):
         # self.optimizer.load_state_dict(checkpoint['optimizer_state_dict'])
 
         logger.info(f"Successfully loaded {self.name} model from {file_path}")
+
+
+class MultiInputDataset(torch.utils.data.Dataset):
+    """Dataset class for handling multiple input types (past, future, static)"""
+
+    def __init__(self, past_features, future_features, static_features, targets):
+        self.past_features = past_features
+        self.future_features = future_features
+        self.static_features = static_features
+        self.targets = targets
+
+        # Ensure all non-None tensors have the same batch size
+        self.length = len(past_features) if past_features is not None else len(targets)
+
+    def __len__(self):
+        return self.length
+
+    def __getitem__(self, idx):
+        past = self.past_features[idx] if self.past_features is not None else None
+        future = self.future_features[idx] if self.future_features is not None else None
+        static = self.static_features[idx] if self.static_features is not None else None
+        target = self.targets[idx]
+
+        return past, future, static, target
+
+
+def custom_collate_fn(batch):
+    """
+    Custom collate function to handle None values in batch data.
+
+    Args:
+        batch: List of tuples (past, future, static, target)
+
+    Returns:
+        Tuple of batched tensors, with None for missing feature types
+    """
+    past_batch = []
+    future_batch = []
+    static_batch = []
+    target_batch = []
+
+    for past, future, static, target in batch:
+        if past is not None:
+            past_batch.append(past)
+        if future is not None:
+            future_batch.append(future)
+        if static is not None:
+            static_batch.append(static)
+        target_batch.append(target)
+
+    # Stack tensors or return None if no data
+    past_tensor = torch.stack(past_batch) if past_batch else None
+    future_tensor = torch.stack(future_batch) if future_batch else None
+    static_tensor = torch.stack(static_batch) if static_batch else None
+    target_tensor = torch.stack(target_batch)
+
+    return past_tensor, future_tensor, static_tensor, target_tensor
+
+
+class xLSTMModel_v2(xLSTMModel):
+    """PyTorch model implementation of the xLSTM model with additional feature handling inspired by TFT"""
+
+    def __init__(self, config):
+        super().__init__(config)
+        self.name = "xLSTM_v2"
+
+    def set_model(self, input_shape):
+        n_features = len(self.config["features"])
+        model_cfg = TFTxLSTMConfig(
+            embedding_dim=256,
+            hidden_dim=256,
+            context_length=self.config["n_in"],  # number of historical timesteps
+            future_length=self.config["n_future"],  # number of future timesteps
+            past_feature_dim=n_features,  # number of features per timestep
+            future_feature_dim=n_features - 1,  # remove diff
+            static_feature_dim=0,
+            encoder_layers=2,
+            xlstm_layers=2,
+            fusion_method="gated_attention",
+            num_attention_heads=4,
+            dropout=0.1,
+            device=self.device
+        )
+
+        self.model = TFTxLSTMModel(
+            out_features=self.config["n_out"],
+            config=model_cfg
+        )
+
+        # Move model to the appropriate device
+        self.model = self.model.to(self.device)
+
+    # @overrides
+    # def handle_future_covs(self, df: pl.DataFrame) -> pl.DataFrame:
+    #     # add suffixes for identifying past, future, and static covariates
+    #     df = df.to_pandas()
+    #     lag_target_names = ["diff"] + [f"diff(t+{i})" for i in range(1, self.config["lag_out"])]
+    #     lag_target_names = list(set(df.columns).intersection(lag_target_names))
+    #     df = df.drop(lag_target_names, axis=1)
+    #     return pl.DataFrame(df)
+
+    def train(self, X_train, y_train, X_val, y_val, log=False):
+        """Train the model with separate past, future, and static covariates"""
+        # Initialize wandb if logging is enabled
+        if log:
+            config, run = self.init_wandb(X_train, X_val)
+        else:
+            run = None
+            config = self.config
+
+        # Separate features by type based on column names
+        past_features_train, future_features_train, static_features_train = self._separate_features(X_train)
+        past_features_val, future_features_val, static_features_val = self._separate_features(X_val)
+
+        # Convert data to PyTorch tensors
+        past_train_tensor = torch.tensor(past_features_train, dtype=torch.float32).to(self.device)
+        y_train_tensor = torch.tensor(y_train.to_numpy(), dtype=torch.float32).to(self.device)
+        past_val_tensor = torch.tensor(past_features_val, dtype=torch.float32).to(self.device)
+        y_val_tensor = torch.tensor(y_val.to_numpy(), dtype=torch.float32).to(self.device)
+
+        # Handle future features (can be None)
+        future_train_tensor = None
+        future_val_tensor = None
+        if future_features_train is not None:
+            future_train_tensor = torch.tensor(future_features_train, dtype=torch.float32).to(self.device)
+            future_val_tensor = torch.tensor(future_features_val, dtype=torch.float32).to(self.device)
+
+        # Handle static features (can be None)
+        static_train_tensor = None
+        static_val_tensor = None
+        if static_features_train is not None:
+            static_train_tensor = torch.tensor(static_features_train, dtype=torch.float32).to(self.device)
+            static_val_tensor = torch.tensor(static_features_val, dtype=torch.float32).to(self.device)
+
+        # Create custom dataset class for multiple inputs
+        train_dataset = MultiInputDataset(
+            past_train_tensor,
+            future_train_tensor,
+            static_train_tensor,
+            y_train_tensor
+        )
+        val_dataset = MultiInputDataset(
+            past_val_tensor,
+            future_val_tensor,
+            static_val_tensor,
+            y_val_tensor
+        )
+
+        # Create DataLoaders
+        batch_size = self.config["batch_size"]
+        train_loader = torch.utils.data.DataLoader(
+            train_dataset, batch_size=batch_size, shuffle=True, collate_fn=custom_collate_fn
+        )
+        val_loader = torch.utils.data.DataLoader(
+            val_dataset, batch_size=batch_size, shuffle=False, collate_fn=custom_collate_fn
+        )
+
+        # Set optimizer and loss function
+        if self.config["optimizer"] == "adam":
+            self.optimizer = optim.Adam(
+                self.model.parameters(),
+                lr=self.config.get("learning_rate", 0.001),
+                weight_decay=self.config.get("weight_decay", 0)
+            )
+        else:
+            self.optimizer = optim.SGD(
+                self.model.parameters(),
+                lr=self.config.get("learning_rate", 0.01)
+            )
+
+        if self.config["loss"] == "mean_squared_error":
+            self.criterion = nn.MSELoss()
+        elif self.config["loss"] == "mean_absolute_error":
+            self.criterion = nn.L1Loss()
+        else:
+            self.criterion = nn.MSELoss()  # Default to MSE
+
+        # Training loop
+        epochs = self.config["epochs"]
+        for epoch in tqdm(range(epochs), desc="Training epochs"):
+            # Training phase
+            self.model.train()
+            train_loss = 0.0
+            train_mae = 0.0
+
+            for batch_data in tqdm(train_loader, desc="Training batches", position=0, leave=True):
+                past_inputs, future_inputs, static_inputs, targets = batch_data
+
+                self.optimizer.zero_grad()
+
+                # Forward pass with separated inputs
+                model_outputs = self.model(
+                    past_features=past_inputs,
+                    future_features=future_inputs,
+                    static_features=static_inputs
+                )
+
+                # Extract predictions from model output dictionary
+                outputs = model_outputs['predictions']
+
+                loss = self.criterion(outputs, targets)
+                loss.backward()
+
+                # Gradient clipping for stability
+                torch.nn.utils.clip_grad_norm_(self.model.parameters(), max_norm=1.0)
+
+                self.optimizer.step()
+
+                train_loss += loss.item() * past_inputs.size(0)
+                mae = torch.nn.functional.l1_loss(outputs, targets)
+                train_mae += mae.item() * past_inputs.size(0)
+
+            train_loss = train_loss / len(train_loader.dataset)
+            train_mae = train_mae / len(train_loader.dataset)
+
+            # Validation phase
+            self.model.eval()
+            val_loss = 0.0
+            val_mae = 0.0
+
+            with torch.no_grad():
+                for batch_data in val_loader:
+                    past_inputs, future_inputs, static_inputs, targets = batch_data
+
+                    model_outputs = self.model(
+                        past_features=past_inputs,
+                        future_features=future_inputs,
+                        static_features=static_inputs
+                    )
+
+                    outputs = model_outputs['predictions']
+                    loss = self.criterion(outputs, targets)
+
+                    val_loss += loss.item() * past_inputs.size(0)
+                    mae = torch.nn.functional.l1_loss(outputs, targets)
+                    val_mae += mae.item() * past_inputs.size(0)
+
+            val_loss = val_loss / len(val_loader.dataset)
+            val_mae = val_mae / len(val_loader.dataset)
+
+            # Log metrics
+            if log:
+                run.log({
+                    "epoch": epoch + 1,
+                    "train_loss": train_loss,
+                    "train_mae": train_mae,
+                    "val_loss": val_loss,
+                    "val_mae": val_mae
+                })
+
+            logger.info(f"Epoch {epoch + 1}/{epochs} - "
+                        f"Train Loss: {train_loss:.4f}, Train MAE: {train_mae:.4f}, "
+                        f"Val Loss: {val_loss:.4f}, Val MAE: {val_mae:.4f}")
+
+        logger.success("Model training complete.")
+        return run
+
+    def predict(self, X):
+        """Make predictions with the model using separated covariates"""
+        # Separate features by type based on column names
+        past_features, future_features, static_features = self._separate_features(X)
+
+        # Convert data to PyTorch tensors
+        past_tensor = torch.tensor(past_features, dtype=torch.float32).to(
+            self.device) if past_features is not None else None
+
+        # Handle future features
+        future_tensor = None
+        if future_features is not None:
+            future_tensor = torch.tensor(future_features, dtype=torch.float32).to(self.device)
+
+        # Handle static features
+        static_tensor = None
+        if static_features is not None:
+            static_tensor = torch.tensor(static_features, dtype=torch.float32).to(self.device)
+
+        # Set model to evaluation mode
+        self.model.eval()
+
+        with torch.no_grad():
+            # Forward pass with separated inputs
+            model_outputs = self.model(
+                past_features=past_tensor,
+                future_features=future_tensor,
+                static_features=static_tensor
+            )
+
+            # Extract predictions from model output dictionary
+            predictions = model_outputs['predictions']
+
+        return predictions.cpu().detach().numpy()
+
+    def _separate_features(self, X):
+        """
+        Separate features into past, future, and static based on column names.
+
+        Args:
+            X: DataFrame with feature columns
+
+        Returns:
+            Tuple of (past_features, future_features, static_features)
+            Each can be numpy array or None if no features of that type exist
+        """
+        past_features = X[:, :self.config["n_in"], :]
+        future_features = X[:, self.config["n_in"]:, :]
+
+        # get column index for columns with only masking values
+        idx_to_remove = np.argwhere(np.all(future_features[0, ..., :] == MASKING_VALUE, axis=0))[0][0]
+        future_features = np.delete(future_features, idx_to_remove, 2)
+        static_features = None
+
+        return past_features, future_features, static_features

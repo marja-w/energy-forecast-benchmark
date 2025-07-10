@@ -149,6 +149,7 @@ def main(expt_name,
 
             params = opt_manager.get_next_parameters()
             model = ModelClass(params, use_cudnn=use_gpu)
+            model.model.summary()
 
             if not model.training_data_cached():
                 model.cache_batched_data(train, "train", num_samples=train_samples)
@@ -281,10 +282,10 @@ if __name__ == "__main__":
     config = ExperimentConfig(name, output_folder)
     extra_config = {
         "quantiles": [1.0],
-        "num_epochs": 25,
+        "num_epochs": 20,
         "early_stopping_patience": 100,
-        "n_in": 7,
-        "n_out": 7
+        "n_in": 72,
+        "n_out": 24
     }
     formatter = config.make_data_formatter()
 

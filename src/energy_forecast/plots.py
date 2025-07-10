@@ -750,7 +750,7 @@ def plot_box_plot_per_step():
 
 
 def plot_model_sizes(
-        file_path: Union[str, Path],
+        file_path: Union[str, Path] = "",
         figsize: tuple[int, int] = (10, 6),
         title: str = "Model Size Comparison",
         save_path: Optional[str] = None,
@@ -773,36 +773,83 @@ def plot_model_sizes(
         FileNotFoundError: If the CSV file doesn't exist
         KeyError: If required columns 'model' or 'model_size' are missing
     """
-    # Read CSV into DataFrame
-    df = pd.read_csv(file_path, **kwargs)
+    ns = ["7_day", "24_hour"]
+    labels = []
+    dataframes = []
+    file_paths = [REPORTS_DIR / f"best_models_{n}_forecast_metrics_test_mae_ind.csv" for n in ns]
+    save_path = FIGURES_DIR / "model_sizes.png"
 
-    # Verify required columns exist
-    if 'model' not in df.columns or 'model_size' not in df.columns:
-        raise KeyError("CSV must contain 'model' and 'model_size' columns")
+    for file_path in file_paths:
+        # Extract forecast period from filename
+        if '7_day' in str(file_path):
+            labels.append('7-day forecast')
+        elif '24_hour' in str(file_path):
+            labels.append('24-hour forecast')
+        else:
+            labels.append(str(file_path).split('_')[-3] + ' forecast')
 
-    # Create the plot
+        # Read CSV into DataFrame
+        df = pd.read_csv(file_path)
+
+        # Verify required columns exist
+        if 'model' not in df.columns or 'model_size' not in df.columns:
+            raise KeyError(f"CSV {file_path} must contain 'model' and 'model_size' columns")
+
+        dataframes.append(df)
+
+        # Set up the figure
     plt.figure(figsize=figsize)
 
-    # Create bar plot
-    bars = plt.bar(df['model'], df['model_size'].astype("int"))
+    # Set width of bars
+    barWidth = 0.35
+    colors = ['skyblue', 'lightcoral']
+
+    # Set positions of the bars on X axis
+    r = np.arange(len(dataframes[0]['model']))
+
+    all_bars = []
+    max_height = 0
+
+    # Create bars for each dataframe
+    for i, (df, label) in enumerate(zip(dataframes, labels)):
+        positions = [x + i * barWidth for x in r]
+        try:
+            bars = plt.bar(positions, df['model_size'].astype(int), width=barWidth,
+                           label=label, color=colors[i] if i < len(colors) else None)
+        except ValueError:
+            continue
+        all_bars.append(bars)
+        max_height = max(max_height, df['model_size'].max())
 
     # Add value labels on top of bars
-    for bar in bars:
-        height = bar.get_height()
-        plt.text(
-            bar.get_x() + bar.get_width() / 2,
-            height + 0.01 * max(df['model_size']),  # Small offset above bar
-            f'{height}',
-            ha='center',
-            va='bottom',
-            fontweight='bold'
-        )
+    for bars in all_bars:
+        for bar in bars:
+            height = bar.get_height()
+            plt.text(
+                bar.get_x() + bar.get_width() / 2,
+                height + 0.01 * max_height,
+                f'{height:,}',  # Format with commas for thousands
+                ha='center',
+                va='bottom',
+                fontsize=9
+            )
 
     # Add labels and title
-    plt.xlabel('Model')
-    plt.ylabel('Trainable Parameters')
-    plt.title(title)
-    plt.xticks(rotation=45, ha='right')  # Rotate labels if needed
+    plt.xlabel('Model', fontweight='bold', fontsize=12)
+    plt.ylabel('Trainable Parameters', fontweight='bold', fontsize=12)
+    plt.title(title, fontsize=14)
+
+    # Set position of X ticks
+    middle_positions = [r + barWidth * (len(dataframes) - 1) / 2 for r in r]
+    plt.xticks(middle_positions, dataframes[0]['model'])
+    plt.xticks(rotation=45, ha='right') if len(dataframes[0]['model']) > 4 else None
+
+    # Add legend
+    plt.legend()
+
+    # Add grid for better readability
+    plt.grid(axis='y', linestyle='--', alpha=0.7)
+
     plt.tight_layout()
 
     # Save figure if path provided
@@ -974,9 +1021,9 @@ if __name__ == "__main__":
     # df_daily_dh = df_daily.filter(pl.col("source") == "dh")
     # for id in df_daily["id"].unique():
     # plot_missing_dates(df_daily, id)
-    plot_reduced_data_eval()
+    # plot_reduced_data_eval()
     # plot_metrics_per_step()
     # plot_box_plot_per_step()
-    # plot_model_sizes(REPORTS_DIR / "best_models_24_hour_forecast_metrics_test_mae_ind.csv")
+    plot_model_sizes()
     model_names = ["FCN3_1_yl7k0lrd", "LSTM1_1_9dtljkbk", "TFT_1_best"]
     # plot_predictions_multiple_models(model_names)

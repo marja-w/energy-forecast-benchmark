@@ -8,9 +8,12 @@ LSTM1_all_27,620.7131396476144,0.2,lstm
 FCN3_all_21,837.9330739223676,0.5,FCN3
 FCN3_all_21,724.2270561,0.2,FCN3
 FCN3_all_22,639.765,0,FCN3
-FCN3_all_23,638.82,0,lstm
-FCN3_all_24,796.622,0,transformer
-FCN3_all_25,700.01264,0,xlstm
+FCN3_all_23,562.47,0,lstm
+FCN3_all_24,629.01,0,transformer
+FCN3_all_25,551.29,0,xlstm
 FCN3_all_26,622.67618,0,tft
 FCN3_all_27,632.59608,0.2,tft
 ,882.647993374698,0.5,tft
+,808.16,0,baseline
+,808.16,0.2,baseline
+,808.16,0.5,baseline

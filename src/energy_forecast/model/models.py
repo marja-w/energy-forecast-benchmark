@@ -36,6 +36,7 @@ from src.energy_forecast.config import MODELS_DIR, CONTINUOUS_FEATURES, REPORTS_
     FEATURES_HOURLY, FEATURES_WEATHER_HOURLY
 from src.energy_forecast.dataset import TrainingDataset
 from src.energy_forecast.model.tft_xlstm_fusion import TFTxLSTMConfig, TFTxLSTMModel
+from src.energy_forecast.model.xlstm import xLSTMAdaptModel, xLSTMConfig
 from src.energy_forecast.plots import plot_predictions, create_box_plot_predictions, create_box_plot_predictions_by_size
 from src.energy_forecast.utils.metrics import mean_absolute_percentage_error, root_mean_squared_error, \
     root_squared_error, get_metrics
@@ -1020,39 +1021,20 @@ class xLSTMModel(RNNModel):
         """Initialize the xLSTM model"""
         input_dim = input_shape[1]
 
-        # Configure xLSTM model based on config parameters
-        backend = "vanilla" if self.device == "cpu" else "cuda"
-        cfg = xLSTMBlockStackConfig(
-            mlstm_block=mLSTMBlockConfig(
-                mlstm=mLSTMLayerConfig(
-                    conv1d_kernel_size=4,
-                    qkv_proj_blocksize=4,
-                    num_heads=1  # TODO: fails for > 1
-                )
-            ),
-            slstm_block=sLSTMBlockConfig(
-                slstm=sLSTMLayerConfig(
-                    backend=backend,
-                    num_heads=1,  # TODO: fails for > 1
-                    conv1d_kernel_size=4,
-                    bias_init="powerlaw_blockdependent",
-                ),
-                feedforward=FeedForwardConfig(proj_factor=1.3, act_fn="gelu"),
-            ),
-            context_length=input_dim,  # TODO: n_in is context_length?
-            num_blocks=self.config.get("num_blocks", 7),
-            embedding_dim=256,  # TODO: number of features is embedding dimension?
-            slstm_at=[1],
+        cfg = xLSTMConfig(
+            in_features=input_shape[2],  # number of input features
+            out_features=self.config["n_out"],
+            context_length=input_dim,
+            embedding_dim=256,
+            hidden_dim=256,
+            num_blocks=7,
+            num_heads=self.config["num_heads"],
+            dropout=0.1,
+            device=self.device
         )
 
         # Initialize xLSTM model
-        self.model = xLSTMBlockStack(cfg, input_shape[2], self.config["n_out"])
-
-        # Add final prediction layer to output the right number of values
-        # self.model = nn.Sequential(  # TODO: directly set output dimensions in xLSTMBlockStackConfig?
-        #     self.model,
-        #     nn.Linear(cfg.embedding_dim, self.config["n_out"])
-        # )
+        self.model = xLSTMAdaptModel(cfg)
 
         # Move model to the appropriate device
         self.model = self.model.to(self.device)

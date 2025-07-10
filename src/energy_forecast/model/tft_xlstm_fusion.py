@@ -501,7 +501,7 @@ class TFTxLSTMModel(nn.Module):
                 dropout=config.dropout
             )
 
-        # xLSTM blocks (placeholder - use your implementation)
+        # xLSTM blocks
         self.blocks = self._create_xlstm_blocks(config)
 
         # Post-processing
@@ -602,7 +602,7 @@ class TFTxLSTMModel(nn.Module):
             future_encoded = None
 
         # Add positional encoding
-        fused_context = fused_context + self.positional_encoding.unsqueeze(0)
+        # fused_context = fused_context + self.positional_encoding.unsqueeze(0)
         fused_context = self.dropout(fused_context)
 
         # Pass through xLSTM blocks

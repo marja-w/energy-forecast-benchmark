@@ -77,13 +77,13 @@ class xLSTMAdaptModel(nn.Module):
                 mlstm=mLSTMLayerConfig(
                     conv1d_kernel_size=4,
                     qkv_proj_blocksize=4,
-                    num_heads=self.config.num_heads  # TODO: fails for > 1
+                    num_heads=self.config.num_heads
                 )
             ),
             slstm_block=sLSTMBlockConfig(
                 slstm=sLSTMLayerConfig(
                     backend=backend,
-                    num_heads=self.config.num_heads,  # TODO: fails for > 1
+                    num_heads=self.config.num_heads,
                     conv1d_kernel_size=4,
                     bias_init="powerlaw_blockdependent",
                 ),

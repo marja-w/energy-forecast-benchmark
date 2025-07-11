@@ -113,18 +113,24 @@ python src/energy_forecast/model/train.py
 Model configurations are stored in JSON format in the `references/` directory. Key parameters include:
 
 - `model`: Model type (`transformer`, `xlstm`, `lstm`, `FCN3`)
-- `dataset`: Dataset type (`building`, `meta`, `missing_data_90`)
 - `res`: Input data format resolution (`daily`, `hourly`)
 - `n_in`: Input sequence length
 - `n_out`: Output sequence length (forecast horizon)
 - `n_future`: Future variables length
 - `feature_code`: Feature set identifier (see `config.py`)
 - `epochs`: Training epochs
-- `batch_size`: Batch size for training
-- `neurons`: Number of neurons (for `FCN3`, `lstm`)
-- `dropout`: Dropout percentage for corrseponding dropout layers
-- `num_heads`: Number of heads for multi-head attention (`transformer`, `xlstm`)
-- `remove_per`: Remove percentage for experiments with removed training data
+- `batch_size`: Batch size for training, defaults to
+
+  **Optional**:
+- `dataset`: Dataset type (default: `building`, `meta`, `missing_data_90`)
+- `neurons`: Number of neurons (for `FCN3`, `lstm`), default: 100
+- `dropout`: Dropout percentage for corrseponding dropout layers, default: 0.1
+- `num_heads`: Number of heads for multi-head attention (`transformer`, `xlstm`), default: 4
+- `log`: whether to log to WandB. Need to be logged-in for logging to work, default: False
+- `project`: WandB project tag
+- `remove_per`: Remove percentage for experiments with removed training data, default: 0.0
+
+More detail about configuration values can be found in `src/energy_forecast/model/train.py` class `TrainConfig`
 
 Example configuration:
 ```json

@@ -114,7 +114,7 @@ class TrainConfig:
     # training
     epochs: int
     batch_size: int
-    dropout: float = 0.0
+    dropout: float = 0.1
     neurons: int = 100
     num_heads: int = 4
     optimizer: str = "adam"

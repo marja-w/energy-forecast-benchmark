@@ -114,3 +114,5 @@ Full hyperparameter optimization can then be run as per the previous section, e.
 python3 -m script_hyperparam_opt example . yes yes
 
 ```
+
+> added `heat` (daily experiments on full feature set), `heat_no_building`(daily experiments with no building features), and `heat_hourly` (hourly experiments on full feature set)

@@ -1,4 +1,4 @@
-# Energy Forecast Wahl
+# Benchmarking Transformers and xLSTM on Forecasting of Heat Load Data
 
 <a target="_blank" href="https://cookiecutter-data-science.drivendata.org/">
     <img src="https://img.shields.io/badge/CCDS-Project%20template-328F97?logo=cookiecutter" />
@@ -8,7 +8,7 @@ A comprehensive machine learning project for energy consumption forecasting usin
 
 ## Overview
 
-This project implements and evaluates multiple deep learning models for energy consumption forecasting, with a focus on building-level energy prediction. The project leverages time series data with weather features, building characteristics, and temporal patterns to predict energy consumption at different horizons (hourly, daily, weekly).
+This project implements and evaluates multiple deep learning models for energy consumption forecasting, with a focus on building-level energy prediction. The project leverages time series data with weather features, building characteristics, and temporal patterns to predict energy consumption at different horizons (hourly, daily).
 
 ### Key Features
 
@@ -64,7 +64,7 @@ This project implements and evaluates multiple deep learning models for energy c
 
 1. Clone the repository:
 ```bash
-git clone <repository-url>
+git clone git@gitlab2.informatik.uni-wuerzburg.de:s371469/energy-forecast-wahl.git
 cd energy-forecast-wahl
 ```
 
@@ -73,18 +73,14 @@ cd energy-forecast-wahl
 pip install -r requirements.txt
 ```
 
-3. Set up environment variables (optional):
-```bash
-cp .env.example .env
-# Edit .env with your configuration
-```
-
-4. Set up xLSTM: clone [xLSTM repository](https://github.com/NX-AI/xlstm)
+3. Set up [xLSTM repository](https://github.com/NX-AI/xlstm)
 ```bash
 cd src/energy_forecast
 git clone https://github.com/NX-AI/xlstm.git
 cd xlstm
 ```
+
+4. Download data with Git LFS #TODO
 
 ## Usage
 
@@ -98,10 +94,12 @@ The project expects processed data in the `data/processed/` directory. Key datas
 
 #### Single Model Training
 
-Train a specific model with a configuration file:
+Train a specific model with a configuration file from `references/your_config.json`:
 ```bash
 python src/energy_forecast/model/train.py --config_file your_config
 ```
+
+Example configuration file: `references/xlstm.json`
 
 #### Batch Training
 
@@ -114,24 +112,34 @@ python src/energy_forecast/model/train.py
 
 Model configurations are stored in JSON format in the `references/` directory. Key parameters include:
 
-- `model`: Model type (`transformer`, `xlstm`, `lstm`, `FCN1`, `TFT`)
+- `model`: Model type (`transformer`, `xlstm`, `lstm`, `FCN3`)
 - `dataset`: Dataset type (`building`, `meta`, `missing_data_90`)
+- `res`: Input data format resolution (`daily`, `hourly`)
 - `n_in`: Input sequence length
 - `n_out`: Output sequence length (forecast horizon)
+- `n_future`: Future variables length
 - `feature_code`: Feature set identifier (see `config.py`)
 - `epochs`: Training epochs
 - `batch_size`: Batch size for training
+- `neurons`: Number of neurons (for `FCN3`, `lstm`)
+- `dropout`: Dropout percentage for corrseponding dropout layers
+- `num_heads`: Number of heads for multi-head attention (`transformer`, `xlstm`)
+- `remove_per`: Remove percentage for experiments with removed training data
 
 Example configuration:
 ```json
 {
   "model": "transformer",
   "dataset": "building",
-  "n_in": 24,
+  "res": "daily",
+  "n_in": 7,
   "n_out": 7,
+  "n_future": 7, 
   "feature_code": 14,
-  "epochs": 100,
-  "batch_size": 64
+  "epochs": 10,
+  "batch_size": 64,
+  "dropout": 0.1,
+  "num_heads": 4
 }
 ```
 
@@ -139,10 +147,11 @@ Example configuration:
 
 1. **Temporal Fusion Transformer (TFT)**: State-of-the-art attention-based model for interpretable forecasting
 2. **xLSTM**: Extended LSTM with improved memory capabilities
-3. **Transformer**: Standard transformer architecture for time series
+3. **Transformer**: Standard transformer encoder architecture for time series
 4. **LSTM/RNN**: Traditional recurrent neural networks
-5. **FCN**: Fully connected networks
-6. **Decision Trees**: Tree-based models for baseline comparison
+5. **FCN**: Fully connected network
+
+> The **TFT** training is not included in the framework described above. It needs to be separately trained using the script `tft/script_train_fixed_params.py`. More instructions can be found in the `tft/README.md`
 
 ### Feature Sets
 
@@ -151,6 +160,12 @@ The project includes 16 predefined feature sets (see `config.py`):
 - Building characteristics (area, type, energy source)
 - Temporal features (weekday, month, holidays)
 - Lag features and differencing
+
+Important feature codes:
+
+- `12`: only past energy consumption
+- daily experiments: `13` (all features), `14` (all features but building features)
+- hourly experiments: `15` (all features), `16` (all features but building features)
 
 ## Repository Structure
 
@@ -240,10 +255,10 @@ Main source code package:
 #### Core Files
 - [`__init__.py`](src/energy_forecast/__init__.py) - Package initialization
 - [`config.py`](src/energy_forecast/config.py) - Configuration constants and feature definitions
-- [`dataset.py`](src/energy_forecast/dataset.py) - Data loading and dataset classes
+- [`dataset.py`](src/energy_forecast/dataset.py) - Data loading and dataset classes for creating data in `data/processed`
 - [`features.py`](src/energy_forecast/features.py) - Feature engineering utilities
-- [`plots.py`](src/energy_forecast/plots.py) - Visualization functions
-- [`get_run_summary.py`](src/energy_forecast/get_run_summary.py) - Experiment run summary utilities
+- [`plots.py`](src/energy_forecast/plots.py) - Visualization functions [created with Claude Sonnet 3.7]
+- [`get_run_summary.py`](src/energy_forecast/get_run_summary.py) - Experiment run summary utilities for getting results from WandB
 - [`sweep.py`](src/energy_forecast/sweep.py) - Hyperparameter sweeping utilities
 
 #### Data Processing ([`src/energy_forecast/data_processing/`](src/energy_forecast/data_processing/))
@@ -263,7 +278,7 @@ Main source code package:
 - [`predict.py`](src/energy_forecast/model/predict.py) - Prediction utilities
 - [`transformer.py`](src/energy_forecast/model/transformer.py) - Transformer model implementation
 - [`xlstm.py`](src/energy_forecast/model/xlstm.py) - xLSTM model implementation
-- [`tft_xlstm_fusion.py`](src/energy_forecast/model/tft_xlstm_fusion.py) - TFT-xLSTM fusion model
+- [`tft_xlstm_fusion.py`](src/energy_forecast/model/tft_xlstm_fusion.py) - TFT-xLSTM fusion model [created with Claude Sonnet 3.7]
 - [`darts_models.py`](src/energy_forecast/model/darts_models.py) - Darts library model wrappers
 
 #### Temporal Fusion Transformer ([`src/energy_forecast/tft/`](src/energy_forecast/tft/))
@@ -273,36 +288,19 @@ Complete TFT implementation with:
 - [`run.sh`](src/energy_forecast/tft/run.sh) - TFT execution script
 
 ##### Data Formatters ([`src/energy_forecast/tft/data_formatters/`](src/energy_forecast/tft/data_formatters/))
-- [`base.py`](src/energy_forecast/tft/data_formatters/base.py) - Base data formatter class
-- [`electricity.py`](src/energy_forecast/tft/data_formatters/electricity.py) - Electricity data formatter
 - [`heat.py`](src/energy_forecast/tft/data_formatters/heat.py) - Heat data formatter
 - [`heat_diff.py`](src/energy_forecast/tft/data_formatters/heat_diff.py) - Heat difference data formatter
 - [`heat_hourly.py`](src/energy_forecast/tft/data_formatters/heat_hourly.py) - Hourly heat data formatter
 - [`heat_no_building.py`](src/energy_forecast/tft/data_formatters/heat_no_building.py) - Heat data without building features
-- [`volatility.py`](src/energy_forecast/tft/data_formatters/volatility.py) - Volatility data formatter
 
 ##### Experiment Settings ([`src/energy_forecast/tft/expt_settings/`](src/energy_forecast/tft/expt_settings/))
 - [`configs.py`](src/energy_forecast/tft/expt_settings/configs.py) - TFT experiment configurations
-
-##### Libraries ([`src/energy_forecast/tft/libs/`](src/energy_forecast/tft/libs/))
-- [`hyperparam_opt.py`](src/energy_forecast/tft/libs/hyperparam_opt.py) - Hyperparameter optimization
-- [`tft_model.py`](src/energy_forecast/tft/libs/tft_model.py) - Core TFT model implementation
-- [`utils.py`](src/energy_forecast/tft/libs/utils.py) - TFT utility functions
 
 ##### Scripts
 - [`script_download_data.py`](src/energy_forecast/tft/script_download_data.py) - Data download utility
 - [`script_evaluate_fixed_params.py`](src/energy_forecast/tft/script_evaluate_fixed_params.py) - Fixed parameter evaluation
 - [`script_hyperparam_opt.py`](src/energy_forecast/tft/script_hyperparam_opt.py) - Hyperparameter optimization
 - [`script_train_fixed_params.py`](src/energy_forecast/tft/script_train_fixed_params.py) - Fixed parameter training
-
-#### Utilities ([`src/energy_forecast/utils/`](src/energy_forecast/utils/))
-- [`__init__.py`](src/energy_forecast/utils/__init__.py) - Module initialization
-- [`cluster.py`](src/energy_forecast/utils/cluster.py) - Clustering utilities
-- [`data_processing.py`](src/energy_forecast/utils/data_processing.py) - Data processing helpers
-- [`metrics.py`](src/energy_forecast/utils/metrics.py) - Evaluation metrics
-- [`time_series.py`](src/energy_forecast/utils/time_series.py) - Time series utilities
-- [`train_test_val_split.py`](src/energy_forecast/utils/train_test_val_split.py) - Data splitting utilities
-- [`util.py`](src/energy_forecast/utils/util.py) - General utility functions
 
 ## Evaluation
 
@@ -312,7 +310,7 @@ Models are evaluated using multiple metrics:
 - **MAPE**: Mean Absolute Percentage Error
 - **nRMSE**: Normalized RMSE
 
-Results are saved in the `reports/` directory and logged to wandb if enabled.
+Results are saved in the `reports/` directory and logged to wandb if enabled. Models are stored in `models/` folder.
 
 ## Dependencies
 
@@ -333,5 +331,7 @@ This project follows the Cookiecutter Data Science template structure and is int
 
 - Built using the [Cookiecutter Data Science](https://cookiecutter-data-science.drivendata.org/) template
 - Temporal Fusion Transformer implementation from the [official repository](https://github.com/google-research/google-research/tree/master/tft) by Google Research 
-- xLSTM architecture implementation for enhanced sequence modeling
+- xLSTM architecture implementation for enhanced sequence modeling from [official repository](https://github.com/NX-AI/xlstm)
 - README.md created by [Claude Code](https://www.anthropic.com/claude-code)
+- many helper functions, like saving and loading models, files, ... were created using the help of Claude Sonnet 3.7
+- extensive function documentations were created with Claude Sonnet 3.5

@@ -1,11 +1,14 @@
 import argparse
 import itertools
 import json
+from dataclasses import dataclass
+from typing import Any
 
 import jsonlines
 import polars as pl
 import wandb
 from loguru import logger
+from official.legacy.image_classification.configs.base_configs import TrainConfig
 from tensorflow import keras
 from tensorflow.keras import layers
 from tqdm import tqdm
@@ -98,6 +101,100 @@ def get_data(config: dict) -> TrainingDataset:
     return ds
 
 
+@dataclass
+class TrainConfig:
+    """Configuration for model training"""
+    # model specifics
+    model: str
+    n_in: int
+    n_out: int
+    n_future: int
+    feature_code: int
+
+    # training
+    epochs: int
+    batch_size: int
+    dropout: float = 0.0
+    neurons: int = 100
+    num_heads: int = 4
+    optimizer: str = "adam"
+    loss: str = "mean_squared_error"
+    remove_per: float = 0.0
+    lr_scheduler: str = "none"
+    weight_initializer: str = "glorot"
+    activation: str = "relu"
+    transformer_blocks: int = 2
+
+    # will be overwritten
+    lag_in: int = 7
+    lag_out: int = 7
+    metrics: list[str] = None
+
+    # preprocessing
+    scaler: str = "standard"
+    scale_mode: str = "individual"
+    train_test_split_method: str = "time"
+
+    # wandb configuration
+    project: str = "ma-wahl-forecast"
+    log: bool = False
+    plot: bool = False
+
+    # dataset specifications
+    energy: str = "all"
+    res: str = "daily"
+    interpolate: int = 1
+    dataset: str = "building"
+
+    def get(self, key: str, default: Any = None):
+        return getattr(self, key, default)
+
+    def as_dict(self) -> dict:
+        return {
+            'model': self.model,
+            'lag_in': self.lag_in,
+            'lag_out': self.lag_out,
+            'n_in': self.n_in,
+            'n_out': self.n_out,
+            'n_future': self.n_future,
+            'feature_code': self.feature_code,
+            'epochs': self.epochs,
+            'batch_size': self.batch_size,
+            'metrics': self.metrics,
+            'dropout': self.dropout,
+            'neurons': self.neurons,
+            'num_heads': self.num_heads,
+            'optimizer': self.optimizer,
+            'loss': self.loss,
+            'remove_per': self.remove_per,
+            'lr_scheduler': self.lr_scheduler,
+            'weight_initializer': self.weight_initializer,
+            'activation': self.activation,
+            'transformer_blocks': self.transformer_blocks,
+            'scaler': self.scaler,
+            'scale_mode': self.scale_mode,
+            'train_test_split_method': self.train_test_split_method,
+            'project': self.project,
+            'log': self.log,
+            'plot': self.plot,
+            'energy': self.energy,
+            'res': self.res,
+            'interpolate': self.interpolate,
+            'dataset': self.dataset
+        }
+
+
+def get_train_config(run_config: dict) -> dict:
+    run_config = TrainConfig(**run_config)
+    if not run_config.get("metrics"):
+        run_config.metrics = ["mae"]
+    if run_config.get("res") == "daily":
+        run_config.lag_in = run_config.lag_out = 7
+    else:
+        run_config.lag_in = run_config.lag_out = 1
+    return run_config.as_dict()
+
+
 def per_cluster_evaluation(baseline: Baseline, ds: TrainingDataset, m: Model,
                            wandb_run: wandb.sdk.wandb_run.Run) -> None:
     clusters = ds.compute_clusters()
@@ -132,6 +229,7 @@ def prepare_dataset(run_config: dict) -> tuple[TrainingDataset, dict]:
 
 
 def train(run_config: dict):
+    run_config = get_train_config(run_config)
     ds, run_config = prepare_dataset(run_config)
 
     # get model and baseline
@@ -185,23 +283,23 @@ if __name__ == '__main__':
         n_futures = [0, 1, 7]
         epochs_list = [40]
         config = {"project": "ma-wahl-forecast",
-                  "log": True,  # whether to log to wandb
+                  "log": False,  # whether to log to wandb
                   "plot": False,  # whether to plot predictions
                   "energy": "all",
                   "res": "daily",
                   "interpolate": 1,
                   "dataset": "building",  # building, meta, missing_data_90
-                  "model": "xlstm-tft",
+                  "model": "xlstm",
                   "lag_in": 7,
                   "lag_out": 7,
                   "n_in": 7,
                   "n_out": 1,
-                  "n_future": 1,
+                  "n_future": 0,
                   "scaler": "standard",
                   "scale_mode": "individual",  # all, individual
                   "feature_code": 14,
                   "train_test_split_method": "time",
-                  "epochs": 10,
+                  "epochs": 1,
                   "optimizer": "adam",
                   "loss": "mean_squared_error",
                   "metrics": ["mae"],
@@ -214,6 +312,20 @@ if __name__ == '__main__':
                   "transformer_blocks": 2,
                   "num_heads": 4,
                   "remove_per": 0.0}
+
+        config = {
+            "model": "transformer",
+            "dataset": "building",
+            "res": "daily",
+            "n_in": 7,
+            "n_out": 7,
+            "n_future": 7,
+            "feature_code": 14,
+            "epochs": 10,
+            "batch_size": 64,
+            "dropout": 0.1,
+            "num_heads": 4
+        }
         # config = None
         all_models = False
         if config is None:

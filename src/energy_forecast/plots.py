@@ -114,13 +114,18 @@ def plot_missing_dates(df_data: pl.DataFrame, res: str, sensor_id: str):
     # plot missing dates
     fig, ax = plt.subplots()
     source_code = df_data["source"].unique().item()
-    ax.set_title(source_code + " " + sensor_id)
+
+    # ax.set_title(source_code + " " + sensor_id)
     ax.fill_between(df.index, df["diff"].min(), df["diff"].max(), where=df["diff"], facecolor="lightblue", alpha=0.5)
     ax.fill_between(df.index, df["diff"].min(), df["diff"].max(), where=np.isfinite(df["diff"]), facecolor="white",
                     alpha=1)
     ax.scatter(df.index, df["diff"])
 
     ax.xaxis.set_tick_params(rotation=45)
+    plt.xticks(fontsize=14)
+    plt.yticks(fontsize=14)
+    plt.xlabel("Datetime", fontsize=16)
+    plt.ylabel("Energy Consumption (kWh)", fontsize=16)
     plt.tight_layout()
     output_dir = FIGURES_DIR / "missing_data" / res
     os.makedirs(output_dir, exist_ok=True)
@@ -163,16 +168,30 @@ def plot_dataframe(df: pl.DataFrame, b_id: str, data_source: str, folder: Path):
 
 
 def plot_clusters(df: pl.DataFrame, labels: np.ndarray):
+    params = {'axes.labelsize': 16, 'axes.titlesize': 16, 'font.size': 12, 'legend.fontsize': 14,
+              'xtick.labelsize': 14, 'ytick.labelsize': 16}
+    matplotlib.rcParams.update(params)
+
     fig, ax = plt.subplots()
     sns.scatterplot(
-        pl.concat([df, pl.DataFrame(labels, schema=["label"])], how="horizontal").to_pandas(),
+        pl.concat([df, pl.DataFrame(labels, schema=["Label"])], how="horizontal").to_pandas(),
         x="avg",
         y="std",
-        hue="label",
+        hue="Label",
         ax=ax,
+        s=100
     )
-    plt.savefig(FIGURES_DIR / "clusters.png")
-    logger.success("Cluster plots saved")
+
+    plt.xticks(fontsize=14)
+    plt.yticks(fontsize=14)
+    plt.xlabel("Average Consumption (kWh)", fontsize=16)
+    plt.ylabel("Std Consumption (kWh)", fontsize=16)
+    plt.tight_layout()
+
+    png_ = FIGURES_DIR / "clusters.pdf"
+    plt.savefig(png_, format="pdf", bbox_inches="tight")
+    plt.close()
+    logger.success(f"Cluster plots saved to {png_}")
 
 
 def plot_per_step_metrics(per_step_metrics: np.ndarray):
@@ -390,7 +409,6 @@ def plot_bar_chart(id_to_metrics: list, metric_to_plot: str, run: Optional[wandb
         fig.write_image(f"{REPORTS_DIR}/figures/bar_chart_{len_n}_{name}_{metric_to_plot}.png", scale=2)
         # fig.write_html(f"{model_folder}/boxplot_{metric_to_plot}.html")
 
-
 def plot_box_plot(id_to_ind_metrics: list, metric_to_plot: str, run: Optional[wandb.sdk.wandb_run.Run],
                   log_y: bool = False, name: str = ""):
     logger.info(f"Plotting Box Plot for {name}")
@@ -546,12 +564,14 @@ def plot_filtered_data_points(df, column, filtered_df):
     ax.scatter(unique_points["datetime"], unique_points[column],
                color='red', label='Outlier')
 
-    plt.xlabel('DateTime')
-    plt.ylabel(column)
     sensor_id = df.get_column("id").unique()[0]
-    plt.title(f'Outlier IQR Method - {sensor_id}')
-    plt.legend()
-    plt.xticks(rotation=45)
+    # plt.title(f'Outlier IQR Method - {sensor_id}')
+    # fig.legend(fontsize="16")
+    plt.legend(frameon=True, fontsize=16)
+    plt.xlabel("Datetime", fontsize=16)
+    plt.ylabel("Energy Consumption (kWh)", fontsize=16)
+    plt.xticks(rotation=45, fontsize=16)
+    plt.yticks(fontsize=16)
     plt.tight_layout()
     plot_dir = REPORTS_DIR / "figures" / f"outlier" / "daily"
     os.makedirs(plot_dir, exist_ok=True)
@@ -749,8 +769,137 @@ def plot_box_plot_per_step():
     plt.show()
 
 
+def plot_preprocessing_steps():
+    # Read the CSV file
+    df = pd.read_csv(REPORTS_DIR / "preprocessing_counts.csv")
+
+    # Clean up the data
+    df = df.replace('', np.nan)
+    df['Daily'] = pd.to_numeric(df['Daily'], errors='coerce')
+    df['Hourly'] = pd.to_numeric(df['Hourly'], errors='coerce')
+    df['Sensors'] = pd.to_numeric(df['Sensors'], errors='coerce')
+    df['Sensors_Hourly'] = pd.to_numeric(df.iloc[:, 5],
+                                         errors='coerce')  # Assuming the last column is Sensors for Hourly
+
+    # Calculate percentages relative to the first row (initial count)
+    daily_initial = df['Daily'].iloc[0]
+    hourly_initial = df['Hourly'].iloc[0]
+
+    df['Daily_Percentage'] = (df['Daily'] / daily_initial) * 100
+    df['Hourly_Percentage'] = (df['Hourly'] / hourly_initial) * 100
+
+    # Drop rows with missing data in either Daily or Hourly
+    plot_data = df.dropna(subset=['Daily_Percentage', 'Hourly_Percentage'])
+
+    # font size
+    FONT_SIZE = 16
+
+    # Create figure and axis
+    fig, ax = plt.subplots(figsize=(14, 8))
+
+    # Set up x positions
+    steps = plot_data['Spalte 1'].tolist()
+    x = np.arange(len(steps))
+
+    # Create the lines
+    daily_line, = ax.plot(x, plot_data['Daily_Percentage'], 'o-', linewidth=2.5, markersize=8,
+                          label='Daily', color='#3274A1')
+    hourly_line, = ax.plot(x, plot_data['Hourly_Percentage'], 's-', linewidth=2.5, markersize=8,
+                           label='Hourly', color='#E1812C')
+
+    # Function to add rotated labels above the line
+    def add_above_rotated_labels(x_pos, y_pos, counts, sensor_counts=None, offset_y=7, color=None):
+        for i, (x_val, y_val, count) in enumerate(zip(x_pos, y_pos, counts)):
+            if pd.isna(count):
+                continue
+
+            # Format the label text
+            if sensor_counts is not None and not pd.isna(sensor_counts[i]):
+                label_text = f"{int(count)} ({int(sensor_counts[i])})"
+            else:
+                label_text = f"{int(count)}"
+
+            # Position the text above with rotation
+            ax.text(x_val, y_val + offset_y,
+                    label_text,
+                    ha='left',
+                    va='bottom',
+                    rotation=35,
+                    rotation_mode='anchor',
+                    fontsize=FONT_SIZE,
+                    color=color if color else 'black',
+                    fontweight='bold')
+
+    # Function to add non-rotated labels below the line
+    def add_below_horizontal_labels(x_pos, y_pos, counts, sensor_counts=None, offset_y=10, color=None):
+        for i, (x_val, y_val, count) in enumerate(zip(x_pos, y_pos, counts)):
+            if pd.isna(count):
+                continue
+
+            # Format the label text
+            if sensor_counts is not None and not pd.isna(sensor_counts[i]):
+                label_text = f"{int(count)} ({int(sensor_counts[i])})"
+            else:
+                label_text = f"{int(count)}"
+
+            if label_text == "688766 (57)":
+                label_text = "(57)"
+
+            # Position the text below without rotation
+            ax.text(x_val, y_val - offset_y,
+                    label_text,
+                    ha='center',  # Center align for better readability
+                    va='top',
+                    fontsize=FONT_SIZE,
+                    color=color if color else 'black',
+                    fontweight='bold')
+
+    # Add daily labels above the line with rotation
+    add_above_rotated_labels(x, plot_data['Daily_Percentage'], plot_data['Daily'], plot_data['Sensors'],
+                             offset_y=7, color='#3274A1')
+
+    # Add hourly labels below the line without rotation
+    add_below_horizontal_labels(x, plot_data['Hourly_Percentage'], plot_data['Hourly'], plot_data['Sensors_Hourly'],
+                                offset_y=10, color='#E1812C')
+
+    # Customize the plot
+    # ax.set_title('Data Processing Steps: Daily vs. Hourly (Percentage of Initial Count)', fontsize=16)
+    # ax.set_xlabel('Processing Step', fontsize=16)
+    ax.set_ylabel('Percentage of Initial Count (%)', fontsize=18)
+    plt.yticks(fontsize=16)
+    ax.set_xticks(x)
+    ax.set_xticklabels(steps, rotation=45, ha='right', fontsize=16)
+    ax.legend(fontsize=16)
+
+    # Add grid lines for better readability
+    ax.grid(True, linestyle='--', alpha=0.7)
+
+    # Set y-axis to start below 0 and go above the maximum percentage to accommodate labels
+    y_max = max(max(plot_data['Daily_Percentage']), max(plot_data['Hourly_Percentage']))
+    y_min = min(min(plot_data['Daily_Percentage']), min(plot_data['Hourly_Percentage']))
+    ax.set_ylim(max(0, y_min - 25), y_max * 1.15)  # Extra space below for non-rotated labels
+
+    # Add a horizontal line at 100% for reference
+    ax.axhline(y=100, color='gray', linestyle='--', alpha=0.5)
+    ax.text(len(steps) - 1, 102, '100% (Initial Count)', va='bottom', ha='right', color='gray', fontsize=10)
+
+    # Add annotations to explain the format of labels
+    # ax.text(0.80, 0.98, "Format: count (sensor count)", transform=ax.transAxes,
+    #         ha='left', va='top', bbox=dict(facecolor='white', alpha=0.8, edgecolor='lightgray'))
+
+    # Adjust layout
+    plt.tight_layout()
+
+    # Save the figure
+    plt.savefig(FIGURES_DIR / 'data_processing_percentage_line_plot.png', dpi=300, bbox_inches='tight')
+
+    # Display the plot
+    plt.show()
+
+
+
 def plot_model_sizes(
-        file_path: Union[str, Path] = "",
+        file_path: Union[str, Path],
         figsize: tuple[int, int] = (10, 6),
         title: str = "Model Size Comparison",
         save_path: Optional[str] = None,
@@ -773,83 +922,36 @@ def plot_model_sizes(
         FileNotFoundError: If the CSV file doesn't exist
         KeyError: If required columns 'model' or 'model_size' are missing
     """
-    ns = ["7_day", "24_hour"]
-    labels = []
-    dataframes = []
-    file_paths = [REPORTS_DIR / f"best_models_{n}_forecast_metrics_test_mae_ind.csv" for n in ns]
-    save_path = FIGURES_DIR / "model_sizes.png"
+    # Read CSV into DataFrame
+    df = pd.read_csv(file_path, **kwargs)
 
-    for file_path in file_paths:
-        # Extract forecast period from filename
-        if '7_day' in str(file_path):
-            labels.append('7-day forecast')
-        elif '24_hour' in str(file_path):
-            labels.append('24-hour forecast')
-        else:
-            labels.append(str(file_path).split('_')[-3] + ' forecast')
+    # Verify required columns exist
+    if 'model' not in df.columns or 'model_size' not in df.columns:
+        raise KeyError("CSV must contain 'model' and 'model_size' columns")
 
-        # Read CSV into DataFrame
-        df = pd.read_csv(file_path)
-
-        # Verify required columns exist
-        if 'model' not in df.columns or 'model_size' not in df.columns:
-            raise KeyError(f"CSV {file_path} must contain 'model' and 'model_size' columns")
-
-        dataframes.append(df)
-
-        # Set up the figure
+    # Create the plot
     plt.figure(figsize=figsize)
 
-    # Set width of bars
-    barWidth = 0.35
-    colors = ['skyblue', 'lightcoral']
-
-    # Set positions of the bars on X axis
-    r = np.arange(len(dataframes[0]['model']))
-
-    all_bars = []
-    max_height = 0
-
-    # Create bars for each dataframe
-    for i, (df, label) in enumerate(zip(dataframes, labels)):
-        positions = [x + i * barWidth for x in r]
-        try:
-            bars = plt.bar(positions, df['model_size'].astype(int), width=barWidth,
-                           label=label, color=colors[i] if i < len(colors) else None)
-        except ValueError:
-            continue
-        all_bars.append(bars)
-        max_height = max(max_height, df['model_size'].max())
+    # Create bar plot
+    bars = plt.bar(df['model'], df['model_size'].astype("int"))
 
     # Add value labels on top of bars
-    for bars in all_bars:
-        for bar in bars:
-            height = bar.get_height()
-            plt.text(
-                bar.get_x() + bar.get_width() / 2,
-                height + 0.01 * max_height,
-                f'{height:,}',  # Format with commas for thousands
-                ha='center',
-                va='bottom',
-                fontsize=9
-            )
+    for bar in bars:
+        height = bar.get_height()
+        plt.text(
+            bar.get_x() + bar.get_width() / 2,
+            height + 0.01 * max(df['model_size']),  # Small offset above bar
+            f'{height}',
+            ha='center',
+            va='bottom',
+            fontweight='bold'
+        )
 
     # Add labels and title
-    plt.xlabel('Model', fontweight='bold', fontsize=12)
-    plt.ylabel('Trainable Parameters', fontweight='bold', fontsize=12)
-    plt.title(title, fontsize=14)
-
-    # Set position of X ticks
-    middle_positions = [r + barWidth * (len(dataframes) - 1) / 2 for r in r]
-    plt.xticks(middle_positions, dataframes[0]['model'])
-    plt.xticks(rotation=45, ha='right') if len(dataframes[0]['model']) > 4 else None
-
-    # Add legend
-    plt.legend()
-
-    # Add grid for better readability
-    plt.grid(axis='y', linestyle='--', alpha=0.7)
-
+    plt.xlabel('Model')
+    plt.ylabel('Trainable Parameters')
+    plt.title(title)
+    plt.xticks(rotation=45, ha='right')  # Rotate labels if needed
     plt.tight_layout()
 
     # Save figure if path provided
@@ -1022,8 +1124,10 @@ if __name__ == "__main__":
     # for id in df_daily["id"].unique():
     # plot_missing_dates(df_daily, id)
     # plot_reduced_data_eval()
-    # plot_metrics_per_step()
     # plot_box_plot_per_step()
-    plot_model_sizes()
+    plot_preprocessing_steps()
+
+    # plot_box_plot_per_step()
+    # plot_model_sizes(REPORTS_DIR / "best_models_24_hour_forecast_metrics_test_mae_ind.csv")
     model_names = ["FCN3_1_yl7k0lrd", "LSTM1_1_9dtljkbk", "TFT_1_best"]
     # plot_predictions_multiple_models(model_names)

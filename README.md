@@ -82,13 +82,11 @@ git clone https://github.com/NX-AI/xlstm.git
 cd xlstm
 ```
 
-4. Download data with Git LFS #TODO
-
 ## Usage
 
 ### Data Preparation
 
-The project expects processed data in the `data/processed/` directory. Key datasets include:
+Ready for training processed data is in the `data/processed/` directory. Key datasets include:
 - `building_daily_7_7.csv` - Daily resolution building data
 - `building_hourly_72_72.csv` - Hourly resolution building data
 

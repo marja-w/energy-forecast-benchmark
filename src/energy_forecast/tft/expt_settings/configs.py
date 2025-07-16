@@ -84,9 +84,9 @@ class ExperimentConfig(object):
         'electricity': 'hourly_electricity.csv',
         'traffic': 'hourly_data.csv',
         'favorita': 'favorita_consolidated.csv',
-        'heat': 'dataset_building_interpolate_daily_lag_7_7_feat.csv',
-        'heat_no_building': 'dataset_building_interpolate_daily_lag_7_7_feat.csv',
-        'heat_diff': 'dataset_building_interpolate_daily_lag_7_7_feat.csv',
+        'heat': 'building_daily_7_7.csv',
+        'heat_no_building': 'building_daily_7_7.csv',
+        'heat_diff': 'building_daily_7_7.csv',
         'heat_hourly': 'building_hourly_72_72.csv'
     }
 

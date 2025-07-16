@@ -27,7 +27,7 @@ This project implements and evaluates multiple deep learning models for energy c
 ├── data
 │   ├── external       <- External data sources (weather, holidays)
 │   ├── processed      <- Processed datasets ready for modeling
-│   └── legacy_data.zip <- Historical data archive
+│   └── *.zip <- Raw data archives
 │
 ├── notebooks          <- Jupyter notebooks for analysis and exploration
 │   ├── 1.0-mw-data-exploration.ipynb
@@ -37,6 +37,7 @@ This project implements and evaluates multiple deep learning models for energy c
 │
 ├── references         <- Configuration files and metadata
 │   ├── configs.jsonl  <- Model configuration parameters
+│   ├── fcn.json       <- Example Training Config
 │   └── ...
 │
 ├── reports            <- Generated analysis and results
@@ -87,8 +88,25 @@ cd xlstm
 ### Data Preparation
 
 Ready for training processed data is in the `data/processed/` directory. Key datasets include:
-- `building_daily_7_7.csv` - Daily resolution building data
-- `building_hourly_72_72.csv` - Hourly resolution building data
+- `dataset_interpolate_daily_feat.csv` - Daily resolution building data
+- `dataset_interpolate_hourly_feat.csv` - Hourly resolution building data
+
+#### Data Generation
+
+For generating training datasets from raw data, first, the `.zip` files in the `data/` folder must be extracted to the 
+`data/raw` folder (`unzip` command needs to be installed):
+
+```bash
+unzip district_heating_data.zip -d data/raw
+unzip kinergy.zip -d data/raw
+unzip legacy_data.zip -d data/raw
+```
+
+Then, run `dataset.py` to create daily and hourly datasets in `processed/`folder:
+
+```bash
+python src/energy_forecast/dataset.py
+```
 
 ### Training Models
 
@@ -164,7 +182,9 @@ Example configuration:
 4. **LSTM/RNN**: Traditional recurrent neural networks
 5. **FCN**: Fully connected network
 
-> The **TFT** training is not included in the framework described above. It needs to be separately trained using the script `tft/script_train_fixed_params.py`. More instructions can be found in the `tft/README.md`
+> The **TFT** training is not included in the framework described above. It needs to be separately trained using the script `tft/script_train_fixed_params.py`. 
+> More instructions can be found in the `tft/README.md` and in the [repository structure section](#temporal-fusion-transformer-srcenergy_forecasttft).
+> For training it uses `data/processed/building_daily_7_7.csv` and `building_hourly_72_72.csv`
 
 ### Feature Sets
 
@@ -202,7 +222,9 @@ Contains all project datasets and external data sources:
 - [`dataset_interpolate_hourly_feat.csv`](data/processed/building_hourly_72_72.csv) - Hourly resolution building energy data (72-hour input/output)
 
 #### Complete data sources
-- [`legacy_data.zip`](data/legacy_data.zip) - Archived historical datasets
+- [`legacy_data.zip`](data/legacy_data.zip) - Original legacy data
+- [`kinergy.zip`](data/kinergy.zip) - Original KI-nergy data
+- [`district_heating_data.zip`](data/district_heating_data.zip) - Original AI in district heating data
 
 ### Notebooks Directory ([`notebooks/`](notebooks))
 
@@ -295,9 +317,11 @@ Main source code package:
 - [`darts_models.py`](src/energy_forecast/model/darts_models.py) - Darts library model wrappers
 
 #### Temporal Fusion Transformer ([`src/energy_forecast/tft/`](src/energy_forecast/tft/))
+> Only runs in separate Conda environment with Python 3.7!
+
 Complete TFT implementation with:
 - [`README.md`](src/energy_forecast/tft/README.md) - TFT-specific documentation
-- [`requirements.txt`](src/energy_forecast/tft/requirements.txt) - TFT dependencies
+- [`requirements.txt`](src/energy_forecast/tft/requirements.txt) - TFT dependencies for Python 3.7
 - [`run.sh`](src/energy_forecast/tft/run.sh) - TFT execution script
 
 ##### Data Formatters ([`src/energy_forecast/tft/data_formatters/`](src/energy_forecast/tft/data_formatters/))
@@ -313,7 +337,7 @@ Complete TFT implementation with:
 - [`script_download_data.py`](src/energy_forecast/tft/script_download_data.py) - Data download utility
 - [`script_evaluate_fixed_params.py`](src/energy_forecast/tft/script_evaluate_fixed_params.py) - Fixed parameter evaluation
 - [`script_hyperparam_opt.py`](src/energy_forecast/tft/script_hyperparam_opt.py) - Hyperparameter optimization
-- [`script_train_fixed_params.py`](src/energy_forecast/tft/script_train_fixed_params.py) - Fixed parameter training
+- [`script_train_fixed_params.py`](src/energy_forecast/tft/script_train_fixed_params.py) - Fixed parameter training, use parameter `heat` or `heat_hourly` for heat load data training
 
 ## Evaluation
 

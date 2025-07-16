@@ -767,54 +767,33 @@ if __name__ == '__main__':
     # DATA LOADING
     logger.info("Start data loading")
 
-    # daily data
-    # LegacyDataLoader(RAW_DATA_DIR / "legacy_data" / "legacy_systen_counter_daily_values.csv").write_data_and_meta()
-    # KinergyDataLoader(RAW_DATA_DIR / "kinergy").write_data_and_meta()
-    # DHDataLoader(RAW_DATA_DIR / "district_heating_data").write_data_and_meta()
-    #
-    # # hourly data
-    # KinergyDataLoader(RAW_DATA_DIR / "kinergy", res="hourly").write_data_and_meta()
-    # DHDataLoader(RAW_DATA_DIR / "district_heating_data", res="hourly").write_data_and_meta()
+    # daily data loading: loads data to folder data/interim and meta data to data/interim/meta
+    LegacyDataLoader(RAW_DATA_DIR / "legacy_data" / "legacy_systen_counter_daily_values.csv").write_data_and_meta()
+    KinergyDataLoader(RAW_DATA_DIR / "kinergy").write_data_and_meta()
+    DHDataLoader(RAW_DATA_DIR / "district_heating_data").write_data_and_meta()
 
-    # meta data
+    # hourly data loading: loads data to folder data/interim and meta data to data/interim/meta
+    KinergyDataLoader(RAW_DATA_DIR / "kinergy", res="hourly").write_data_and_meta()
+    DHDataLoader(RAW_DATA_DIR / "district_heating_data", res="hourly").write_data_and_meta()
 
     logger.info("Finish data loading")
 
+    # create interpolated daily dataset and save as data/processed/dataset_interpolate_daily_feat.csv
     ds = InterpolatedDataset(res="daily")
     ds.create_and_clean(plot=False)
     ds.create_clean_and_add_feat()
-    # #
-    # ds = Dataset(res="hourly")
+
+    # create interpolated hourly dataset and save as data/processed/dataset_interpolate_hourly_feat.csv
+    ds = InterpolatedDataset(res="hourly")
+    ds.create_and_clean(plot=False)
+    ds.create_clean_and_add_feat()
+
+    # creates daily dataset and save as data/processed/dataset_daily_feat.csv
+    # ds = Dataset(res="daily")
     # ds.create_and_clean(plot=False)
     # ds.create_clean_and_add_feat()
 
+    # creates hourly dataset and save as data/processed/dataset_hourly_feat.csv
     # ds = Dataset(res="hourly")
     # ds.create_and_clean(plot=False)
-    # ds.create_clean_and_add_feat()
-
-    # ds.load_feat_data()
-    # df_train, df_test = ds.get_train_and_test(0.8)
-    # ds.create_and_clean()
-
-    # ds_hourly = Dataset(res="hourly")
-    # ds_hourly.create_and_clean()
-
-    # freeze dataset for certain config
-    freeze_config = {"project": "ma-wahl-forecast",
-                     "energy": "all",
-                     "res": "daily",
-                     "interpolate": 1,
-                     "dataset": "building",  # building, meta, missing_data_90
-                     "model": "RNN1",
-                     "lag_in": 7,
-                     "lag_out": 7,
-                     "n_in": 7,
-                     "n_out": 7,
-                     "n_future": 7,
-                     "scaler": "none",
-                     "scale_mode": "all",  # all, individual
-                     "feature_code": 13,
-                     "train_test_split_method": "time"}  # ReLU, Linear
-
-    # ds = TrainDatasetBuilding(freeze_config)
     # ds.create_clean_and_add_feat()

@@ -62,6 +62,8 @@ This project implements and evaluates multiple deep learning models for energy c
 
 ## Installation
 
+> This project requires [Git LFS](https://git-lfs.com/) to be installed for downloading of large data files
+
 1. Clone the repository:
 ```bash
 git clone git@gitlab2.informatik.uni-wuerzburg.de:s371469/energy-forecast-wahl.git
@@ -107,6 +109,8 @@ Train multiple models using configurations from `references/configs.jsonl`:
 ```bash
 python src/energy_forecast/model/train.py
 ```
+
+TODO: example content for file
 
 ### Configuration
 
@@ -183,21 +187,21 @@ This section provides a detailed overview of the repository organization, includ
 - [`README.md`](README.md) - This documentation file
 - [`requirements.txt`](requirements.txt) - Python package dependencies
 
-### Data Directory ([`data/`](data/))
+### Data Directory ([`data/`](data))
 
 Contains all project datasets and external data sources:
 
-#### External Data ([`data/external/`](data/external/))
+#### External Data ([`data/external/`](data/external))
 - [`features/holidays.csv`](data/external/features/holidays.csv) - Holiday calendar data for feature engineering
 
-#### Processed Data ([`data/processed/`](data/processed/))
+#### Processed Data ([`data/processed/`](data/processed))
 - [`building_daily_7_7.csv`](data/processed/building_daily_7_7.csv) - Daily resolution building energy data (7-day input/output)
 - [`building_hourly_72_72.csv`](data/processed/building_hourly_72_72.csv) - Hourly resolution building energy data (72-hour input/output)
 
 #### Legacy Data
 - [`legacy_data.zip`](data/legacy_data.zip) - Archived historical datasets
 
-### Notebooks Directory ([`notebooks/`](notebooks/))
+### Notebooks Directory ([`notebooks/`](notebooks))
 
 Jupyter notebooks for analysis and experimentation:
 
@@ -227,14 +231,14 @@ Jupyter notebooks for analysis and experimentation:
 - [`1.0-mw-features.ipynb`](notebooks/1.0-mw-features.ipynb) - Feature engineering experiments
 - [`webfactor_time_series_forecasting.ipynb`](notebooks/webfactor_time_series_forecasting.ipynb) - Web factor time series analysis
 
-### References Directory ([`references/`](references/))
+### References Directory ([`references/`](references))
 
 Configuration files and metadata:
 
 - [`configs.jsonl`](references/configs.jsonl) - Model configuration parameters in JSON Lines format
 - [`liegenschaften_missing_qm_wohnung.csv`](references/liegenschaften_missing_qm_wohnung.csv) - Building metadata with missing area information
 
-### Reports Directory ([`reports/`](reports/))
+### Reports Directory ([`reports/`](reports))
 
 Generated analysis results and visualizations:
 
@@ -254,7 +258,7 @@ Generated analysis results and visualizations:
 - [`example_flat_lines/`](reports/figures/example_flat_lines/) - Examples of flat line patterns in data
 - [`missing_data/hourly/`](reports/figures/missing_data/hourly/) - Visualizations of missing data patterns
 
-### Source Code Directory ([`src/energy_forecast/`](src/energy_forecast/))
+### Source Code Directory ([`src/energy_forecast/`](src/energy_forecast))
 
 Main source code package:
 
@@ -276,7 +280,7 @@ Main source code package:
 - [`preprocessing.py`](src/energy_forecast/data_processing/preprocessing.py) - Data preprocessing pipeline
 - [`swn_api.py`](src/energy_forecast/data_processing/swn_api.py) - SWN API integration
 
-#### Model Implementations ([`src/energy_forecast/model/`](src/energy_forecast/model/))
+#### Model Implementations ([`src/energy_forecast/model/`](src/energy_forecast/model))
 - [`__init__.py`](src/energy_forecast/model/__init__.py) - Module initialization
 - [`train.py`](src/energy_forecast/model/train.py) - Main training pipeline and script
 - [`models.py`](src/energy_forecast/model/models.py) - Model class definitions and implementations

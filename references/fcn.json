@@ -1,0 +1,12 @@
+{
+  "model": "FCN3",
+  "dataset": "building",
+  "res": "daily",
+  "n_in": 7,
+  "n_out": 7,
+  "n_future": 7,
+  "feature_code": 14,
+  "epochs": 10,
+  "batch_size": 64,
+  "dropout": 0.1
+}

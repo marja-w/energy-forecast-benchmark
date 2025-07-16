@@ -1,5 +1,4 @@
 import argparse
-import itertools
 import json
 from dataclasses import dataclass
 from typing import Any
@@ -8,9 +7,6 @@ import jsonlines
 import polars as pl
 import wandb
 from loguru import logger
-from official.legacy.image_classification.configs.base_configs import TrainConfig
-from tensorflow import keras
-from tensorflow.keras import layers
 from tqdm import tqdm
 
 try:
@@ -35,7 +31,7 @@ except ModuleNotFoundError:
         sys.path.insert(0, par_dir)
         logger.info(par_dir)
 
-        from src.energy_forecast.plots import plot_means, plot_std, plot_train_val_test_split
+        from src.energy_forecast.plots import plot_means, plot_std
         from src.energy_forecast.config import REFERENCES_DIR, FEATURE_SETS, PROCESSED_DATA_DIR, REPORTS_DIR, N_CLUSTER
         from src.energy_forecast.dataset import Dataset, TrainingDataset, TrainDataset90, TrainDatasetBuilding, \
             TrainDatasetNoise
@@ -191,7 +187,7 @@ def get_train_config(run_config: dict) -> dict:
     if run_config.get("res") == "daily":
         run_config.lag_in = run_config.lag_out = 7
     else:
-        run_config.lag_in = run_config.lag_out = 1
+        run_config.lag_in = run_config.lag_out = 72
     return run_config.as_dict()
 
 
@@ -271,99 +267,16 @@ if __name__ == '__main__':
         with open(configs_path, "r") as f:
             config = json.load(f)
         wandb_run = train(config)
-        wandb_run.finish()
+        if wandb_run:
+            wandb_run.finish()
     else:
         configs_path = REFERENCES_DIR / "configs.jsonl"
-        models = ["Transformer"]
-        scalers = ["standard"]
-        feature_codes = [12, 14, 13]
-        neurons_list = [100]
-        n_ins = [6, 12, 24, 48, 72]
-        n_outs = [1, 7]
-        n_futures = [0, 1, 7]
-        epochs_list = [40]
-        config = {"project": "ma-wahl-forecast",
-                  "log": False,  # whether to log to wandb
-                  "plot": False,  # whether to plot predictions
-                  "energy": "all",
-                  "res": "daily",
-                  "interpolate": 1,
-                  "dataset": "building",  # building, meta, missing_data_90
-                  "model": "xlstm",
-                  "lag_in": 7,
-                  "lag_out": 7,
-                  "n_in": 7,
-                  "n_out": 1,
-                  "n_future": 0,
-                  "scaler": "standard",
-                  "scale_mode": "individual",  # all, individual
-                  "feature_code": 14,
-                  "train_test_split_method": "time",
-                  "epochs": 1,
-                  "optimizer": "adam",
-                  "loss": "mean_squared_error",
-                  "metrics": ["mae"],
-                  "batch_size": 64,
-                  "dropout": 0.1,
-                  "neurons": 100,
-                  "lr_scheduler": "none",  # none, step_decay
-                  "weight_initializer": "glorot",
-                  "activation": "relu",  # ReLU, Linear
-                  "transformer_blocks": 2,
-                  "num_heads": 4,
-                  "remove_per": 0.0}
+        # Read in configs from .jsonl file
+        configs = list()
+        with jsonlines.open(configs_path) as reader:
+            for config_dict in reader.iter():
+                configs.append(config_dict)
 
-        config = {
-            "model": "transformer",
-            "dataset": "building",
-            "res": "daily",
-            "n_in": 7,
-            "n_out": 7,
-            "n_future": 7,
-            "feature_code": 14,
-            "epochs": 10,
-            "batch_size": 64,
-            "dropout": 0.1,
-            "num_heads": 4
-        }
-        # config = None
-        all_models = False
-        if config is None:
-            # Read in configs from .jsonl file
-            configs = list()
-            with jsonlines.open(configs_path) as reader:
-                for config_dict in reader.iter():
-                    configs.append(config_dict)
-
-            for config_dict in tqdm(configs):  # start one training for each config
-                wandb_run = train(config_dict)
-                wandb_run.finish()  # finish run to start new run with next config
-        elif all_models:
-            for model, feature_code, n_in, n_out, n_f, epochs, neurons, scaler in itertools.product(models,
-                                                                                                    feature_codes,
-                                                                                                    n_ins, n_outs,
-                                                                                                    n_futures,
-                                                                                                    epochs_list,
-                                                                                                    neurons_list,
-                                                                                                    scalers):
-                if n_f != n_out: continue
-                if feature_code == 12 and n_f > 0: continue  # only feature is diff
-                logger.info(
-                    f"Training combination: feature code {feature_code}, n_in {n_in}, n_out {n_out}, n_future {n_f}, epochs {epochs}, neurons {neurons}, scaler {scaler}")
-                config["model"] = model
-                config["feature_code"] = feature_code
-                config["n_in"] = n_in
-                config["n_out"] = n_out
-                config["n_future"] = n_f
-                config["epochs"] = epochs
-                config["neurons"] = neurons
-                config["scaler"] = scaler
-                try:
-                    del config["features"]  # delete feature names if set in previous run
-                except KeyError:
-                    pass
-                wandb_run = train(config)
-                wandb_run.finish()
-        else:
-            wandb_run = train(config)
-            if wandb_run: wandb_run.finish()
+        for config_dict in tqdm(configs):  # start one training for each config
+            wandb_run = train(config_dict)
+            wandb_run.finish()  # finish run to start new run with next config

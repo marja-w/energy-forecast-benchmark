@@ -1,0 +1,12 @@
+{
+  "model": "lstm",
+  "dataset": "building",
+  "res": "hourly",
+  "n_in": 24,
+  "n_out": 24,
+  "n_future": 24,
+  "feature_code": 15,
+  "epochs": 10,
+  "batch_size": 64,
+  "dropout": 0.1
+}

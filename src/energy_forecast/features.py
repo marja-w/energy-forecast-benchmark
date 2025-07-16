@@ -8,7 +8,7 @@ def generate_weather_features(res: str = "hourly", interpolated: str = ""):
 
 def generate_holiday_feature():
     """Generate holidays.csv"""
-    generate_holiday_df()  # TODO: missing data/ferien.csv
+    generate_holiday_df()
 
 def generate_lod_data():
     """Generate lod data for KI in Fernwärme project data"""

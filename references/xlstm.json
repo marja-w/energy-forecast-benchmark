@@ -1,6 +1,6 @@
 {
   "project": "ma-wahl-forecast",
-  "log": true,
+  "log": false,
   "plot": false,
   "energy": "all",
   "res": "hourly",
@@ -24,7 +24,6 @@
   ],
   "batch_size": 64,
   "dropout": 0.1,
-  "neurons": 100,
   "lr_scheduler": "none",
   "weight_initializer": "glorot",
   "activation": "relu",

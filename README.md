@@ -109,6 +109,10 @@ Train multiple models using configurations from `references/configs.jsonl`:
 python src/energy_forecast/model/train.py
 ```
 
+#### Output
+
+After training, models are stored in `models/` folder
+
 ### Configuration
 
 Model configurations are stored in JSON format in the `references/` directory. Key parameters include:
@@ -122,8 +126,8 @@ Model configurations are stored in JSON format in the `references/` directory. K
 - `epochs`: Training epochs
 - `batch_size`: Batch size for training, defaults to
 
-  **Optional**:
-- `dataset`: Dataset type (default: `building`, `meta`, `missing_data_90`)
+**Optional**:
+- `dataset`: Dataset type (`building`, `meta`, `missing_data_90`)
 - `neurons`: Number of neurons (for `FCN3`, `lstm`), default: 100
 - `dropout`: Dropout percentage for corrseponding dropout layers, default: 0.1
 - `num_heads`: Number of heads for multi-head attention (`transformer`, `xlstm`), default: 4
@@ -194,10 +198,10 @@ Contains all project datasets and external data sources:
 - [`features/holidays.csv`](data/external/features/holidays.csv) - Holiday calendar data for feature engineering
 
 #### Processed Data ([`data/processed/`](data/processed))
-- [`building_daily_7_7.csv`](data/processed/building_daily_7_7.csv) - Daily resolution building energy data (7-day input/output)
-- [`building_hourly_72_72.csv`](data/processed/building_hourly_72_72.csv) - Hourly resolution building energy data (72-hour input/output)
+- [`dataset_interpolate_daily_feat.csv`](data/processed/building_daily_7_7.csv) - Daily resolution building energy data (7-day input/output)
+- [`dataset_interpolate_hourly_feat.csv`](data/processed/building_hourly_72_72.csv) - Hourly resolution building energy data (72-hour input/output)
 
-#### Legacy Data
+#### Complete data sources
 - [`legacy_data.zip`](data/legacy_data.zip) - Archived historical datasets
 
 ### Notebooks Directory ([`notebooks/`](notebooks))

@@ -94,12 +94,13 @@ Ready for training processed data is in the `data/processed/` directory. Key dat
 
 #### Single Model Training
 
-Train a specific model with a configuration file from `references/your_config.json`:
+Train a specific model with a configuration file from `references/your_config.json`. 
+A small example configuration file: `references/fcn.json`:
 ```bash
-python src/energy_forecast/model/train.py --config_file your_config
+python src/energy_forecast/model/train.py --config_file fcn
 ```
 
-Example configuration file: `references/xlstm.json`
+A more extensive example configuration file: `references/xlstm.json`
 
 #### Batch Training
 
@@ -107,8 +108,6 @@ Train multiple models using configurations from `references/configs.jsonl`:
 ```bash
 python src/energy_forecast/model/train.py
 ```
-
-TODO: example content for file
 
 ### Configuration
 
@@ -131,6 +130,8 @@ Model configurations are stored in JSON format in the `references/` directory. K
 - `log`: whether to log to WandB. Need to be logged-in for logging to work, default: False
 - `project`: WandB project tag
 - `remove_per`: Remove percentage for experiments with removed training data, default: 0.0
+- `lag_in`: Defines how much data is removed from the beginning of a time-series and the maximum that `n_in` can be set to
+- `lag_out`: Defines how much data is removed from the end of a time-series and the maximum that `n_out` can be set to
 
 More detail about configuration values can be found in `src/energy_forecast/model/train.py` class `TrainConfig`
 

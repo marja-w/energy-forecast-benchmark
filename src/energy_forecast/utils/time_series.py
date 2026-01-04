@@ -53,7 +53,8 @@ def series_to_supervised(df: pl.DataFrame, n_in: int, n_out: int, lag_in: int, l
     agg = pd.concat(cols, axis=1)
     agg.columns = names
     if "datetime" in col_to_drop:
-        agg["datetime"] = datetime_column.to_pandas()
+        datetime_df = pd.DataFrame({"datetime": datetime_column.to_pandas()})
+        agg = pd.concat([agg, datetime_df], axis=1)
     # drop rows with NaN values
     if dropnan:
         agg.dropna(inplace=True)

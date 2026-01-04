@@ -72,11 +72,11 @@ def get_model_from_path(path_to_model: Path, config: dict):
 def main(run_id: str):
     m, ds, run = get_model_from_wandb(run_id=run_id)
     # evaluate and plot predictions
-    m.evaluate(ds, run, log=False, plot=False)
+    m.evaluate(ds, run, log=False, plot=False)  # needed for id_column
     # extended evaluation
-    # calculate_metrics_per_id(ds, run, dict(wandb.config), m.name, True)
+    calculate_metrics_per_id(ds, run, dict(wandb.config), m.name, True)
     # calculate_metrics_per_month(ds, run, True)
-    calculate_metrics_per_hour(ds, None, True)
+    # calculate_metrics_per_hour(ds, None, True)
     # calculate_metrics_per_day(ds, None, True)
     # calculate_metrics_per_id_and_hour(ds, run, dict(wandb.config), m.name, True)
     run.finish()
@@ -108,19 +108,19 @@ def compare_multiple_models_predictions(model_names, config):
 
 
 if __name__ == '__main__':
-    run_id = "b0p27vcs"
+    run_id = "nbp1all0"
     training_config = {"project": "ma-wahl-forecast",
                        "log": False,  # whether to log to wandb
                        "plot": False,  # whether to plot predictions
                        "energy": "all",
-                       "res": "daily",
+                       "res": "hourly",
                        "interpolate": 1,
                        "dataset": "building",  # building, meta, missing_data_90
                        "model": "FCN3",
                        "lag_in": 72,
                        "lag_out": 72,
                        "n_in": 72,
-                       "n_out": 24,
+                       "n_out": 3,
                        "n_future": 0,
                        "scaler": "standard",
                        "scale_mode": "individual",  # all, individual

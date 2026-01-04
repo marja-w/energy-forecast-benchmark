@@ -1025,10 +1025,10 @@ class xLSTMModel(RNNModel):
             in_features=input_shape[2],  # number of input features
             out_features=self.config["n_out"],
             context_length=input_dim,
-            embedding_dim=256,
-            hidden_dim=256,
-            num_blocks=7,
-            num_heads=self.config["num_heads"],
+            embedding_dim=self.config.get("embedding_dim", 256),
+            hidden_dim=self.config.get("embedding_dim", 256),
+            num_blocks=self.config.get("num_blocks", 7),
+            num_heads=self.config.get("num_heads", 4),
             dropout=0.1,
             device=self.device
         )
@@ -1191,13 +1191,127 @@ class xLSTMModel(RNNModel):
 
         # Initialize model with the saved config
         self.config = checkpoint['config']
+
+        # Load state dictionaries with backward compatibility
+        state_dict = checkpoint['model_state_dict']
+
+        # Check if this is an old xLSTM model format that needs key remapping
+        if self.name == "xLSTM" and self._needs_key_remapping(state_dict):
+            logger.info("Detected old xLSTM model format - applying key remapping")
+            state_dict = self._remap_xlstm_keys(state_dict)
+
+        # Infer model hyperparameters from state_dict if not in checkpoint
+        if 'xlstm_config' in checkpoint:
+            xlstm_config = checkpoint['xlstm_config']
+        else:
+            logger.info("xlstm_config not found in checkpoint - inferring from state_dict")
+            xlstm_config = self._infer_xlstm_config_from_state_dict(state_dict)
+
+        # Override config with inferred values
+        self.config['num_heads'] = xlstm_config['num_heads']
+        self.config['embedding_dim'] = xlstm_config['embedding_dim']
+        self.config['num_blocks'] = xlstm_config['num_blocks']
+
         self.set_model((None, self.config["n_in"], len(self.config["features"])))
 
-        # Load state dictionaries
-        self.model.load_state_dict(checkpoint['model_state_dict'])
+        self.model.load_state_dict(state_dict, strict=False)
         # self.optimizer.load_state_dict(checkpoint['optimizer_state_dict'])
 
         logger.info(f"Successfully loaded {self.name} model from {file_path}")
+
+    def _needs_key_remapping(self, state_dict):
+        """Check if state_dict needs key remapping for old xLSTM format"""
+        # Old format has keys like "blocks.0.xlstm_norm.weight"
+        # New format has keys like "blocks.blocks.0.xlstm_norm.weight"
+        for key in state_dict.keys():
+            if key.startswith("blocks.") and not key.startswith("blocks.blocks."):
+                # Check if it's a numeric index after "blocks."
+                parts = key.split(".")
+                if len(parts) > 1 and parts[1].isdigit():
+                    return True
+        return False
+
+    def _remap_xlstm_keys(self, state_dict):
+        """Remap old xLSTM state_dict keys to new format and transform weights if needed"""
+        new_state_dict = {}
+
+        for key, value in state_dict.items():
+            new_key = key
+            new_value = value
+
+            # Remap blocks.N.* to blocks.blocks.N.*
+            if key.startswith("blocks."):
+                parts = key.split(".")
+                if len(parts) > 1 and parts[1].isdigit():
+                    # Insert "blocks" after first "blocks"
+                    new_key = "blocks.blocks." + ".".join(parts[1:])
+
+            # Remap post_blocks_norm to blocks.post_blocks_norm
+            elif key.startswith("post_blocks_norm."):
+                new_key = "blocks." + key
+
+            # Transform sLSTM recurrent kernel weights if needed
+            # Old format has shape [1, 256, 1024], new format expects [1, 1024, 256]
+            if "slstm_cell._recurrent_kernel_" in new_key:
+                if len(value.shape) == 3:
+                    # Transpose dimensions 1 and 2
+                    logger.info(f"Transposing {new_key} from shape {value.shape} to {value.transpose(1, 2).shape}")
+                    new_value = value.transpose(1, 2).contiguous()
+
+            new_state_dict[new_key] = new_value
+
+        return new_state_dict
+
+    def _infer_xlstm_config_from_state_dict(self, state_dict):
+        """
+        Infer xLSTM configuration from state_dict shapes.
+
+        Returns:
+            dict with keys: num_heads, embedding_dim, num_blocks
+        """
+        config = {
+            'num_heads': 1,  # default
+            'embedding_dim': 256,  # default
+            'num_blocks': 7  # default
+        }
+
+        # Infer num_heads from igate weight shape (first dimension)
+        # Look for blocks.blocks.0.xlstm.mlstm_cell.igate.weight
+        for key, value in state_dict.items():
+            if 'mlstm_cell.igate.weight' in key:
+                # Shape is [num_heads, hidden_dim]
+                config['num_heads'] = value.shape[0]
+                logger.info(f"Inferred num_heads={config['num_heads']} from {key} with shape {value.shape}")
+                break
+
+        # Infer embedding_dim from proj_up weight shape
+        # Look for proj_up.weight
+        for key, value in state_dict.items():
+            if key == 'proj_up.weight':
+                # Shape is [embedding_dim, in_features]
+                config['embedding_dim'] = value.shape[0]
+                logger.info(f"Inferred embedding_dim={config['embedding_dim']} from {key} with shape {value.shape}")
+                break
+
+        # Infer num_blocks by counting unique block indices
+        block_indices = set()
+        for key in state_dict.keys():
+            if 'blocks.blocks.' in key:
+                parts = key.split('.')
+                # Find index after 'blocks.blocks.'
+                try:
+                    idx_pos = parts.index('blocks') + 1
+                    if idx_pos < len(parts) and parts[idx_pos] == 'blocks':
+                        block_idx = int(parts[idx_pos + 1])
+                        block_indices.add(block_idx)
+                except (ValueError, IndexError):
+                    continue
+
+        if block_indices:
+            config['num_blocks'] = max(block_indices) + 1
+            logger.info(f"Inferred num_blocks={config['num_blocks']} from state_dict keys")
+
+        return config
 
 
 class MultiInputDataset(torch.utils.data.Dataset):

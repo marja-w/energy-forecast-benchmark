@@ -15,7 +15,8 @@ from src.energy_forecast.plots import plot_bar_chart, plot_predictions, create_b
 from src.energy_forecast.utils.metrics import get_metrics, get_mean_metrics
 
 
-def calculate_metrics_per_id(ds: TrainingDataset, run: Optional[Run], config: dict, model_name: str, plot: bool = False) -> None:
+def calculate_metrics_per_id(ds: TrainingDataset, run: Optional[Run], config: dict, model_name: str,
+                             plot: bool = False) -> None:
     """
     Calculates regression metrics for each unique identifier in the dataset.
 
@@ -67,7 +68,8 @@ def calculate_metrics_per_id(ds: TrainingDataset, run: Optional[Run], config: di
                                                                                     test_nrmse, test_mape)
 
         if plot:
-            plt = plot_predictions(ds, y, b_id, y_hat, ds.datetime_column.filter(date_mask), config["lag_in"], config["n_out"],
+            plt = plot_predictions(ds, y, b_id, y_hat, ds.datetime_column.filter(date_mask), config["lag_in"],
+                                   config["n_out"],
                                    config["lag_out"], run, model_name)
         if run and plot:
             if plt:
@@ -77,10 +79,11 @@ def calculate_metrics_per_id(ds: TrainingDataset, run: Optional[Run], config: di
         # elif run:  # problems with WandB table not showing
         #     wandb_table.add_data(b_id, test_mape, test_mse, test_mae, test_nrmse, test_rmse,
         #                          mean_target_value)
-        elif not run:
-            b_metrics = {"id": b_id, "mape": test_mape, "mse": test_mse, "mae": test_mae, "nrmse": test_nrmse,
+        # elif not run: always store id_to_metrics also
+        b_metrics = {"id": b_id, "mape": test_mape, "mse": test_mse, "mae": test_mae, "nrmse": test_nrmse,
                          "rmse": test_rmse, "avg_diff": mean_target_value}
-            id_to_metrics.append(b_metrics)
+        id_to_metrics.append(b_metrics)
+
     # store predictions for each building
     df_predictions = pd.DataFrame(pred_list)
     output_dir = REPORTS_DIR / "predictions" / f"{model_name}_{config['n_out']}_{wandb.run.id}"
@@ -88,6 +91,12 @@ def calculate_metrics_per_id(ds: TrainingDataset, run: Optional[Run], config: di
     csv_ = output_dir / "predictions.csv"
     df_predictions.to_csv(csv_, index=False)
     logger.info(f"Predictions saved to {csv_}")
+
+    # store metrics for each building
+    df_ind_metrics = pd.DataFrame(id_to_ind_metrics)
+    csv_ = output_dir / "ind_metrics.csv"
+    df_ind_metrics.to_csv(csv_, index=False)
+    logger.info(f"Individual Metrics saved to {csv_}")
 
     create_box_plot_predictions(id_to_ind_metrics, "rse", run, log_y=True)
     create_box_plot_predictions(id_to_ind_metrics, "nrse", run, log_y=True)
@@ -97,14 +106,15 @@ def calculate_metrics_per_id(ds: TrainingDataset, run: Optional[Run], config: di
     metrics_df = pl.DataFrame(id_to_metrics)
     if run:
         run.log({"building_metrics": wandb_table})
-    else:
-        metrics_df.write_csv(
-            REPORTS_DIR / "metrics" / f"{model_name}_{config['res']}_{config['n_out']}.csv")  # overwrites in next run
-        logger.info(f"Metrics saved to {REPORTS_DIR}/metrics/{model_name}_{config['n_out']}.csv")
+    # else:
+    # always write csv
+    csv_ = output_dir / "per_building_metrics.csv"
+    metrics_df.write_csv(csv_)
+    logger.info(f"Per Building Metrics saved to {csv_}")
 
 
 def calculate_metrics_per_id_and_hour(ds: TrainingDataset, run: Optional[Run], config: dict, model_name: str,
-                             plot: bool = False) -> None:
+                                      plot: bool = False) -> None:
     id_to_metrics = list()
     id_to_ind_metrics = list()
     if run:
@@ -165,6 +175,7 @@ def calculate_metrics_per_id_and_hour(ds: TrainingDataset, run: Optional[Run], c
             REPORTS_DIR / "metrics" / f"{model_name}_{config['n_out']}.csv")  # overwrites in next run
         logger.info(f"Metrics saved to {REPORTS_DIR}/metrics/{model_name}_{config['n_out']}.csv")
 
+
 def calculate_metrics_per_month(ds: TrainingDataset, run=None, plot: bool = False) -> None:
     id_to_metrics = list()
     id_to_ind_metrics = list()
@@ -200,6 +211,7 @@ def calculate_metrics_per_month(ds: TrainingDataset, run=None, plot: bool = Fals
         id_to_metrics.append(curr_metrics)
 
     plot_bar_chart(id_to_metrics, "rmse", run, log_y=False, name="month")
+
 
 def calculate_metrics_per_hour(ds: TrainingDataset, run=None, plot: bool = False) -> None:
     meta_df = pl.read_csv(
@@ -319,10 +331,11 @@ def calculate_metrics_per_day(ds: TrainingDataset, run=None, plot: bool = False)
     plot_box_plot(id_to_ind_metrics, "rse", None, log_y=False, name="day")
     plot_box_plot(id_to_ind_metrics, "nrse", None, log_y=False, name="day")
 
+
 if __name__ == '__main__':
-    model_name = "tft"
+    model_name = "FCN3_3_akznlcgg"
     # Load predictions and targets from CSV files
-    predictions_df = pl.read_csv(DATA_DIR / "predictions" / model_name / "p90_predictions.csv")
+    predictions_df = pl.read_csv(DATA_DIR / "predictions" / model_name / "predictions.csv")
     targets_df = pl.read_csv(DATA_DIR / "predictions" / model_name / "targets.csv")
 
-    # calculate_metrics_per_id(predictions_df, targets_df, None, False)
+    calculate_metrics_per_id(predictions_df, targets_df, None, False)

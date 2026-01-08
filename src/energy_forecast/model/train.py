@@ -2,6 +2,8 @@ import argparse
 import json
 from dataclasses import dataclass
 from typing import Any
+import os
+import time
 
 import jsonlines
 import polars as pl
@@ -203,6 +205,51 @@ def per_cluster_evaluation(baseline: Baseline, ds: TrainingDataset, m: Model,
     store_df_wandb(eval_df, "results_cluster_eval.txt")
 
 
+def read_cpu_energy():
+    """
+    Read CPU energy consumption from Intel RAPL interface.
+    Returns energy in microjoules, or None if RAPL is not available.
+    """
+    rapl_path = '/sys/class/powercap/intel-rapl/intel-rapl:0/energy_uj'
+    try:
+        if os.path.exists(rapl_path):
+            with open(rapl_path, 'r') as f:
+                return int(f.read())
+    except (IOError, PermissionError, ValueError) as e:
+        logger.warning(f"Could not read CPU energy from RAPL: {e}")
+    return None
+
+
+def measure_cpu_power(start_energy, end_energy, duration_seconds):
+    """
+    Calculate average CPU power consumption from energy measurements.
+
+    Args:
+        start_energy: Energy reading at start in microjoules
+        end_energy: Energy reading at end in microjoules
+        duration_seconds: Duration of measurement in seconds
+
+    Returns:
+        Average power in watts, or None if measurement failed
+    """
+    if start_energy is None or end_energy is None or duration_seconds <= 0:
+        return None
+
+    # Handle counter overflow (RAPL counters can wrap around)
+    if end_energy < start_energy:
+        # Assume 64-bit counter (2^64 microjoules)
+        max_counter = 2**64
+        energy_uj = (max_counter - start_energy) + end_energy
+    else:
+        energy_uj = end_energy - start_energy
+
+    # Convert to watts (microjoules to joules, then divide by seconds)
+    energy_joules = energy_uj / 1_000_000
+    average_power_watts = energy_joules / duration_seconds
+
+    return average_power_watts
+
+
 def prepare_dataset(run_config: dict) -> tuple[TrainingDataset, dict]:
     """
     Prepare the dataset for training or evaluation. Loads data from disk according to run_config.
@@ -232,8 +279,51 @@ def train(run_config: dict):
     m = get_model(run_config)
     baseline = Baseline(run_config)
 
+    # Check if training on CPU (by checking if GPU is NOT available)
+    try:
+        import torch
+        is_cpu_training = not torch.cuda.is_available()
+    except ImportError:
+        # If torch is not available, assume CPU training
+        is_cpu_training = True
+
+    # Measure CPU power if training on CPU
+    start_energy = None
+    start_time = None
+    if is_cpu_training:
+        start_energy = read_cpu_energy()
+        start_time = time.time()
+        if start_energy is not None:
+            logger.info("Starting CPU power measurement during training")
+
     # train
     run = m.train_ds(ds, log=run_config["log"])
+
+    # Calculate and log CPU power consumption
+    if is_cpu_training and start_energy is not None:
+        end_energy = read_cpu_energy()
+        end_time = time.time()
+        duration = end_time - start_time
+
+        average_power_watts = measure_cpu_power(start_energy, end_energy, duration)
+
+        if average_power_watts is not None:
+            # Calculate total energy consumption in kWh
+            duration_hours = duration / 3600  # Convert seconds to hours
+            total_energy_kwh = (duration_hours * average_power_watts) / 1000  # Convert Wh to kWh
+
+            logger.info(f"Average CPU power consumption during training: {average_power_watts:.2f} W")
+            logger.info(f"Total energy consumption during training: {total_energy_kwh:.6f} kWh")
+
+            # Log to wandb if logging is enabled
+            if run_config["log"] and run is not None:
+                run.log({
+                    "average_power_consumption_cpu": average_power_watts,
+                    "total_power_consumption_kwh": total_energy_kwh
+                })
+        else:
+            logger.warning("Failed to calculate CPU power consumption")
+
     ds.compute_rmse_noisy_features()
 
     # Evaluate the models

@@ -19,6 +19,7 @@ try:
     from src.energy_forecast.model.models import Model, FCNModel, DTModel, LinearRegressorModel, RegressionModel, \
         NNModel, \
         RNN1Model, FCN2Model, FCN3Model, Baseline, RNN3Model, TransformerModel, LSTMModel, xLSTMModel, xLSTMModel_v2
+    from src.energy_forecast.model.tft import TFTModel
     from src.energy_forecast.utils.train_test_val_split import get_train_test_val_split
     from src.energy_forecast.utils.util import store_df_wandb
 except ModuleNotFoundError:
@@ -40,6 +41,7 @@ except ModuleNotFoundError:
         from src.energy_forecast.model.models import Model, FCNModel, DTModel, LinearRegressorModel, RegressionModel, \
             NNModel, RNN1Model, FCN2Model, FCN3Model, Baseline, RNN3Model, LSTMModel, TransformerModel, xLSTMModel, \
             xLSTMModel_v2
+        from src.energy_forecast.model.tft import TFTModel
         from src.energy_forecast.utils.train_test_val_split import get_train_test_val_split
         from src.energy_forecast.utils.util import store_df_wandb
     else:
@@ -67,6 +69,8 @@ def get_model(config: dict) -> Model:
         return xLSTMModel(config)
     elif config["model"] == "xlstm-tft":
         return xLSTMModel_v2(config)
+    elif config["model"] == "tft":
+        return TFTModel(config)
     else:
         raise Exception(f"Unknown model {config['model']}")
 
@@ -117,11 +121,18 @@ class TrainConfig:
     num_heads: int = 4
     optimizer: str = "adam"
     loss: str = "mean_squared_error"
+    learning_rate: float = 0.001
+    clip: float = 1.0
+    early_stopping_patience: int = 10
     remove_per: float = 0.0
     lr_scheduler: str = "none"
     weight_initializer: str = "glorot"
     activation: str = "relu"
     transformer_blocks: int = 2
+
+    # TFT-specific
+    use_quantile_loss: bool = False
+    quantiles: list = None
 
     # will be overwritten
     lag_in: int = 7
@@ -164,11 +175,16 @@ class TrainConfig:
             'num_heads': self.num_heads,
             'optimizer': self.optimizer,
             'loss': self.loss,
+            'learning_rate': self.learning_rate,
+            'clip': self.clip,
+            'early_stopping_patience': self.early_stopping_patience,
             'remove_per': self.remove_per,
             'lr_scheduler': self.lr_scheduler,
             'weight_initializer': self.weight_initializer,
             'activation': self.activation,
             'transformer_blocks': self.transformer_blocks,
+            'use_quantile_loss': self.use_quantile_loss,
+            'quantiles': self.quantiles if self.quantiles else [0.1, 0.5, 0.9],
             'scaler': self.scaler,
             'scale_mode': self.scale_mode,
             'train_test_split_method': self.train_test_split_method,

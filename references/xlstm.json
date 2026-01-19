@@ -1,6 +1,6 @@
 {
   "project": "ma-wahl-forecast",
-  "log": false,
+  "log": true,
   "plot": false,
   "energy": "all",
   "res": "hourly",
